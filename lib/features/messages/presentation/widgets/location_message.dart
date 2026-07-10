@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -23,7 +21,11 @@ class LocationMessage extends StatelessWidget {
   final bool isMine;
   final String? senderName;
 
-  static const _tileHost = 'https://tile.openstreetmap.org';
+  String get _staticMapUrl {
+    final marker = '$latitude,$longitude,ol-marker';
+    return 'https://staticmap.openstreetmap.de/staticmap.php'
+        '?center=$latitude,$longitude&zoom=15&size=600x320&markers=$marker';
+  }
 
   void _openInApp(BuildContext context) {
     final n = Uri.encodeComponent(address ?? senderName ?? 'Shared Location');
@@ -52,26 +54,42 @@ class LocationMessage extends StatelessWidget {
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           SizedBox(
             height: screenWidth < 420 ? 118 : 132,
-            child: IgnorePointer(
-              child: FlutterMap(
-                options: MapOptions(
-                    initialCenter: LatLng(latitude, longitude),
-                    initialZoom: 15,
-                    interactionOptions:
-                        const InteractionOptions(flags: InteractiveFlag.none)),
-                children: [
-                  TileLayer(urlTemplate: '$_tileHost/{z}/{x}/{y}.png'),
-                  MarkerLayer(markers: [
-                    Marker(
-                        point: LatLng(latitude, longitude),
-                        width: 28,
-                        height: 28,
-                        child: Icon(LucideIcons.mapPin,
-                            color: theme.colorScheme.primary, size: 24))
-                  ]),
-                ],
+            child: Stack(fit: StackFit.expand, children: [
+              Image.network(
+                _staticMapUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        theme.colorScheme.primary.withValues(alpha: 0.10),
+                        c.muted,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
               ),
-            ),
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.16),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Icon(LucideIcons.mapPin,
+                      color: theme.colorScheme.onPrimary, size: 18),
+                ),
+              ),
+            ]),
           ),
           Container(
             padding: const EdgeInsets.all(10),

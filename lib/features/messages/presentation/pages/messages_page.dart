@@ -199,8 +199,6 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     final counts = {
       for (final tab in _tabs) tab.$1: _countForTab(allConvs, tab.$1)
     };
-    final isNarrow = MediaQuery.sizeOf(context).width < 600;
-
     final convs = allConvs.where((cv) {
       if (widget.tab == 'archived') return cv.isArchived;
       if (widget.tab == 'requests') return false;
@@ -244,41 +242,46 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     return Column(children: [
       // Header
       Container(
-        padding: EdgeInsets.fromLTRB(12, isNarrow ? 10 : 12, 8, 10),
+        padding: const EdgeInsets.fromLTRB(14, 16, 14, 0),
         decoration: BoxDecoration(
             color: c.background,
             border: Border(
                 bottom: BorderSide(color: c.border.withValues(alpha: 0.3)))),
         child: Column(children: [
           Row(children: [
-            if (isNarrow)
-              TextButton(
-                onPressed: () {},
-                style: TextButton.styleFrom(
-                  foregroundColor: theme.colorScheme.primary,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  minimumSize: const Size(0, 40),
-                ),
-                child: const Text('Tahrir',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-              )
-            else
-              const SizedBox(width: 4),
             Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                child: Text(
-                  'Chatlar',
-                  key: ValueKey(widget.tab),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0),
+                child: Container(
+              height: 52,
+              decoration: BoxDecoration(
+                color: c.muted.withValues(alpha: 0.75),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: c.border.withValues(alpha: 0.5)),
+              ),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: widget.onQueryChange,
+                style: TextStyle(fontSize: 14, color: c.foreground),
+                decoration: InputDecoration(
+                  hintText: 'Izlash...',
+                  hintStyle: TextStyle(color: c.mutedForeground, fontSize: 14),
+                  prefixIcon: Icon(LucideIcons.search,
+                      size: 18, color: c.mutedForeground),
+                  suffixIcon: widget.query.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(LucideIcons.x,
+                              size: 16, color: c.mutedForeground),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            widget.onQueryChange('');
+                          },
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
                 ),
               ),
-            ),
+            )),
+            const SizedBox(width: 8),
             _HeaderBtn(
                 icon: LucideIcons.bookmark,
                 tooltip: 'Saqlangan xabarlar',
@@ -291,39 +294,7 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
                 onTap: () => _showNewChatDialog(context),
                 c: c),
           ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(
-                child: Container(
-              height: 44,
-              decoration: BoxDecoration(
-                  color: c.muted, borderRadius: BorderRadius.circular(22)),
-              child: TextField(
-                controller: _searchCtrl,
-                onChanged: widget.onQueryChange,
-                style: TextStyle(fontSize: 14, color: c.foreground),
-                decoration: InputDecoration(
-                  hintText: 'Izlash...',
-                  hintStyle: TextStyle(color: c.mutedForeground, fontSize: 14),
-                  prefixIcon: Icon(LucideIcons.search,
-                      size: 16, color: c.mutedForeground),
-                  suffixIcon: widget.query.isNotEmpty
-                      ? IconButton(
-                          icon: Icon(LucideIcons.x,
-                              size: 16, color: c.mutedForeground),
-                          onPressed: () {
-                            _searchCtrl.clear();
-                            widget.onQueryChange('');
-                          },
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                ),
-              ),
-            )),
-          ]),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _MessagesSegmentedTabs(
             tabs: _tabs,
             current: widget.tab,
@@ -439,48 +410,20 @@ class _MessagesSegmentedTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
-    final theme = Theme.of(context);
-    final currentIndex =
-        tabs.indexWhere((tab) => tab.$1 == current).clamp(0, tabs.length - 1);
 
     return SizedBox(
-      height: 48,
+      height: 40,
       child: LayoutBuilder(builder: (context, constraints) {
-        final minWidth = tabs.length * 92.0;
+        final minWidth = tabs.length * 76.0;
         final useScrollable = constraints.maxWidth < minWidth;
-        final content = Container(
+        final content = SizedBox(
           width: useScrollable ? minWidth : constraints.maxWidth,
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: c.muted.withValues(alpha: 0.72),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: c.border.withValues(alpha: 0.45)),
-          ),
-          child: Stack(children: [
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              alignment:
-                  Alignment(-1 + (2 * currentIndex / (tabs.length - 1)), 0),
-              child: FractionallySizedBox(
-                widthFactor: 1 / tabs.length,
-                heightFactor: 1,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        blurRadius: 16,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                  bottom: BorderSide(color: c.border.withValues(alpha: 0.45))),
             ),
-            Row(children: [
+            child: Row(children: [
               for (final tab in tabs)
                 Expanded(
                   child: _MessagesSegmentButton(
@@ -491,7 +434,7 @@ class _MessagesSegmentedTabs extends StatelessWidget {
                   ),
                 ),
             ]),
-          ]),
+          ),
         );
 
         if (!useScrollable) return content;
@@ -522,65 +465,83 @@ class _MessagesSegmentButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final theme = Theme.of(context);
-    final textColor = selected ? c.foreground : c.mutedForeground;
+    final textColor = selected ? theme.colorScheme.primary : c.mutedForeground;
     final showCount = count > 0;
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: selected ? null : onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            letterSpacing: 0,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                  child: Text(label,
-                      maxLines: 1, overflow: TextOverflow.ellipsis)),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                transitionBuilder: (child, animation) =>
-                    ScaleTransition(scale: animation, child: child),
-                child: showCount
-                    ? Container(
-                        key: ValueKey('$label$count$selected'),
-                        margin: const EdgeInsets.only(left: 6),
-                        constraints:
-                            const BoxConstraints(minWidth: 20, minHeight: 20),
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? theme.colorScheme.primary
-                              : c.mutedForeground.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          count > 99 ? '99+' : '$count',
-                          style: TextStyle(
-                            color: selected
-                                ? theme.colorScheme.onPrimary
-                                : c.mutedForeground,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                            height: 1,
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(key: ValueKey('empty')),
+        borderRadius: BorderRadius.circular(8),
+        child: Stack(children: [
+          Center(
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                letterSpacing: 0,
               ),
-            ],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                      child: Text(label,
+                          maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    transitionBuilder: (child, animation) =>
+                        ScaleTransition(scale: animation, child: child),
+                    child: showCount
+                        ? Container(
+                            key: ValueKey('$label$count$selected'),
+                            margin: const EdgeInsets.only(left: 5),
+                            constraints: const BoxConstraints(
+                                minWidth: 18, minHeight: 18),
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? theme.colorScheme.primary
+                                  : c.mutedForeground.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                            child: Text(
+                              count > 99 ? '99+' : '$count',
+                              style: TextStyle(
+                                color: selected
+                                    ? theme.colorScheme.onPrimary
+                                    : c.mutedForeground,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                height: 1,
+                              ),
+                            ),
+                          )
+                        : const SizedBox.shrink(key: ValueKey('empty')),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            left: selected ? 8 : 22,
+            right: selected ? 8 : 22,
+            bottom: 0,
+            height: selected ? 2 : 0,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -865,17 +826,33 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
     final notifier = ref.read(conversationsProvider.notifier);
 
     final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    final rect = overlay == null
-        ? RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy)
-        : RelativeRect.fromRect(
-            Rect.fromLTWH(pos.dx, pos.dy, 1, 1),
-            Offset.zero & overlay.size,
-          );
+        Navigator.of(context).overlay?.context.findRenderObject() as RenderBox?;
+    final overlaySize = overlay?.size ?? MediaQuery.sizeOf(context);
+    final anchor = overlay?.globalToLocal(pos) ?? pos;
+    const menuWidth = 280.0;
+    const menuHeight = 304.0;
+    final panelBox = context.findRenderObject() as RenderBox?;
+    final panelTopLeft = panelBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+    final panelSize = panelBox?.size ?? overlaySize;
+    final panelLeft = panelTopLeft.dx;
+    final panelRight = panelTopLeft.dx + panelSize.width;
+    final preferredLeft = anchor.dx + 8;
+    final fallbackLeft = anchor.dx - menuWidth - 8;
+    final left = (preferredLeft + menuWidth <= panelRight)
+        ? preferredLeft
+        : fallbackLeft.clamp(panelLeft + 8, panelRight - menuWidth - 8);
+    final top = anchor.dy.clamp(8.0, overlaySize.height - menuHeight - 8);
+    final rect = RelativeRect.fromLTRB(
+      left,
+      top,
+      overlaySize.width - left - 1,
+      overlaySize.height - top - 1,
+    );
     showMenu(
       context: context,
       position: rect,
-      constraints: const BoxConstraints(minWidth: 240, maxWidth: 320),
+      constraints:
+          const BoxConstraints(minWidth: menuWidth, maxWidth: menuWidth),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
       color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.94),
       elevation: 14,
