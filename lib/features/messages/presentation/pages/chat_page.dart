@@ -1127,6 +1127,8 @@ class _ChatPageState extends ConsumerState<ChatPage> with SingleTickerProviderSt
     final activeMedia = _activeMediaMessage == null
         ? null
         : playable.where((m) => m.id == _activeMediaMessage!.id).firstOrNull;
+    final topInset = MediaQuery.paddingOf(context).top;
+    final headerHeight = 64.0 + topInset;
 
     return Scaffold(
       backgroundColor: c.background,
@@ -1150,15 +1152,16 @@ class _ChatPageState extends ConsumerState<ChatPage> with SingleTickerProviderSt
         _isSelectionMode
             ? _SelectionToolbar(
                 count: _selectedMessages.length,
+                topInset: topInset,
                 onClose: _exitSelectionMode,
                 onForward: _selectedMessages.isEmpty ? null : _forwardSelected,
                 onDelete: _selectedMessages.isEmpty ? null : _deleteSelected,
               )
             : Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                height: headerHeight,
+                padding: EdgeInsets.fromLTRB(8, topInset, 8, 0),
                 decoration: BoxDecoration(color: c.card, border: Border(bottom: BorderSide(color: c.border))),
-                child: SafeArea(bottom: false, child: Row(children: [
+                child: Row(children: [
                   if (!widget.embedded)
                     IconButton(icon: const Icon(LucideIcons.arrowLeft, size: 22), onPressed: () => Navigator.of(context).maybePop())
                   else
@@ -1225,7 +1228,7 @@ class _ChatPageState extends ConsumerState<ChatPage> with SingleTickerProviderSt
                       PopupMenuItem(value: 'delete', child: Row(children: [const Icon(LucideIcons.trash2, size: 18, color: Colors.red), const SizedBox(width: 12), const Text("Suhbatni o'chirish", style: TextStyle(color: Colors.red))])),
                     ],
                   ),
-                ])),
+                ]),
               ),
         // === Pinned messages bar (web: PinnedMessagesBar between ChatHeader and list) ===
         // v37: real provider — `pinned_messages` Supabase table via pinnedMessagesProvider.
@@ -1850,11 +1853,13 @@ class _ScrollToBottomFabState extends State<_ScrollToBottomFab> {
 // =====================================================================
 class _SelectionToolbar extends StatefulWidget {
   final int count;
+  final double topInset;
   final VoidCallback onClose;
   final VoidCallback? onForward;
   final VoidCallback? onDelete;
   const _SelectionToolbar({
     required this.count,
+    this.topInset = 0,
     required this.onClose,
     this.onForward,
     this.onDelete,
@@ -1899,15 +1904,13 @@ class _SelectionToolbarState extends State<_SelectionToolbar>
           // web backdrop-blur-xl ≈ blur(24px)
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
-            height: 64,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            height: 64 + widget.topInset,
+            padding: EdgeInsets.fromLTRB(8, widget.topInset, 8, 0),
             decoration: BoxDecoration(
               color: c.card.withValues(alpha: 0.9), // web bg-card/90
               border: Border(bottom: BorderSide(color: c.border)),
             ),
-            child: SafeArea(
-              bottom: false,
-              child: Row(
+            child: Row(
                 children: [
                   IconButton(
                     icon: const Icon(LucideIcons.x, size: 22),
@@ -1937,7 +1940,6 @@ class _SelectionToolbarState extends State<_SelectionToolbar>
                   ),
                 ],
               ),
-            ),
           ),
         ),
       ),

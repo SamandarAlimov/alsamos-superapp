@@ -41,13 +41,17 @@ class LocationMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AlsamosColors.of(context);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final cardWidth = screenWidth < 420
+        ? (screenWidth - 96).clamp(220.0, 276.0)
+        : 276.0;
     return SizedBox(
-      width: 256,
+      width: cardWidth,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           SizedBox(
-            height: 128,
+            height: screenWidth < 420 ? 118 : 132,
             child: IgnorePointer(
               child: FlutterMap(
                 options: MapOptions(initialCenter: LatLng(latitude, longitude), initialZoom: 15, interactionOptions: const InteractionOptions(flags: InteractiveFlag.none)),
@@ -81,9 +85,10 @@ class LocationMessage extends StatelessWidget {
                       minimumSize: const Size(0, 28),
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       textStyle: const TextStyle(fontSize: 11),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                     icon: const Icon(LucideIcons.navigation, size: 12),
-                    label: const Text('Directions'),
+                    label: const Text('Directions', maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -94,6 +99,7 @@ class LocationMessage extends StatelessWidget {
                     foregroundColor: isMine ? Colors.white : null,
                     minimumSize: const Size(0, 28),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                   child: const Icon(LucideIcons.externalLink, size: 12),
                 ),
