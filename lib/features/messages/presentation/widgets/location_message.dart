@@ -23,8 +23,7 @@ class LocationMessage extends StatelessWidget {
   final bool isMine;
   final String? senderName;
 
-  static const _tileScheme = 'https://';
-  static const _tileHost = 'tile.openstreetmap.org';
+  static const _tileHost = 'https://tile.openstreetmap.org';
 
   void _openInApp(BuildContext context) {
     final n = Uri.encodeComponent(address ?? senderName ?? 'Shared Location');
@@ -34,7 +33,8 @@ class LocationMessage extends StatelessWidget {
   Future<void> _openExternal() async {
     const scheme = 'https' '://';
     const host = 'www.google.com/maps/search/';
-    await launchUrl(Uri.parse('$scheme$host?api=1&query=$latitude,$longitude'), mode: LaunchMode.externalApplication);
+    await launchUrl(Uri.parse('$scheme$host?api=1&query=$latitude,$longitude'),
+        mode: LaunchMode.externalApplication);
   }
 
   @override
@@ -42,22 +42,33 @@ class LocationMessage extends StatelessWidget {
     final theme = Theme.of(context);
     final c = AlsamosColors.of(context);
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final cardWidth = screenWidth < 420
-        ? (screenWidth - 96).clamp(220.0, 276.0)
-        : 276.0;
+    final cardWidth =
+        screenWidth < 420 ? (screenWidth - 96).clamp(220.0, 276.0) : 276.0;
     return SizedBox(
       width: cardWidth,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           SizedBox(
             height: screenWidth < 420 ? 118 : 132,
             child: IgnorePointer(
               child: FlutterMap(
-                options: MapOptions(initialCenter: LatLng(latitude, longitude), initialZoom: 15, interactionOptions: const InteractionOptions(flags: InteractiveFlag.none)),
+                options: MapOptions(
+                    initialCenter: LatLng(latitude, longitude),
+                    initialZoom: 15,
+                    interactionOptions:
+                        const InteractionOptions(flags: InteractiveFlag.none)),
                 children: [
-                  TileLayer(urlTemplate: '$_tileScheme{s}.$_tileHost/{z}/{x}/{y}.png', subdomains: const ['a', 'b', 'c']),
-                  MarkerLayer(markers: [Marker(point: LatLng(latitude, longitude), width: 28, height: 28, child: Icon(LucideIcons.mapPin, color: theme.colorScheme.primary, size: 24))]),
+                  TileLayer(urlTemplate: '$_tileHost/{z}/{x}/{y}.png'),
+                  MarkerLayer(markers: [
+                    Marker(
+                        point: LatLng(latitude, longitude),
+                        width: 28,
+                        height: 28,
+                        child: Icon(LucideIcons.mapPin,
+                            color: theme.colorScheme.primary, size: 24))
+                  ]),
                 ],
               ),
             ),
@@ -65,14 +76,31 @@ class LocationMessage extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(10),
             color: isMine ? theme.colorScheme.primary : c.card,
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Icon(LucideIcons.mapPin, size: 14, color: isMine ? Colors.white : theme.colorScheme.primary),
+                Icon(LucideIcons.mapPin,
+                    size: 14,
+                    color: isMine ? Colors.white : theme.colorScheme.primary),
                 const SizedBox(width: 6),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(address ?? 'Shared Location', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isMine ? Colors.white : null)),
-                  Text('${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}', style: TextStyle(fontSize: 10, color: isMine ? Colors.white70 : c.mutedForeground)),
-                ])),
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(address ?? 'Shared Location',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: isMine ? Colors.white : null)),
+                      Text(
+                          '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+                          style: TextStyle(
+                              fontSize: 10,
+                              color:
+                                  isMine ? Colors.white70 : c.mutedForeground)),
+                    ])),
               ]),
               const SizedBox(height: 8),
               Row(children: [
@@ -80,15 +108,18 @@ class LocationMessage extends StatelessWidget {
                   child: FilledButton.icon(
                     onPressed: () => _openInApp(context),
                     style: FilledButton.styleFrom(
-                      backgroundColor: isMine ? Colors.white : theme.colorScheme.primary,
-                      foregroundColor: isMine ? theme.colorScheme.primary : Colors.white,
+                      backgroundColor:
+                          isMine ? Colors.white : theme.colorScheme.primary,
+                      foregroundColor:
+                          isMine ? theme.colorScheme.primary : Colors.white,
                       minimumSize: const Size(0, 28),
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       textStyle: const TextStyle(fontSize: 11),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                     icon: const Icon(LucideIcons.navigation, size: 12),
-                    label: const Text('Directions', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    label: const Text('Directions',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ),
                 const SizedBox(width: 6),

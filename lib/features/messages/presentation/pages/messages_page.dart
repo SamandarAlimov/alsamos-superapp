@@ -24,7 +24,8 @@ class MessagesPage extends ConsumerStatefulWidget {
   ConsumerState<MessagesPage> createState() => _MessagesPageState();
 }
 
-class _MessagesPageState extends ConsumerState<MessagesPage> with TickerProviderStateMixin {
+class _MessagesPageState extends ConsumerState<MessagesPage>
+    with TickerProviderStateMixin {
   String _tab = 'private';
   String _query = '';
   Conversation? _selected;
@@ -39,11 +40,14 @@ class _MessagesPageState extends ConsumerState<MessagesPage> with TickerProvider
     if (isDesktop) {
       return Scaffold(
         backgroundColor: c.background,
-        body: SafeArea(child: Row(children: [
+        body: SafeArea(
+            child: Row(children: [
           SizedBox(
             width: _leftPanelWidth,
             child: _LeftPanel(
-              tab: _tab, query: _query, selected: _selected,
+              tab: _tab,
+              query: _query,
+              selected: _selected,
               isCompact: _leftPanelWidth < 140,
               onTabChange: (t) => setState(() => _tab = t),
               onQueryChange: (q) => setState(() => _query = q),
@@ -66,20 +70,30 @@ class _MessagesPageState extends ConsumerState<MessagesPage> with TickerProvider
               child: Container(
                 width: 6,
                 color: Colors.transparent,
-                child: Center(child: Container(width: 1, height: double.infinity, color: c.border)),
+                child: Center(
+                    child: Container(
+                        width: 1, height: double.infinity, color: c.border)),
               ),
             ),
           ),
-          Expanded(child: _selected == null
-            ? _NoChatSelected(c: c)
-            : ChatPage(key: ValueKey(_selected!.id), conversationId: _selected!.id, conversation: _selected, embedded: true)),
+          Expanded(
+              child: _selected == null
+                  ? _NoChatSelected(c: c)
+                  : ChatPage(
+                      key: ValueKey(_selected!.id),
+                      conversationId: _selected!.id,
+                      conversation: _selected,
+                      embedded: true)),
         ])),
       );
     }
     return Scaffold(
       backgroundColor: c.background,
-      body: SafeArea(child: _LeftPanel(
-        tab: _tab, query: _query, selected: _selected,
+      body: SafeArea(
+          child: _LeftPanel(
+        tab: _tab,
+        query: _query,
+        selected: _selected,
         isCompact: false,
         onTabChange: (t) => setState(() => _tab = t),
         onQueryChange: (q) => setState(() => _query = q),
@@ -96,7 +110,9 @@ class _MessagesPageState extends ConsumerState<MessagesPage> with TickerProvider
     final userId = ref.read(authProvider).user?.id;
     if (userId == null) return;
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(content: Text('Saqlangan xabarlar...'), duration: Duration(seconds: 1)));
+    messenger.showSnackBar(const SnackBar(
+        content: Text('Saqlangan xabarlar...'),
+        duration: Duration(seconds: 1)));
     final conv = await const MessagesRepository().getOrCreateSelfChat(userId);
     if (!mounted) return;
     if (conv == null) return;
@@ -104,7 +120,10 @@ class _MessagesPageState extends ConsumerState<MessagesPage> with TickerProvider
     if (!mounted) return;
     final w = MediaQuery.of(context).size.width;
     if (w >= _desktopBreakpoint) {
-      setState(() { _tab = 'private'; _selected = conv; });
+      setState(() {
+        _tab = 'private';
+        _selected = conv;
+      });
     } else {
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ChatPage(conversationId: conv.id, conversation: conv),
@@ -121,9 +140,15 @@ class _LeftPanel extends ConsumerStatefulWidget {
   final ValueChanged<String> onTabChange, onQueryChange;
   final ValueChanged<Conversation> onSelect;
   final VoidCallback onOpenSelfChat;
-  const _LeftPanel({required this.tab, required this.query, required this.selected,
-    required this.isCompact, required this.onTabChange, required this.onQueryChange,
-    required this.onSelect, required this.onOpenSelfChat});
+  const _LeftPanel(
+      {required this.tab,
+      required this.query,
+      required this.selected,
+      required this.isCompact,
+      required this.onTabChange,
+      required this.onQueryChange,
+      required this.onSelect,
+      required this.onOpenSelfChat});
   @override
   ConsumerState<_LeftPanel> createState() => _LeftPanelState();
 }
@@ -131,14 +156,39 @@ class _LeftPanel extends ConsumerStatefulWidget {
 class _LeftPanelState extends ConsumerState<_LeftPanel> {
   late final TextEditingController _searchCtrl;
   @override
-  void initState() { super.initState(); _searchCtrl = TextEditingController(text: widget.query); }
+  void initState() {
+    super.initState();
+    _searchCtrl = TextEditingController(text: widget.query);
+  }
+
   @override
-  void dispose() { _searchCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   static const _tabs = [
-    ('private','Shaxsiy'),('groups','Guruhlar'),('channels','Kanallar'),
-    ('requests',"So'rovlar"),('archived','Arxiv'),
+    ('private', 'Shaxsiy'),
+    ('groups', 'Guruhlar'),
+    ('channels', 'Kanallar'),
+    ('requests', "So'rovlar"),
+    ('archived', 'Arxiv'),
   ];
+
+  int _countForTab(List<Conversation> items, String tab) {
+    if (tab == 'requests') return 0;
+    return items.where((cv) {
+      if (tab == 'archived') return cv.isArchived;
+      if (cv.isArchived) return false;
+      return tab == 'private'
+          ? cv.type == 'private'
+          : tab == 'groups'
+              ? cv.type == 'group'
+              : tab == 'channels'
+                  ? cv.type == 'channel'
+                  : true;
+    }).length;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -146,14 +196,21 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     final theme = Theme.of(context);
     final convState = ref.watch(conversationsProvider);
     final allConvs = convState.valueOrNull ?? [];
+    final counts = {
+      for (final tab in _tabs) tab.$1: _countForTab(allConvs, tab.$1)
+    };
+    final isNarrow = MediaQuery.sizeOf(context).width < 600;
 
     final convs = allConvs.where((cv) {
       if (widget.tab == 'archived') return cv.isArchived;
       if (widget.tab == 'requests') return false;
-      final typeMatch = widget.tab == 'private' ? cv.type == 'private'
-        : widget.tab == 'groups' ? cv.type == 'group'
-        : widget.tab == 'channels' ? cv.type == 'channel'
-        : true;
+      final typeMatch = widget.tab == 'private'
+          ? cv.type == 'private'
+          : widget.tab == 'groups'
+              ? cv.type == 'group'
+              : widget.tab == 'channels'
+                  ? cv.type == 'channel'
+                  : true;
       if (!typeMatch) return false;
       if (cv.isArchived) return false;
       final name = cv.title.toLowerCase();
@@ -170,11 +227,14 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
         color: c.background,
         child: Column(children: [
           const SizedBox(height: 8),
-          Expanded(child: ListView.builder(
+          Expanded(
+              child: ListView.builder(
             itemCount: convs.length,
             itemBuilder: (_, i) => _ChatListItem(
-              conversation: convs[i], selected: widget.selected?.id == convs[i].id,
-              isCompact: true, onTap: () => widget.onSelect(convs[i]),
+              conversation: convs[i],
+              selected: widget.selected?.id == convs[i].id,
+              isCompact: true,
+              onTap: () => widget.onSelect(convs[i]),
             ),
           )),
         ]),
@@ -184,12 +244,60 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     return Column(children: [
       // Header
       Container(
-        padding: const EdgeInsets.fromLTRB(12, 12, 8, 8),
-        decoration: BoxDecoration(color: c.background, border: Border(bottom: BorderSide(color: c.border.withValues(alpha: 0.3)))),
+        padding: EdgeInsets.fromLTRB(12, isNarrow ? 10 : 12, 8, 10),
+        decoration: BoxDecoration(
+            color: c.background,
+            border: Border(
+                bottom: BorderSide(color: c.border.withValues(alpha: 0.3)))),
         child: Column(children: [
           Row(children: [
-            Expanded(child: Container(
-              height: 40, decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(20)),
+            if (isNarrow)
+              TextButton(
+                onPressed: () {},
+                style: TextButton.styleFrom(
+                  foregroundColor: theme.colorScheme.primary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(0, 40),
+                ),
+                child: const Text('Tahrir',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+              )
+            else
+              const SizedBox(width: 4),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: Text(
+                  'Chatlar',
+                  key: ValueKey(widget.tab),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0),
+                ),
+              ),
+            ),
+            _HeaderBtn(
+                icon: LucideIcons.bookmark,
+                tooltip: 'Saqlangan xabarlar',
+                onTap: widget.onOpenSelfChat,
+                c: c),
+            _HeaderBtn(
+                icon: LucideIcons.plus,
+                tooltip: 'Yangi suhbat',
+                isPrimary: true,
+                onTap: () => _showNewChatDialog(context),
+                c: c),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+                child: Container(
+              height: 44,
+              decoration: BoxDecoration(
+                  color: c.muted, borderRadius: BorderRadius.circular(22)),
               child: TextField(
                 controller: _searchCtrl,
                 onChanged: widget.onQueryChange,
@@ -197,64 +305,80 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
                 decoration: InputDecoration(
                   hintText: 'Izlash...',
                   hintStyle: TextStyle(color: c.mutedForeground, fontSize: 14),
-                  prefixIcon: Icon(LucideIcons.search, size: 16, color: c.mutedForeground),
-                  suffixIcon: widget.query.isNotEmpty ? IconButton(
-                    icon: Icon(LucideIcons.x, size: 16, color: c.mutedForeground),
-                    onPressed: () { _searchCtrl.clear(); widget.onQueryChange(''); },
-                  ) : null,
-                  border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  prefixIcon: Icon(LucideIcons.search,
+                      size: 16, color: c.mutedForeground),
+                  suffixIcon: widget.query.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(LucideIcons.x,
+                              size: 16, color: c.mutedForeground),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            widget.onQueryChange('');
+                          },
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
                 ),
               ),
             )),
-            const SizedBox(width: 4),
-            _HeaderBtn(icon: LucideIcons.bookmark, tooltip: 'Saqlangan xabarlar', onTap: widget.onOpenSelfChat, c: c),
-            _HeaderBtn(icon: LucideIcons.plus, tooltip: 'Yangi suhbat', isPrimary: true,
-              onTap: () => _showNewChatDialog(context), c: c),
           ]),
-          const SizedBox(height: 8),
-          SizedBox(height: 36, child: ListView(scrollDirection: Axis.horizontal, children: _tabs.map((t) {
-            final active = widget.tab == t.$1;
-            return GestureDetector(
-              onTap: () => widget.onTabChange(t.$1),
-              child: Container(
-                margin: const EdgeInsets.only(right: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: active ? theme.colorScheme.primary : c.muted,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Text(t.$2, style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600,
-                  color: active ? theme.colorScheme.onPrimary : c.mutedForeground,
-                )),
-              ),
-            );
-          }).toList())),
+          const SizedBox(height: 10),
+          _MessagesSegmentedTabs(
+            tabs: _tabs,
+            current: widget.tab,
+            counts: counts,
+            onChanged: widget.onTabChange,
+          ),
         ]),
       ),
       // List
-      Expanded(child: convState.isLoading
-        ? Center(child: CircularProgressIndicator(color: theme.colorScheme.primary))
-        : convs.isEmpty
-          ? _EmptyState(tab: widget.tab, c: c, onNewChat: () => _showNewChatDialog(context))
-          : ListView.builder(
-              itemCount: convs.length,
-              itemBuilder: (_, i) => _ChatListItem(
-                conversation: convs[i],
-                selected: widget.selected?.id == convs[i].id,
-                isCompact: false,
-                onTap: () => widget.onSelect(convs[i]),
-              ),
-            ),
+      Expanded(
+        child: convState.isLoading
+            ? Center(
+                child:
+                    CircularProgressIndicator(color: theme.colorScheme.primary))
+            : convs.isEmpty
+                ? _EmptyState(
+                    tab: widget.tab,
+                    c: c,
+                    onNewChat: () => _showNewChatDialog(context))
+                : AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 240),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0.02, 0),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
+                    ),
+                    child: _AnimatedConversationList(
+                      key: ValueKey(
+                          '${widget.tab}:${widget.query}:${convs.map((c) => c.id).join(",")}'),
+                      conversations: convs,
+                      selectedId: widget.selected?.id,
+                      onSelect: widget.onSelect,
+                    ),
+                  ),
       ),
     ]);
   }
 
   void _showNewChatDialog(BuildContext context) {
-    showModalBottomSheet(context: context, isScrollControlled: true,
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => _NewChatSheet(
-        onCreated: (conv) { Navigator.pop(ctx); widget.onSelect(conv); },
+        onCreated: (conv) {
+          Navigator.pop(ctx);
+          widget.onSelect(conv);
+        },
       ),
     );
   }
@@ -299,17 +423,231 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
 }
 
 // ─── Chat List Item ──────────────────────────────────────────────────────────
+class _MessagesSegmentedTabs extends StatelessWidget {
+  final List<(String, String)> tabs;
+  final String current;
+  final Map<String, int> counts;
+  final ValueChanged<String> onChanged;
+
+  const _MessagesSegmentedTabs({
+    required this.tabs,
+    required this.current,
+    required this.counts,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    final theme = Theme.of(context);
+    final currentIndex =
+        tabs.indexWhere((tab) => tab.$1 == current).clamp(0, tabs.length - 1);
+
+    return SizedBox(
+      height: 48,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final minWidth = tabs.length * 92.0;
+        final useScrollable = constraints.maxWidth < minWidth;
+        final content = Container(
+          width: useScrollable ? minWidth : constraints.maxWidth,
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: c.muted.withValues(alpha: 0.72),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: c.border.withValues(alpha: 0.45)),
+          ),
+          child: Stack(children: [
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              alignment:
+                  Alignment(-1 + (2 * currentIndex / (tabs.length - 1)), 0),
+              child: FractionallySizedBox(
+                widthFactor: 1 / tabs.length,
+                heightFactor: 1,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 16,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Row(children: [
+              for (final tab in tabs)
+                Expanded(
+                  child: _MessagesSegmentButton(
+                    label: tab.$2,
+                    count: counts[tab.$1] ?? 0,
+                    selected: tab.$1 == current,
+                    onTap: () => onChanged(tab.$1),
+                  ),
+                ),
+            ]),
+          ]),
+        );
+
+        if (!useScrollable) return content;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: content,
+        );
+      }),
+    );
+  }
+}
+
+class _MessagesSegmentButton extends StatelessWidget {
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _MessagesSegmentButton({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    final theme = Theme.of(context);
+    final textColor = selected ? c.foreground : c.mutedForeground;
+    final showCount = count > 0;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: selected ? null : onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedDefaultTextStyle(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            letterSpacing: 0,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                  child: Text(label,
+                      maxLines: 1, overflow: TextOverflow.ellipsis)),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, animation) =>
+                    ScaleTransition(scale: animation, child: child),
+                child: showCount
+                    ? Container(
+                        key: ValueKey('$label$count$selected'),
+                        margin: const EdgeInsets.only(left: 6),
+                        constraints:
+                            const BoxConstraints(minWidth: 20, minHeight: 20),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? theme.colorScheme.primary
+                              : c.mutedForeground.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          count > 99 ? '99+' : '$count',
+                          style: TextStyle(
+                            color: selected
+                                ? theme.colorScheme.onPrimary
+                                : c.mutedForeground,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            height: 1,
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(key: ValueKey('empty')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnimatedConversationList extends StatelessWidget {
+  final List<Conversation> conversations;
+  final String? selectedId;
+  final ValueChanged<Conversation> onSelect;
+
+  const _AnimatedConversationList({
+    super.key,
+    required this.conversations,
+    required this.selectedId,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      key: PageStorageKey(
+          'messages-list-${conversations.length}-${conversations.firstOrNull?.id ?? "empty"}'),
+      physics:
+          const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+      itemCount: conversations.length,
+      itemBuilder: (_, i) {
+        final conv = conversations[i];
+        final delay = (i * 28).clamp(0, 180);
+        return TweenAnimationBuilder<double>(
+          key: ValueKey(conv.id),
+          tween: Tween(begin: 0, end: 1),
+          duration: Duration(milliseconds: 220 + delay),
+          curve: Curves.easeOutCubic,
+          builder: (context, value, child) => Opacity(
+            opacity: value,
+            child: Transform.translate(
+              offset: Offset(0, 10 * (1 - value)),
+              child: child,
+            ),
+          ),
+          child: _ChatListItem(
+            conversation: conv,
+            selected: selectedId == conv.id,
+            isCompact: false,
+            onTap: () => onSelect(conv),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _ChatListItem extends ConsumerStatefulWidget {
   final Conversation conversation;
   final bool selected, isCompact;
   final VoidCallback onTap;
-  const _ChatListItem({required this.conversation, required this.selected,
-    required this.isCompact, required this.onTap});
+  const _ChatListItem(
+      {required this.conversation,
+      required this.selected,
+      required this.isCompact,
+      required this.onTap});
   @override
   ConsumerState<_ChatListItem> createState() => _ChatListItemState();
 }
 
-class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerProviderStateMixin {
+class _ChatListItemState extends ConsumerState<_ChatListItem>
+    with SingleTickerProviderStateMixin {
   bool _hover = false;
   late AnimationController _pulse;
   late Animation<double> _pulseAnim;
@@ -319,8 +657,11 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
   void initState() {
     super.initState();
     _prevUnread = widget.conversation.unreadCount;
-    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
-    _pulseAnim = Tween(begin: 1.0, end: 1.3).chain(CurveTween(curve: Curves.easeOut)).animate(_pulse);
+    _pulse = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 500));
+    _pulseAnim = Tween(begin: 1.0, end: 1.3)
+        .chain(CurveTween(curve: Curves.easeOut))
+        .animate(_pulse);
   }
 
   @override
@@ -333,7 +674,10 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
   }
 
   @override
-  void dispose() { _pulse.dispose(); super.dispose(); }
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -343,7 +687,10 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
     final isSelf = conv.isSelfChat;
     final isPrivate = conv.type == 'private';
     final otherId = conv.otherParticipant?.id;
-    final online = isPrivate && !isSelf && otherId != null && ref.watch(isUserOnlineProvider(otherId));
+    final online = isPrivate &&
+        !isSelf &&
+        otherId != null &&
+        ref.watch(isUserOnlineProvider(otherId));
     final unread = conv.unreadCount > 0;
 
     if (widget.isCompact) {
@@ -356,23 +703,40 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
           child: InkWell(
             onTap: widget.onTap,
             child: Container(
-              color: widget.selected ? theme.colorScheme.primary.withValues(alpha: 0.15) : null,
+              color: widget.selected
+                  ? theme.colorScheme.primary.withValues(alpha: 0.15)
+                  : null,
               padding: const EdgeInsets.symmetric(vertical: 10),
               alignment: Alignment.center,
               child: Stack(clipBehavior: Clip.none, children: [
                 _Avatar(conv: conv, size: 44, online: online),
-                if (unread) Positioned(right: -6, top: -6,
-                  child: ScaleTransition(scale: _pulseAnim,
-                    child: Container(
-                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(9), border: Border.all(color: c.background, width: 1.5)),
-                      child: Text(unread ? '${conv.unreadCount > 99 ? "99+" : conv.unreadCount}' : '',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: theme.colorScheme.onPrimary, fontSize: 10, fontWeight: FontWeight.bold)),
+                if (unread)
+                  Positioned(
+                    right: -6,
+                    top: -6,
+                    child: ScaleTransition(
+                      scale: _pulseAnim,
+                      child: Container(
+                        constraints:
+                            const BoxConstraints(minWidth: 18, minHeight: 18),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: BoxDecoration(
+                            color: theme.colorScheme.primary,
+                            borderRadius: BorderRadius.circular(9),
+                            border:
+                                Border.all(color: c.background, width: 1.5)),
+                        child: Text(
+                            unread
+                                ? '${conv.unreadCount > 99 ? "99+" : conv.unreadCount}'
+                                : '',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: theme.colorScheme.onPrimary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold)),
+                      ),
                     ),
                   ),
-                ),
               ]),
             ),
           ),
@@ -389,45 +753,92 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           color: widget.selected
-            ? theme.colorScheme.primary.withValues(alpha: 0.12)
-            : _hover ? c.muted.withValues(alpha: 0.5) : Colors.transparent,
+              ? theme.colorScheme.primary.withValues(alpha: 0.12)
+              : _hover
+                  ? c.muted.withValues(alpha: 0.5)
+                  : Colors.transparent,
           child: InkWell(
             onTap: widget.onTap,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: c.border.withValues(alpha: 0.2)))),
+              decoration: BoxDecoration(
+                  border: Border(
+                      bottom:
+                          BorderSide(color: c.border.withValues(alpha: 0.2)))),
               child: Row(children: [
                 _Avatar(conv: conv, size: 48, online: online),
                 const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Expanded(child: Row(children: [
-                      Flexible(child: Text(isSelf ? 'Saqlangan xabarlar' : conv.title,
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontWeight: unread ? FontWeight.w700 : FontWeight.w600, fontSize: 14))),
-                      if (conv.isVerified == true) ...[const SizedBox(width: 3), const VerifiedBadge(size: 13)],
-                      if (conv.isPinned) ...[const SizedBox(width: 3), Icon(LucideIcons.pin, size: 12, color: c.mutedForeground)],
-                      if (conv.isMuted) ...[const SizedBox(width: 3), Icon(LucideIcons.volumeX, size: 12, color: c.mutedForeground)],
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Row(children: [
+                        Expanded(
+                            child: Row(children: [
+                          Flexible(
+                              child: Text(
+                                  isSelf ? 'Saqlangan xabarlar' : conv.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontWeight: unread
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                      fontSize: 14))),
+                          if (conv.isVerified == true) ...[
+                            const SizedBox(width: 3),
+                            const VerifiedBadge(size: 13)
+                          ],
+                          if (conv.isPinned) ...[
+                            const SizedBox(width: 3),
+                            Icon(LucideIcons.pin,
+                                size: 12, color: c.mutedForeground)
+                          ],
+                          if (conv.isMuted) ...[
+                            const SizedBox(width: 3),
+                            Icon(LucideIcons.volumeX,
+                                size: 12, color: c.mutedForeground)
+                          ],
+                        ])),
+                        Text(_fmt(conv.lastMessageAt),
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: unread
+                                    ? theme.colorScheme.primary
+                                    : c.mutedForeground)),
+                      ]),
+                      const SizedBox(height: 2),
+                      Row(children: [
+                        Expanded(
+                            child:
+                                _LastMessage(conv: conv, c: c, unread: unread)),
+                        if (unread) const SizedBox(width: 6),
+                        if (unread)
+                          ScaleTransition(
+                              scale: _pulseAnim,
+                              child: Container(
+                                constraints: const BoxConstraints(
+                                    minWidth: 20, minHeight: 20),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 5),
+                                decoration: BoxDecoration(
+                                  color: conv.isMuted
+                                      ? c.mutedForeground
+                                      : theme.colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                    conv.unreadCount > 99
+                                        ? '99+'
+                                        : '${conv.unreadCount}',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold)),
+                              )),
+                      ]),
                     ])),
-                      Text(_fmt(conv.lastMessageAt), style: TextStyle(fontSize: 11, color: unread ? theme.colorScheme.primary : c.mutedForeground)),
-                  ]),
-                  const SizedBox(height: 2),
-                  Row(children: [
-                    Expanded(child: _LastMessage(conv: conv, c: c, unread: unread)),
-                    if (unread) const SizedBox(width: 6),
-                    if (unread) ScaleTransition(scale: _pulseAnim, child: Container(
-                      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      decoration: BoxDecoration(
-                        color: conv.isMuted ? c.mutedForeground : theme.colorScheme.primary,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                    )),
-                  ]),
-                ])),
               ]),
             ),
           ),
@@ -452,7 +863,7 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
     HapticFeedback.lightImpact();
     final conv = widget.conversation;
     final notifier = ref.read(conversationsProvider.notifier);
-    
+
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox?;
     final rect = overlay == null
@@ -472,7 +883,8 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
         PopupMenuItem(
           onTap: () => notifier.togglePin(conv.id),
           child: Row(children: [
-            Icon(conv.isPinned ? LucideIcons.pinOff : LucideIcons.pin, size: 18),
+            Icon(conv.isPinned ? LucideIcons.pinOff : LucideIcons.pin,
+                size: 18),
             const SizedBox(width: 12),
             Text(conv.isPinned ? 'Pindan olish' : 'Pinlash')
           ]),
@@ -480,7 +892,8 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
         PopupMenuItem(
           onTap: () => notifier.toggleMute(conv.id),
           child: Row(children: [
-            Icon(conv.isMuted ? LucideIcons.volume2 : LucideIcons.volumeX, size: 18),
+            Icon(conv.isMuted ? LucideIcons.volume2 : LucideIcons.volumeX,
+                size: 18),
             const SizedBox(width: 12),
             Text(conv.isMuted ? 'Ovozni yoqish' : 'Ovozni o\'chiring')
           ]),
@@ -515,16 +928,21 @@ class _ChatListItemState extends ConsumerState<_ChatListItem> with SingleTickerP
           onTap: () async {
             // Delay a bit to let menu close first before dialog opens
             Future.delayed(const Duration(milliseconds: 100), () async {
-              final ok = await showDialog<bool>(context: context,
-                builder: (d) => AlertDialog(
-                  title: const Text("Suhbatni o'chirish?"),
-                  content: const Text("Barcha xabarlar o'chiriladi."),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Bekor')),
-                    TextButton(onPressed: () => Navigator.pop(d, true),
-                      child: const Text("O'chirish", style: TextStyle(color: Colors.red))),
-                  ],
-                ));
+              final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (d) => AlertDialog(
+                        title: const Text("Suhbatni o'chirish?"),
+                        content: const Text("Barcha xabarlar o'chiriladi."),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(d, false),
+                              child: const Text('Bekor')),
+                          TextButton(
+                              onPressed: () => Navigator.pop(d, true),
+                              child: const Text("O'chirish",
+                                  style: TextStyle(color: Colors.red))),
+                        ],
+                      ));
               if (ok == true) await notifier.delete(conv.id);
             });
           },
@@ -552,18 +970,27 @@ class _Avatar extends StatelessWidget {
     final isSelf = conv.isSelfChat;
     final isGroup = conv.type == 'group';
     final isChannel = conv.type == 'channel';
-    final avatarUrl = conv.type == 'private' ? conv.otherParticipant?.avatarUrl : conv.avatarUrl;
+    final avatarUrl = conv.type == 'private'
+        ? conv.otherParticipant?.avatarUrl
+        : conv.avatarUrl;
     Widget avatar = avatarUrl != null && avatarUrl.isNotEmpty
-      ? CircleAvatar(radius: size / 2, backgroundImage: NetworkImage(avatarUrl))
-      : CircleAvatar(
-          radius: size / 2,
-          backgroundColor: theme.colorScheme.primary,
-          child: Icon(
-            isSelf ? LucideIcons.bookmark : isGroup ? LucideIcons.users : isChannel ? LucideIcons.megaphone : null,
-            size: size * 0.42,
-            color: Colors.white,
-          ),
-        );
+        ? CircleAvatar(
+            radius: size / 2, backgroundImage: NetworkImage(avatarUrl))
+        : CircleAvatar(
+            radius: size / 2,
+            backgroundColor: theme.colorScheme.primary,
+            child: Icon(
+              isSelf
+                  ? LucideIcons.bookmark
+                  : isGroup
+                      ? LucideIcons.users
+                      : isChannel
+                          ? LucideIcons.megaphone
+                          : null,
+              size: size * 0.42,
+              color: Colors.white,
+            ),
+          );
     if (avatarUrl == null || avatarUrl.isEmpty) {
       if (!isSelf && !isGroup && !isChannel) {
         final name = conv.title;
@@ -571,23 +998,42 @@ class _Avatar extends StatelessWidget {
           radius: size / 2,
           backgroundColor: theme.colorScheme.primary,
           child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
-            style: TextStyle(color: Colors.white, fontSize: size * 0.38, fontWeight: FontWeight.w600)),
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: size * 0.38,
+                  fontWeight: FontWeight.w600)),
         );
       }
     }
     return Stack(clipBehavior: Clip.none, children: [
       SizedBox(width: size, height: size, child: avatar),
-      if (online) Positioned(right: 1, bottom: 1, child: Container(
-        width: size * 0.28, height: size * 0.28,
-        decoration: BoxDecoration(color: const Color(0xFF22C55E), shape: BoxShape.circle,
-          border: Border.all(color: c.background, width: 1.5)),
-      )),
-      if (isSelf) Positioned(right: -2, bottom: -2, child: Container(
-        width: size * 0.32, height: size * 0.32,
-        decoration: BoxDecoration(color: c.card, shape: BoxShape.circle,
-          border: Border.all(color: const Color(0xFFF59E0B), width: 1.5)),
-        child: Icon(LucideIcons.bookmark, size: size * 0.16, color: const Color(0xFFF59E0B)),
-      )),
+      if (online)
+        Positioned(
+            right: 1,
+            bottom: 1,
+            child: Container(
+              width: size * 0.28,
+              height: size * 0.28,
+              decoration: BoxDecoration(
+                  color: const Color(0xFF22C55E),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: c.background, width: 1.5)),
+            )),
+      if (isSelf)
+        Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              width: size * 0.32,
+              height: size * 0.32,
+              decoration: BoxDecoration(
+                  color: c.card,
+                  shape: BoxShape.circle,
+                  border:
+                      Border.all(color: const Color(0xFFF59E0B), width: 1.5)),
+              child: Icon(LucideIcons.bookmark,
+                  size: size * 0.16, color: const Color(0xFFF59E0B)),
+            )),
     ]);
   }
 }
@@ -597,26 +1043,38 @@ class _LastMessage extends StatelessWidget {
   final Conversation conv;
   final AlsamosColors c;
   final bool unread;
-  const _LastMessage({required this.conv, required this.c, required this.unread});
+  const _LastMessage(
+      {required this.conv, required this.c, required this.unread});
   @override
   Widget build(BuildContext context) {
     final draft = chatDrafts[conv.id];
     if (draft != null) {
       return Text.rich(
         TextSpan(children: [
-          const TextSpan(text: 'Qoralama: ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500)),
-          TextSpan(text: draft, style: TextStyle(color: unread ? c.foreground : c.mutedForeground)),
+          const TextSpan(
+              text: 'Qoralama: ',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500)),
+          TextSpan(
+              text: draft,
+              style:
+                  TextStyle(color: unread ? c.foreground : c.mutedForeground)),
         ]),
-        maxLines: 1, overflow: TextOverflow.ellipsis,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 13),
       );
     }
-    
+
     final msg = conv.lastMessage;
     if (msg == null || msg.isEmpty) {
-      return Text('Hali xabar yo\'q', style: TextStyle(fontSize: 12, color: c.mutedForeground), maxLines: 1, overflow: TextOverflow.ellipsis);
+      return Text('Hali xabar yo\'q',
+          style: TextStyle(fontSize: 12, color: c.mutedForeground),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis);
     }
-    IconData? icon; Color iconColor = c.mutedForeground; String text = msg;
+    IconData? icon;
+    Color iconColor = c.mutedForeground;
+    String text = msg;
     if (msg.startsWith('{') && msg.contains('"type"')) {
       try {
         final d = jsonDecode(msg) as Map<String, dynamic>;
@@ -625,52 +1083,86 @@ class _LastMessage extends StatelessWidget {
           final isVideo = t == 'video';
           final status = d['status'] as String?;
           switch (status) {
-            case 'missed': text = isVideo ? "O'tkazib yuborilgan video" : "O'tkazib yuborilgan qo'ng'iroq"; icon = LucideIcons.phoneMissed; iconColor = Colors.red; break;
-            case 'declined': text = isVideo ? "Rad etilgan video" : "Rad etilgan qo'ng'iroq"; icon = LucideIcons.phoneOff; iconColor = Colors.orange; break;
+            case 'missed':
+              text = isVideo
+                  ? "O'tkazib yuborilgan video"
+                  : "O'tkazib yuborilgan qo'ng'iroq";
+              icon = LucideIcons.phoneMissed;
+              iconColor = Colors.red;
+              break;
+            case 'declined':
+              text = isVideo ? "Rad etilgan video" : "Rad etilgan qo'ng'iroq";
+              icon = LucideIcons.phoneOff;
+              iconColor = Colors.orange;
+              break;
             default:
               text = isVideo ? "Video qo'ng'iroq" : "Qo'ng'iroq";
               final dur = d['duration'];
-              if (dur is num) { final m = dur ~/ 60; final s = (dur.toInt() % 60).toString().padLeft(2,'0'); text += ' ($m:$s)'; }
-              icon = isVideo ? LucideIcons.video : LucideIcons.phone; iconColor = Colors.green;
+              if (dur is num) {
+                final m = dur ~/ 60;
+                final s = (dur.toInt() % 60).toString().padLeft(2, '0');
+                text += ' ($m:$s)';
+              }
+              icon = isVideo ? LucideIcons.video : LucideIcons.phone;
+              iconColor = Colors.green;
           }
         }
       } catch (_) {}
     }
     return Row(children: [
-      if (icon != null) ...[Icon(icon, size: 13, color: iconColor), const SizedBox(width: 3)],
-      Expanded(child: Text(text,
-        maxLines: 1, overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 12, color: unread ? c.foreground : c.mutedForeground,
-          fontWeight: unread ? FontWeight.w500 : FontWeight.normal))),
+      if (icon != null) ...[
+        Icon(icon, size: 13, color: iconColor),
+        const SizedBox(width: 3)
+      ],
+      Expanded(
+          child: Text(text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: unread ? c.foreground : c.mutedForeground,
+                  fontWeight: unread ? FontWeight.w500 : FontWeight.normal))),
     ]);
   }
 }
 
 // ─── Helper Widgets ───────────────────────────────────────────────────────────
 class _HeaderBtn extends StatelessWidget {
-  final IconData icon; final String tooltip; final VoidCallback onTap;
-  final bool isPrimary; final AlsamosColors c;
-  const _HeaderBtn({required this.icon, required this.tooltip, required this.onTap, required this.c, this.isPrimary = false});
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final bool isPrimary;
+  final AlsamosColors c;
+  const _HeaderBtn(
+      {required this.icon,
+      required this.tooltip,
+      required this.onTap,
+      required this.c,
+      this.isPrimary = false});
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Tooltip(
       message: tooltip,
       child: InkWell(
-        onTap: onTap, borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
         child: Container(
-          width: 36, height: 36, margin: const EdgeInsets.only(left: 4),
+          width: 36,
+          height: 36,
+          margin: const EdgeInsets.only(left: 4),
           decoration: BoxDecoration(
             color: isPrimary ? theme.colorScheme.primary : c.muted,
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 16, color: isPrimary ? theme.colorScheme.onPrimary : c.foreground),
+          child: Icon(icon,
+              size: 16,
+              color: isPrimary ? theme.colorScheme.onPrimary : c.foreground),
         ),
       ),
     );
   }
 }
-
 
 class _NoChatSelected extends StatelessWidget {
   final AlsamosColors c;
@@ -678,39 +1170,77 @@ class _NoChatSelected extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Container(width: 80, height: 80, decoration: BoxDecoration(color: theme.colorScheme.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
-        child: Icon(LucideIcons.messageCircle, size: 36, color: theme.colorScheme.primary)),
+    return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle),
+          child: Icon(LucideIcons.messageCircle,
+              size: 36, color: theme.colorScheme.primary)),
       const SizedBox(height: 16),
-      Text('Suhbat tanlang', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: c.foreground)),
+      Text('Suhbat tanlang',
+          style: TextStyle(
+              fontSize: 18, fontWeight: FontWeight.w600, color: c.foreground)),
       const SizedBox(height: 6),
-      Text('Chap tomondagi ro\'yxatdan suhbat tanlang', style: TextStyle(fontSize: 13, color: c.mutedForeground)),
+      Text('Chap tomondagi ro\'yxatdan suhbat tanlang',
+          style: TextStyle(fontSize: 13, color: c.mutedForeground)),
     ]));
   }
 }
 
 class _EmptyState extends StatelessWidget {
-  final String tab; final AlsamosColors c; final VoidCallback onNewChat;
-  const _EmptyState({required this.tab, required this.c, required this.onNewChat});
+  final String tab;
+  final AlsamosColors c;
+  final VoidCallback onNewChat;
+  const _EmptyState(
+      {required this.tab, required this.c, required this.onNewChat});
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    IconData icon; String title, sub;
+    IconData icon;
+    String title, sub;
     switch (tab) {
-      case 'archived': icon = LucideIcons.archive; title = 'Arxiv bo\'sh'; sub = 'Arxivlangan suhbatlar bu yerda ko\'rinadi'; break;
-      case 'requests': icon = LucideIcons.inbox; title = 'So\'rovlar yo\'q'; sub = 'Yangi xabar so\'rovlari bu yerda ko\'rinadi'; break;
-      default: icon = LucideIcons.messageCircle; title = 'Suhbatlar yo\'q'; sub = 'Birinchi suhbatni boshlang!';
+      case 'archived':
+        icon = LucideIcons.archive;
+        title = 'Arxiv bo\'sh';
+        sub = 'Arxivlangan suhbatlar bu yerda ko\'rinadi';
+        break;
+      case 'requests':
+        icon = LucideIcons.inbox;
+        title = 'So\'rovlar yo\'q';
+        sub = 'Yangi xabar so\'rovlari bu yerda ko\'rinadi';
+        break;
+      default:
+        icon = LucideIcons.messageCircle;
+        title = 'Suhbatlar yo\'q';
+        sub = 'Birinchi suhbatni boshlang!';
     }
-    return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Container(width: 64, height: 64, decoration: BoxDecoration(color: theme.colorScheme.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
-        child: Icon(icon, size: 28, color: theme.colorScheme.primary)),
+    return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle),
+          child: Icon(icon, size: 28, color: theme.colorScheme.primary)),
       const SizedBox(height: 12),
-      Text(title, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: c.foreground)),
+      Text(title,
+          style: TextStyle(
+              fontWeight: FontWeight.w600, fontSize: 15, color: c.foreground)),
       const SizedBox(height: 4),
-      Text(sub, style: TextStyle(fontSize: 12, color: c.mutedForeground), textAlign: TextAlign.center),
+      Text(sub,
+          style: TextStyle(fontSize: 12, color: c.mutedForeground),
+          textAlign: TextAlign.center),
       if (tab == 'private') ...[
         const SizedBox(height: 16),
-        ElevatedButton.icon(onPressed: onNewChat, icon: const Icon(LucideIcons.plus, size: 16), label: const Text('Yangi suhbat')),
+        ElevatedButton.icon(
+            onPressed: onNewChat,
+            icon: const Icon(LucideIcons.plus, size: 16),
+            label: const Text('Yangi suhbat')),
       ],
     ]));
   }
@@ -730,18 +1260,34 @@ class _NewChatSheetState extends ConsumerState<_NewChatSheet> {
   bool _loading = false;
 
   @override
-  void dispose() { _searchCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _search(String q) async {
-    if (q.length < 2) { setState(() => _results = []); return; }
+    if (q.length < 2) {
+      setState(() => _results = []);
+      return;
+    }
     setState(() => _loading = true);
     try {
       final res = await Supabase.instance.client
-        .from('profiles').select('id, username, display_name, avatar_url, is_verified')
-        .or('username.ilike.%$q%,display_name.ilike.%$q%').limit(20);
+          .from('profiles')
+          .select('id, username, display_name, avatar_url, is_verified')
+          .or('username.ilike.%$q%,display_name.ilike.%$q%')
+          .limit(20);
       final userId = ref.read(authProvider).user?.id;
-      setState(() { _results = (res as List).where((p) => p['id'] != userId).cast<Map<String,dynamic>>().toList(); });
-    } catch (_) {} finally { setState(() => _loading = false); }
+      setState(() {
+        _results = (res as List)
+            .where((p) => p['id'] != userId)
+            .cast<Map<String, dynamic>>()
+            .toList();
+      });
+    } catch (_) {
+    } finally {
+      setState(() => _loading = false);
+    }
   }
 
   Future<void> _start(Map<String, dynamic> profile) async {
@@ -749,14 +1295,20 @@ class _NewChatSheetState extends ConsumerState<_NewChatSheet> {
     if (userId == null) return;
     setState(() => _loading = true);
     try {
-      final convId = await const MessagesRepository().createPrivateConversation(userId, profile['id'] as String);
+      final convId = await const MessagesRepository()
+          .createPrivateConversation(userId, profile['id'] as String);
       if (convId != null && mounted) {
         await ref.read(conversationsProvider.notifier).load();
         final convs = ref.read(conversationsProvider).valueOrNull ?? [];
         final conv = convs.where((c) => c.id == convId).firstOrNull;
-        if (conv != null && mounted) { widget.onCreated(conv); }
+        if (conv != null && mounted) {
+          widget.onCreated(conv);
+        }
       }
-    } catch (_) {} finally { if (mounted) setState(() => _loading = false); }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -766,83 +1318,130 @@ class _NewChatSheetState extends ConsumerState<_NewChatSheet> {
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
       margin: const EdgeInsets.all(0),
-      decoration: BoxDecoration(color: c.card, borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+      decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
       child: Column(children: [
-        Container(margin: const EdgeInsets.only(top: 10, bottom: 8), width: 36, height: 4,
-          decoration: BoxDecoration(color: c.border, borderRadius: BorderRadius.circular(2))),
-        Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: Row(children: [
-            const Icon(LucideIcons.userPlus, size: 20),
-            const SizedBox(width: 8),
-            const Text('Yangi suhbat', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            const Spacer(),
-            IconButton(icon: const Icon(LucideIcons.x), onPressed: () => Navigator.pop(context)),
-          ])),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: TextField(
-            controller: _searchCtrl, autofocus: true,
-            onChanged: _search,
-            decoration: InputDecoration(
-              hintText: 'Foydalanuvchi qidirish...',
-              prefixIcon: const Icon(LucideIcons.search, size: 18),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.border)),
-              filled: true, fillColor: c.muted,
-            ),
-          )),
+        Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 8),
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+                color: c.border, borderRadius: BorderRadius.circular(2))),
+        Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Row(children: [
+              const Icon(LucideIcons.userPlus, size: 20),
+              const SizedBox(width: 8),
+              const Text('Yangi suhbat',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              IconButton(
+                  icon: const Icon(LucideIcons.x),
+                  onPressed: () => Navigator.pop(context)),
+            ])),
+        Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _searchCtrl,
+              autofocus: true,
+              onChanged: _search,
+              decoration: InputDecoration(
+                hintText: 'Foydalanuvchi qidirish...',
+                prefixIcon: const Icon(LucideIcons.search, size: 18),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: c.border)),
+                filled: true,
+                fillColor: c.muted,
+              ),
+            )),
         const SizedBox(height: 8),
-        Expanded(child: _loading
-          ? Center(child: CircularProgressIndicator(color: theme.colorScheme.primary))
-          : _searchCtrl.text.isEmpty
-            ? ListView(
-                children: [
-                  ListTile(
-                    leading: const CircleAvatar(backgroundColor: Colors.blue, child: Icon(LucideIcons.users, color: Colors.white, size: 20)),
-                    title: const Text('Yangi guruh', style: TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: const Text('A\'zolar qo\'shing va muloqot boshlang', style: TextStyle(fontSize: 12)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      CreateGroupChannelSheet.show(
-                        context,
-                        isChannel: false,
-                        onCreated: widget.onCreated,
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const CircleAvatar(backgroundColor: Colors.orange, child: Icon(LucideIcons.megaphone, color: Colors.white, size: 20)),
-                    title: const Text('Yangi kanal', style: TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: const Text('Ommaga xabar tarqating', style: TextStyle(fontSize: 12)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      CreateGroupChannelSheet.show(
-                        context,
-                        isChannel: true,
-                        onCreated: widget.onCreated,
-                      );
-                    },
-                  ),
-                ],
-              )
-            : _results.isEmpty && _searchCtrl.text.length >= 2
-              ? Center(child: Text('Topilmadi', style: TextStyle(color: c.mutedForeground)))
-              : ListView.builder(
-                  itemCount: _results.length,
-                  itemBuilder: (_, i) {
-                    final p = _results[i];
-                    final name = p['display_name'] as String? ?? p['username'] as String? ?? 'Unknown';
-                    final avatar = p['avatar_url'] as String?;
-                    return ListTile(
-                      leading: avatar != null && avatar.isNotEmpty
-                        ? CircleAvatar(backgroundImage: NetworkImage(avatar))
-                        : CircleAvatar(backgroundColor: theme.colorScheme.primary,
-                            child: Text(name[0].toUpperCase(), style: const TextStyle(color: Colors.white))),
-                      title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: p['username'] != null ? Text('@${p['username']}', style: TextStyle(color: c.mutedForeground, fontSize: 12)) : null,
-                      trailing: p['is_verified'] == true ? const VerifiedBadge(size: 16) : null,
-                      onTap: () => _start(p),
-                    );
-                  },
-                ),
+        Expanded(
+          child: _loading
+              ? Center(
+                  child: CircularProgressIndicator(
+                      color: theme.colorScheme.primary))
+              : _searchCtrl.text.isEmpty
+                  ? ListView(
+                      children: [
+                        ListTile(
+                          leading: const CircleAvatar(
+                              backgroundColor: Colors.blue,
+                              child: Icon(LucideIcons.users,
+                                  color: Colors.white, size: 20)),
+                          title: const Text('Yangi guruh',
+                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: const Text(
+                              'A\'zolar qo\'shing va muloqot boshlang',
+                              style: TextStyle(fontSize: 12)),
+                          onTap: () {
+                            Navigator.pop(context);
+                            CreateGroupChannelSheet.show(
+                              context,
+                              isChannel: false,
+                              onCreated: widget.onCreated,
+                            );
+                          },
+                        ),
+                        ListTile(
+                          leading: const CircleAvatar(
+                              backgroundColor: Colors.orange,
+                              child: Icon(LucideIcons.megaphone,
+                                  color: Colors.white, size: 20)),
+                          title: const Text('Yangi kanal',
+                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: const Text('Ommaga xabar tarqating',
+                              style: TextStyle(fontSize: 12)),
+                          onTap: () {
+                            Navigator.pop(context);
+                            CreateGroupChannelSheet.show(
+                              context,
+                              isChannel: true,
+                              onCreated: widget.onCreated,
+                            );
+                          },
+                        ),
+                      ],
+                    )
+                  : _results.isEmpty && _searchCtrl.text.length >= 2
+                      ? Center(
+                          child: Text('Topilmadi',
+                              style: TextStyle(color: c.mutedForeground)))
+                      : ListView.builder(
+                          itemCount: _results.length,
+                          itemBuilder: (_, i) {
+                            final p = _results[i];
+                            final name = p['display_name'] as String? ??
+                                p['username'] as String? ??
+                                'Unknown';
+                            final avatar = p['avatar_url'] as String?;
+                            return ListTile(
+                              leading: avatar != null && avatar.isNotEmpty
+                                  ? CircleAvatar(
+                                      backgroundImage: NetworkImage(avatar))
+                                  : CircleAvatar(
+                                      backgroundColor:
+                                          theme.colorScheme.primary,
+                                      child: Text(name[0].toUpperCase(),
+                                          style: const TextStyle(
+                                              color: Colors.white))),
+                              title: Text(name,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600)),
+                              subtitle: p['username'] != null
+                                  ? Text('@${p['username']}',
+                                      style: TextStyle(
+                                          color: c.mutedForeground,
+                                          fontSize: 12))
+                                  : null,
+                              trailing: p['is_verified'] == true
+                                  ? const VerifiedBadge(size: 16)
+                                  : null,
+                              onTap: () => _start(p),
+                            );
+                          },
+                        ),
         ),
       ]),
     );

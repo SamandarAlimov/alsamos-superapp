@@ -26,15 +26,9 @@ class BottomNavbar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = AlsamosColors.of(context);
 
-    // Safely get current location
-    String location = AppRoutes.home;
-    try {
-      final router = GoRouter.of(context);
-      location = router.routerDelegate.currentConfiguration.uri.path;
-    } catch (_) {
-      // Fallback if GoRouter context is not available
-      location = AppRoutes.home;
-    }
+    // Use the matched route from this build context so nested mobile pages keep
+    // the correct bottom-nav item active.
+    final location = GoRouterState.of(context).uri.path;
 
     final profile = ref.watch(authProvider).profile;
     final convState = ref.watch(conversationsProvider);
