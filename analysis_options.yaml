@@ -1,0 +1,40 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    unused_import: info
+    unused_local_variable: info
+    unused_element: info
+    unused_field: info
+    deprecated_member_use: info
+    deprecated_member_use_from_same_package: info
+    dead_code: info
+    avoid_print: info
+    prefer_const_constructors: ignore
+    prefer_const_literals_to_create_immutables: ignore
+    use_key_in_widget_constructors: ignore
+    use_super_parameters: ignore
+    unnecessary_const: ignore
+    constant_identifier_names: ignore
+    library_private_types_in_public_api: ignore
+    no_leading_underscores_for_local_identifiers: ignore
+    file_names: ignore
+    invalid_use_of_protected_member: ignore
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "build/**"
+    - "**/.dart_tool/**"
+
+linter:
+  rules:
+    avoid_print: false
+    use_build_context_synchronously: false
+    prefer_const_constructors: false
+    prefer_const_literals_to_create_immutables: false
+    use_key_in_widget_constructors: false
+    use_super_parameters: false
+    unnecessary_const: false
+    constant_identifier_names: false
+    library_private_types_in_public_api: false
+    no_leading_underscores_for_local_identifiers: false

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string></string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>$(PRODUCT_COPYRIGHT)</string>
+	<key>NSMainNibFile</key>
+	<string>MainMenu</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Alsamos kameradan suratga olish va videolar uchun foydalanadi</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Alsamos ovozli xabar va qo'ng'iroqlar uchun mikrofondan foydalanadi</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Alsamos joylashuvga asoslangan funksiyalar uchun foydalanadi</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Alsamos joylashuvga asoslangan funksiyalar uchun foydalanadi</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Alsamos rasm va video tanlash uchun galereyadan foydalanadi</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Alsamos saqlangan media fayllarni galereyaga qo'shadi</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Alsamos do'stlaringizni topish uchun kontaktlardan foydalanadi</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
