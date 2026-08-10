@@ -14,24 +14,27 @@ void main() {
           ),
           bottomNavigationBar: SafeArea(
             top: false,
-            child: Container(
-              key: const Key('bottom_nav'),
-              height: 60,
-              margin: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: List.generate(
-                  5,
-                  (i) => ConstrainedBox(
-                    constraints: const BoxConstraints(minWidth: 56),
-                    child: SizedBox(
-                      height: 60,
-                      child: Center(
-                        child: Icon(Icons.home, key: Key('nav_item_$i')),
+            minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: Container(
+                key: const Key('bottom_nav'),
+                height: 60,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: List.generate(
+                    5,
+                    (i) => ConstrainedBox(
+                      constraints: const BoxConstraints(minWidth: 56),
+                      child: SizedBox(
+                        height: 60,
+                        child: Center(
+                          child: Icon(Icons.home, key: Key('nav_item_$i')),
+                        ),
                       ),
                     ),
                   ),
@@ -61,8 +64,10 @@ void main() {
 
       expect(navPosition.dx, greaterThanOrEqualTo(0));
       expect(navPosition.dy, greaterThanOrEqualTo(0));
+      expect(navPosition.dx, greaterThanOrEqualTo(12));
       expect(navPosition.dx + navSize.width, lessThanOrEqualTo(360));
-      expect(navPosition.dy + navSize.height, lessThanOrEqualTo(640));
+      expect(navPosition.dx + navSize.width, lessThanOrEqualTo(348));
+      expect(navPosition.dy + navSize.height, lessThanOrEqualTo(628));
 
       for (var i = 0; i < 5; i++) {
         expect(find.byKey(Key('nav_item_$i')), findsOneWidget);
@@ -87,15 +92,18 @@ void main() {
 
       expect(navPosition.dx, greaterThanOrEqualTo(0));
       expect(navPosition.dy, greaterThanOrEqualTo(0));
+      expect(navPosition.dx, greaterThanOrEqualTo(12));
       expect(navPosition.dx + navSize.width, lessThanOrEqualTo(320));
-      expect(navPosition.dy + navSize.height, lessThanOrEqualTo(480));
+      expect(navPosition.dx + navSize.width, lessThanOrEqualTo(308));
+      expect(navPosition.dy + navSize.height, lessThanOrEqualTo(468));
 
       for (var i = 0; i < 5; i++) {
         expect(find.byKey(Key('nav_item_$i')), findsOneWidget);
       }
     });
 
-    testWidgets('body content does not extend behind bottom nav', (tester) async {
+    testWidgets('body content does not extend behind bottom nav',
+        (tester) async {
       tester.view.physicalSize = const Size(360, 640);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() => tester.view.resetPhysicalSize());

@@ -25,6 +25,8 @@ class BottomNavbar extends ConsumerWidget {
 
   static const double _barHeight = 64;
   static const double _itemHeight = 64;
+  static const double _horizontalMargin = 12;
+  static const double _bottomMargin = 12;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -51,10 +53,14 @@ class BottomNavbar extends ConsumerWidget {
       ),
       child: SafeArea(
         top: false,
-        minimum: const EdgeInsets.only(bottom: 8),
-        child: Container(
+        minimum: const EdgeInsets.fromLTRB(
+          _horizontalMargin,
+          0,
+          _horizontalMargin,
+          _bottomMargin,
+        ),
+        child: SizedBox(
           width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(16), // rounded-2xl
             child: BackdropFilter(
