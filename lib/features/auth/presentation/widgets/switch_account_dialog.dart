@@ -8,6 +8,8 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../../shared/navigation/app_routes.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 import '../providers/auth_provider.dart';
 
 /// Ported from web `SwitchAccountDialog.tsx`.
@@ -66,7 +68,7 @@ class _SwitchAccountDialogState extends ConsumerState<SwitchAccountDialog> {
     if (!mounted) return;
     setState(() => _switchingId = null);
     if (result.error != null) {
-      _toast(result.error!, destructive: true);
+      AppToast.error(context, friendlyError(result.error));
       return;
     }
     Navigator.of(context).pop();
@@ -83,18 +85,11 @@ class _SwitchAccountDialogState extends ConsumerState<SwitchAccountDialog> {
       _removingId = null;
       if (ok) _accounts = _accounts.where((x) => x.id != a.id).toList();
     });
-    _toast(ok ? "Akkaunt o'chirildi" : "Faol akkauntni o'chirib bo'lmaydi",
-        destructive: !ok);
-  }
-
-  void _toast(String msg, {bool destructive = false}) {
-    final c = AlsamosColors.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: destructive ? c.destructive : c.foreground,
-      duration: const Duration(seconds: 2),
-      behavior: SnackBarBehavior.floating,
-    ));
+    if (ok) {
+      AppToast.success(context, "Akkaunt o'chirildi");
+    } else {
+      AppToast.error(context, "Faol akkauntni o'chirib bo'lmaydi");
+    }
   }
 
   @override

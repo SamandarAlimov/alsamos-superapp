@@ -283,3 +283,104 @@ class Destination {
   final String name;
   const Destination({required this.lat, required this.lng, required this.name});
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-feature map markers (Marketplace, Events, Social)
+// ─────────────────────────────────────────────────────────────────────────────
+class MarketplaceMapMarker {
+  final String id;
+  final String name;
+  final double latitude;
+  final double longitude;
+  final String type; // product|store
+  final String? imageUrl;
+  final double? price;
+  const MarketplaceMapMarker({
+    required this.id,
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+    required this.type,
+    this.imageUrl,
+    this.price,
+  });
+}
+
+class EventMapMarker {
+  final String id;
+  final String title;
+  final double latitude;
+  final double longitude;
+  final DateTime startTime;
+  final String? imageUrl;
+  final int attendeeCount;
+  const EventMapMarker({
+    required this.id,
+    required this.title,
+    required this.latitude,
+    required this.longitude,
+    required this.startTime,
+    this.imageUrl,
+    this.attendeeCount = 0,
+  });
+}
+
+class SocialPostMapMarker {
+  final String id;
+  final String authorName;
+  final String? authorAvatar;
+  final double latitude;
+  final double longitude;
+  final String? content;
+  final String? locationName;
+  final String? locationAddress;
+  final String? mediaUrl;
+  final DateTime createdAt;
+  const SocialPostMapMarker({
+    required this.id,
+    required this.authorName,
+    this.authorAvatar,
+    required this.latitude,
+    required this.longitude,
+    this.content,
+    this.locationName,
+    this.locationAddress,
+    this.mediaUrl,
+    required this.createdAt,
+  });
+}
+
+class TaxiDriverMarker {
+  final String driverId;
+  final double latitude;
+  final double longitude;
+  final double? heading;
+  final double? speedKmh;
+  final bool isAvailable;
+  final String? vehicleType;
+  final String? licensePlate;
+  final DateTime lastUpdated;
+  const TaxiDriverMarker({
+    required this.driverId,
+    required this.latitude,
+    required this.longitude,
+    this.heading,
+    this.speedKmh,
+    this.isAvailable = true,
+    this.vehicleType,
+    this.licensePlate,
+    required this.lastUpdated,
+  });
+
+  factory TaxiDriverMarker.fromJson(Map<String, dynamic> json) => TaxiDriverMarker(
+        driverId: json['driver_id']?.toString() ?? '',
+        latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
+        longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+        heading: (json['heading'] as num?)?.toDouble(),
+        speedKmh: (json['speed_kmh'] as num?)?.toDouble(),
+        isAvailable: json['is_available'] == true,
+        vehicleType: json['vehicle_type']?.toString(),
+        licensePlate: json['license_plate']?.toString(),
+        lastUpdated: DateTime.tryParse(json['last_updated']?.toString() ?? '') ?? DateTime.now(),
+      );
+}

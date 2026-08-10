@@ -4,6 +4,10 @@ class UserSettings {
   final bool readReceiptsEnabled;
   final String callPermissions;
   final String groupInvitePermissions;
+  final String phoneVisibility;
+  final String profilePhotoVisibility;
+  final String forwardsVisibility;
+  final bool privateAccount;
   final bool twoFactorEnabled;
   final bool notificationSounds;
   final bool notificationPreview;
@@ -19,6 +23,10 @@ class UserSettings {
     this.readReceiptsEnabled = true,
     this.callPermissions = 'everyone',
     this.groupInvitePermissions = 'everyone',
+    this.phoneVisibility = 'contacts',
+    this.profilePhotoVisibility = 'everyone',
+    this.forwardsVisibility = 'everyone',
+    this.privateAccount = false,
     this.twoFactorEnabled = false,
     this.notificationSounds = true,
     this.notificationPreview = true,
@@ -31,10 +39,17 @@ class UserSettings {
   });
 
   factory UserSettings.fromMap(Map<String, dynamic> m) => UserSettings(
-        lastSeenVisibility: (m['last_seen_visibility'] as String?) ?? 'everyone',
+        lastSeenVisibility:
+            (m['last_seen_visibility'] as String?) ?? 'everyone',
         readReceiptsEnabled: (m['read_receipts_enabled'] as bool?) ?? true,
         callPermissions: (m['call_permissions'] as String?) ?? 'everyone',
-        groupInvitePermissions: (m['group_invite_permissions'] as String?) ?? 'everyone',
+        groupInvitePermissions:
+            (m['group_invite_permissions'] as String?) ?? 'everyone',
+        phoneVisibility: (m['phone_visibility'] as String?) ?? 'contacts',
+        profilePhotoVisibility:
+            (m['profile_photo_visibility'] as String?) ?? 'everyone',
+        forwardsVisibility: (m['forwards_visibility'] as String?) ?? 'everyone',
+        privateAccount: (m['private_account'] as bool?) ?? false,
         twoFactorEnabled: (m['two_factor_enabled'] as bool?) ?? false,
         notificationSounds: (m['notification_sounds'] as bool?) ?? true,
         notificationPreview: (m['notification_preview'] as bool?) ?? true,
@@ -54,6 +69,10 @@ class UserSettings {
         'read_receipts_enabled': readReceiptsEnabled,
         'call_permissions': callPermissions,
         'group_invite_permissions': groupInvitePermissions,
+        'phone_visibility': phoneVisibility,
+        'profile_photo_visibility': profilePhotoVisibility,
+        'forwards_visibility': forwardsVisibility,
+        'private_account': privateAccount,
         'two_factor_enabled': twoFactorEnabled,
         'notification_sounds': notificationSounds,
         'notification_preview': notificationPreview,
@@ -94,7 +113,9 @@ class UserSession {
         osName: m['os_name'] as String?,
         browserName: m['browser_name'] as String?,
         ipAddress: m['ip_address'] as String?,
-        lastActiveAt: m['last_active_at'] != null ? DateTime.tryParse(m['last_active_at'] as String)?.toLocal() : null,
+        lastActiveAt: m['last_active_at'] != null
+            ? DateTime.tryParse(m['last_active_at'] as String)?.toLocal()
+            : null,
         isCurrent: (m['is_current'] as bool?) ?? false,
       );
 

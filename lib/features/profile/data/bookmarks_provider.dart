@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -61,8 +63,14 @@ final bookmarksProvider =
         .whereType<BookmarkedPost>()
         .toList();
     return list;
-  } catch (_) {
-    // Table may not exist yet — fall back to empty.
+  } catch (e, stack) {
+    developer.log(
+      'bookmarksProvider fetch failed',
+      name: 'profile.bookmarks_provider',
+      error: e,
+      stackTrace: stack,
+      level: 1000,
+    );
     return const [];
   }
 });
@@ -89,7 +97,14 @@ class BookmarkActions {
         });
         return true;
       }
-    } catch (_) {
+    } catch (e, stack) {
+      developer.log(
+        'BookmarkActions.toggle failed for postId=$postId',
+        name: 'profile.bookmarks_provider',
+        error: e,
+        stackTrace: stack,
+        level: 1000,
+      );
       return false;
     }
   }

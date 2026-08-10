@@ -22,12 +22,14 @@ class MessageReactionChips extends StatelessWidget {
   final List<ReactionGroup> reactions;
   final bool isMine;
   final void Function(String emoji) onToggle;
+  final void Function(String emoji)? onInspect;
   final VoidCallback? onAdd;
   const MessageReactionChips({
     super.key,
     required this.reactions,
     required this.isMine,
     required this.onToggle,
+    this.onInspect,
     this.onAdd,
   });
 
@@ -45,15 +47,29 @@ class MessageReactionChips extends StatelessWidget {
         children: [
           for (final r in reactions)
             InkWell(
-              onTap: () { HapticFeedback.selectionClick(); onToggle(r.emoji); },
+              onTap: () {
+                HapticFeedback.selectionClick();
+                if (onInspect != null) {
+                  onInspect!(r.emoji);
+                } else {
+                  onToggle(r.emoji);
+                }
+              },
+              onLongPress: () {
+                HapticFeedback.mediumImpact();
+                onToggle(r.emoji);
+              },
               borderRadius: BorderRadius.circular(20),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: r.hasReacted ? primary.withValues(alpha: 0.2) : c.muted,
+                  color:
+                      r.hasReacted ? primary.withValues(alpha: 0.2) : c.muted,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: r.hasReacted ? primary.withValues(alpha: 0.3) : Colors.transparent,
+                    color: r.hasReacted
+                        ? primary.withValues(alpha: 0.3)
+                        : Colors.transparent,
                     width: 1,
                   ),
                 ),
@@ -86,7 +102,8 @@ class MessageReactionChips extends StatelessWidget {
                   color: c.muted,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(LucideIcons.plus, size: 12, color: c.mutedForeground),
+                child:
+                    Icon(LucideIcons.plus, size: 12, color: c.mutedForeground),
               ),
             ),
         ],
@@ -98,7 +115,14 @@ class MessageReactionChips extends StatelessWidget {
 /// v34: uzun bosish reaksiya tanlash bar'i (Telegram/Instagram uslubida).
 /// O'zi `OverlayEntry` ko'rinishida chiqariladi (`MessageReactionsOverlay.show`).
 class MessageReactionsOverlay {
-  static const List<String> defaultEmojis = ['❤️', '😂', '😮', '😢', '😠', '👍'];
+  static const List<String> defaultEmojis = [
+    '❤️',
+    '😂',
+    '😮',
+    '😢',
+    '😠',
+    '👍'
+  ];
 
   static OverlayEntry? _entry;
 
@@ -145,8 +169,16 @@ class MessageReactionsOverlay {
             ),
             child: _ReactionBar(
               emojis: list,
-              onSelect: (e) { hide(); onSelect(e); },
-              onAddMore: onAddMore == null ? null : () { hide(); onAddMore(); },
+              onSelect: (e) {
+                hide();
+                onSelect(e);
+              },
+              onAddMore: onAddMore == null
+                  ? null
+                  : () {
+                      hide();
+                      onAddMore();
+                    },
             ),
           ),
         ),
@@ -196,7 +228,10 @@ class _ReactionBar extends StatelessWidget {
           children: [
             for (final e in emojis)
               InkWell(
-                onTap: () { HapticFeedback.lightImpact(); onSelect(e); },
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  onSelect(e);
+                },
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
                   width: 36,
@@ -219,7 +254,8 @@ class _ReactionBar extends StatelessWidget {
                     color: c.muted,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(LucideIcons.plus, size: 16, color: c.mutedForeground),
+                  child: Icon(LucideIcons.plus,
+                      size: 16, color: c.mutedForeground),
                 ),
               ),
           ],

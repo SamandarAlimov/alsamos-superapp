@@ -5,6 +5,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/payment_provider.dart';
 
@@ -58,10 +59,7 @@ class _AddMoneyDialogState extends ConsumerState<AddMoneyDialog> {
       if (!mounted) return;
       ref.invalidate(paymentProvider);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text("To'lov yaratildi: ${_fmt(amount)} so'm — tasdiqlash kutilmoqda"),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ));
+      AppToast.info(context, "To'lov yaratildi: ${_fmt(amount)} so'm — tasdiqlash kutilmoqda");
     } catch (e) {
       if (!mounted) return;
       setState(() { _loading = false; _error = 'Xatolik: $e'; });

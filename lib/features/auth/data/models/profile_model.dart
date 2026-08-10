@@ -9,6 +9,7 @@ class Profile {
   final String? location;
   final String? website;
   final bool isAdmin;
+  final String? role; // 'user', 'admin', 'super_admin', 'moderator'
 
   const Profile({
     required this.id,
@@ -20,6 +21,7 @@ class Profile {
     this.location,
     this.website,
     this.isAdmin = false,
+    this.role,
   });
 
   factory Profile.fromMap(Map<String, dynamic> map) => Profile(
@@ -32,6 +34,7 @@ class Profile {
         location: map['location'] as String?,
         website: map['website'] as String?,
         isAdmin: (map['is_admin'] as bool?) ?? false,
+        role: map['role'] as String?,
       );
 
   Profile copyWith({
@@ -43,6 +46,7 @@ class Profile {
     String? location,
     String? website,
     bool? isAdmin,
+    String? role,
   }) =>
       Profile(
         id: id,
@@ -54,6 +58,7 @@ class Profile {
         location: location ?? this.location,
         website: website ?? this.website,
         isAdmin: isAdmin ?? this.isAdmin,
+        role: role ?? this.role,
       );
 
   String get initial =>

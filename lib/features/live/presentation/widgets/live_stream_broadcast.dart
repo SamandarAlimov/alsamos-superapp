@@ -8,8 +8,11 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../providers/live_webrtc_service.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
+import '../../../../shared/services/camera_capability.dart';
 
 /// Pixel-perfect Flutter port of web `LiveStreamBroadcast.tsx`.
 ///
@@ -110,6 +113,11 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
   }
 
   Future<void> _initCamera() async {
+    if (!CameraCapability.supportsCameraPreview) {
+      if (!mounted) return;
+      setState(() => _initing = false);
+      return;
+    }
     try {
       _cams = await availableCameras();
       if (_cams.isNotEmpty) {
@@ -144,7 +152,8 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
   void _toggleMute() {
     HapticFeedback.selectionClick();
     setState(() => _isMuted = !_isMuted);
-    for (final track in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) {
+    for (final track
+        in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) {
       track.enabled = !_isMuted;
     }
     _cam?.setDescription(_cams[_camIndex]);
@@ -153,7 +162,8 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
   void _toggleCamera() {
     HapticFeedback.selectionClick();
     setState(() => _isCameraOn = !_isCameraOn);
-    for (final track in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
+    for (final track
+        in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) {
       track.enabled = _isCameraOn;
     }
   }
@@ -164,7 +174,7 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
     final supa = Supabase.instance.client;
     final uid = supa.auth.currentUser?.id;
     if (uid == null) {
-      _snack('Tizimga kiring');
+      AppToast.error(context, 'Tizimga kiring');
       return;
     }
     setState(() => _starting = true);
@@ -194,17 +204,17 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
           .single();
 
       _streamId = r['id'] as String;
-      _startedAt = DateTime.tryParse(r['started_at'] as String? ?? '') ??
-          DateTime.now();
+      _startedAt =
+          DateTime.tryParse(r['started_at'] as String? ?? '') ?? DateTime.now();
       await _startLiveWebRtc(_streamId!);
       _subscribeRealtime(_streamId!);
       _startTimer();
       HapticFeedback.mediumImpact();
       if (!mounted) return;
       setState(() => _isLive = true);
-      _snack('Endi LIVE!', destructive: false);
+      AppToast.success(context, 'Endi LIVE!');
     } catch (e) {
-      _snack('Boshlab bo\'lmadi: $e');
+      AppToast.error(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _starting = false);
     }
@@ -240,7 +250,7 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
       isBroadcaster: true,
       localStream: _localStream,
       onRemoteStream: (_) {},
-      onError: (message) => _snack(message),
+      onError: (message) => AppToast.error(context, message),
     );
     await _liveRtc!.connect();
   }
@@ -349,7 +359,8 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
     final id =
         '${DateTime.now().millisecondsSinceEpoch}-${_floats.length}-$emoji';
     final offset = 16.0 + (DateTime.now().millisecond % 80);
-    setState(() => _floats.add(_FloatingReaction(id: id, emoji: emoji, right: offset)));
+    setState(() =>
+        _floats.add(_FloatingReaction(id: id, emoji: emoji, right: offset)));
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       setState(() => _floats.removeWhere((f) => f.id == id));
@@ -382,14 +393,107 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
     if (mounted) Navigator.pop(context);
   }
 
-  void _snack(String msg, {bool destructive = true}) {
+  Future<void> _showModeration() async {
+    final id = _streamId;
+    if (id == null || !mounted) return;
+    final supa = Supabase.instance.client;
+    final rows = await supa
+        .from('live_stream_viewers')
+        .select(
+            'user_id, last_seen_at, profiles:user_id(username, display_name, avatar_url)')
+        .eq('stream_id', id)
+        .order('last_seen_at', ascending: false);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: destructive ? const Color(0xFFEF4444) : null,
-      ),
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final viewers = List<Map<String, dynamic>>.from(rows as List);
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            children: [
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Live moderation',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle:
+                    Text('Kick yoki ban moderator event sifatida yoziladi'),
+              ),
+              for (final viewer in viewers)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: StoryAvatarRing(
+                    userId: viewer['user_id'] as String?,
+                    avatarUrl:
+                        (viewer['profiles'] as Map?)?['avatar_url'] as String?,
+                    fallback: ((viewer['profiles'] as Map?)?['display_name']
+                                as String? ??
+                            (viewer['profiles'] as Map?)?['username']
+                                as String? ??
+                            '?')
+                        .characters
+                        .first
+                        .toUpperCase(),
+                    size: 38,
+                  ),
+                  title: Text(
+                    (viewer['profiles'] as Map?)?['display_name'] as String? ??
+                        (viewer['profiles'] as Map?)?['username'] as String? ??
+                        viewer['user_id'].toString(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(viewer['last_seen_at']?.toString() ?? ''),
+                  trailing: Wrap(spacing: 6, children: [
+                    TextButton(
+                      onPressed: () => _moderateViewer(
+                        viewer['user_id'].toString(),
+                        'kick',
+                      ),
+                      child: const Text('Kick'),
+                    ),
+                    TextButton(
+                      onPressed: () => _moderateViewer(
+                        viewer['user_id'].toString(),
+                        'ban',
+                      ),
+                      child: const Text('Ban'),
+                    ),
+                  ]),
+                ),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  Future<void> _moderateViewer(String userId, String action) async {
+    final id = _streamId;
+    final moderatorId = Supabase.instance.client.auth.currentUser?.id;
+    if (id == null || moderatorId == null) return;
+    try {
+      await Supabase.instance.client
+          .from('live_stream_moderation_actions')
+          .insert({
+        'stream_id': id,
+        'moderator_id': moderatorId,
+        'target_user_id': userId,
+        'action_type': action,
+      });
+      if (action == 'kick' || action == 'ban') {
+        await Supabase.instance.client
+            .from('live_stream_viewers')
+            .delete()
+            .eq('stream_id', id)
+            .eq('user_id', userId);
+      }
+      AppToast.success(context, action == 'ban' ? 'Viewer ban qilindi' : 'Viewer chiqarildi');
+    } catch (e) {
+      AppToast.error(context, friendlyError(e));
+    }
   }
 
   @override
@@ -445,7 +549,8 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
           Container(
             color: const Color(0xFF101010),
             alignment: Alignment.center,
-            child: UserAvatar(
+            child: StoryAvatarRing(
+              userId: Supabase.instance.client.auth.currentUser?.id,
               avatarUrl: _meAvatar,
               fallback: (_meName ?? 'U')[0].toUpperCase(),
               size: 96,
@@ -460,7 +565,11 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.transparent, Color(0xCC000000)],
+                  colors: [
+                    Colors.transparent,
+                    Colors.transparent,
+                    Color(0xCC000000)
+                  ],
                   stops: [0, 0.5, 1],
                 ),
               ),
@@ -547,8 +656,7 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
                     width: double.infinity,
                     height: 56,
                     child: FilledButton(
-                      onPressed:
-                          _starting || _initing ? null : _goLive,
+                      onPressed: _starting || _initing ? null : _goLive,
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFFEF4444),
                         foregroundColor: Colors.white,
@@ -635,7 +743,8 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
           Container(
             color: const Color(0xFF101010),
             alignment: Alignment.center,
-            child: UserAvatar(
+            child: StoryAvatarRing(
+              userId: Supabase.instance.client.auth.currentUser?.id,
               avatarUrl: _meAvatar,
               fallback: (_meName ?? 'U')[0].toUpperCase(),
               size: 96,
@@ -671,7 +780,8 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
               children: [
                 Row(
                   children: [
-                    UserAvatar(
+                    StoryAvatarRing(
+                      userId: Supabase.instance.client.auth.currentUser?.id,
                       avatarUrl: _meAvatar,
                       fallback: (_meName ?? 'U')[0].toUpperCase(),
                       size: 36,
@@ -731,6 +841,16 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
                     ),
                     SizedBox(
                       height: 32,
+                      child: IconButton(
+                        tooltip: 'Moderation',
+                        onPressed: _showModeration,
+                        icon: const Icon(LucideIcons.shield,
+                            color: Colors.white, size: 19),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      height: 32,
                       child: FilledButton(
                         onPressed: _endStream,
                         style: FilledButton.styleFrom(
@@ -754,8 +874,7 @@ class _LiveStreamBroadcastState extends State<LiveStreamBroadcast>
                       _titleCtrl.text.trim(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 13),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
               ],
@@ -964,7 +1083,8 @@ class _CommentBubble extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          UserAvatar(
+          StoryAvatarRing(
+            userId: null,
             avatarUrl: c.avatarUrl,
             fallback: (c.username ?? '?')[0].toUpperCase(),
             size: 22,
@@ -992,8 +1112,7 @@ class _CommentBubble extends StatelessWidget {
                   ),
                   Text(
                     c.text,
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 13),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ],
               ),
@@ -1034,8 +1153,7 @@ class _FloatingEmojiState extends State<_FloatingEmoji>
           offset: Offset(0, -200 * _c.value),
           child: Transform.scale(
             scale: 1 + _c.value * 0.5,
-            child: Text(widget.emoji,
-                style: const TextStyle(fontSize: 30)),
+            child: Text(widget.emoji, style: const TextStyle(fontSize: 30)),
           ),
         ),
       ),

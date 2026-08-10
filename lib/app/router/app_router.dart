@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -16,8 +16,25 @@ import '../../features/notifications/presentation/pages/notifications_page.dart'
 import '../../features/search/presentation/pages/search_page.dart';
 import '../../features/discover/presentation/discover_page.dart';
 import '../../features/marketplace/presentation/pages/marketplace_page.dart';
+import '../../features/marketplace/presentation/pages/my_orders_page.dart';
+import '../../features/marketplace/presentation/pages/shipping_addresses_page.dart';
+import '../../features/marketplace/presentation/pages/store_profile_page.dart';
 import '../../features/ads/presentation/pages/ads_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
+import '../../features/settings/presentation/pages/profile_settings_page.dart';
+import '../../features/settings/presentation/pages/wallet_settings_page.dart';
+import '../../features/settings/presentation/pages/notifications_settings_page.dart';
+import '../../features/settings/presentation/pages/privacy_settings_page.dart';
+import '../../features/settings/presentation/pages/devices_settings_page.dart';
+import '../../features/settings/presentation/pages/appearance_settings_page.dart';
+import '../../features/settings/presentation/pages/security_settings_page.dart';
+import '../../features/settings/presentation/pages/history_page.dart';
+import '../../features/settings/presentation/pages/messages_settings_page.dart';
+import '../../features/settings/presentation/pages/marketplace_settings_page.dart';
+import '../../features/settings/presentation/pages/map_settings_page.dart';
+import '../../features/settings/presentation/pages/video_settings_page.dart';
+import '../../features/settings/presentation/pages/ai_settings_page.dart';
+import '../../features/settings/presentation/pages/data_storage_settings_page.dart';
 import '../../features/ai/presentation/pages/ai_page.dart';
 import '../../features/map/presentation/pages/map_page.dart';
 import '../../features/activity/presentation/pages/activity_page.dart';
@@ -53,6 +70,16 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       final loggingIn = state.matchedLocation == AppRoutes.auth;
       if (!auth.isAuthenticated) return loggingIn ? null : AppRoutes.auth;
       if (loggingIn) return AppRoutes.home;
+      
+      // Admin route guard: check if user has admin role
+      if (state.matchedLocation.startsWith('/admin')) {
+        final isAdmin = auth.profile?.isAdmin ?? false;
+        if (!isAdmin) {
+          // Non-admin trying to access admin panel -> redirect to settings
+          return AppRoutes.settings;
+        }
+      }
+      
       return null;
     },
     routes: [
@@ -96,6 +123,18 @@ final goRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (c, s) => modalUpPage(c, s, const CreatePage()),
           ),
           GoRoute(
+            path: '/edit-post/:id',
+            pageBuilder: (c, s) {
+              final postId = s.pathParameters['id']!;
+              final editData = s.extra as Map<String, dynamic>?;
+              return modalUpPage(
+                c,
+                s,
+                CreatePage(editPostId: postId, editData: editData),
+              );
+            },
+          ),
+          GoRoute(
             path: AppRoutes.videos,
             pageBuilder: (c, s) => fadeSlidePage(c, s, const VideosPage()),
           ),
@@ -128,6 +167,19 @@ final goRouterProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.marketplace,
             pageBuilder: (c, s) => fadeSlidePage(c, s, const MarketplacePage()),
           ),
+          // Marketplace sub-pages
+          GoRoute(
+            path: '/marketplace/my-orders',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const MyOrdersPage()),
+          ),
+          GoRoute(
+            path: '/marketplace/shipping-addresses',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const ShippingAddressesPage()),
+          ),
+          GoRoute(
+            path: '/marketplace/store-profile',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const StoreProfilePage()),
+          ),
           GoRoute(
             path: AppRoutes.map,
             pageBuilder: (c, s) => fadeSlidePage(c, s, const MapPage()),
@@ -155,6 +207,63 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.settings,
             pageBuilder: (c, s) => fadeSlidePage(c, s, const SettingsPage()),
+          ),
+          // Settings sub-pages (Telegram-style navigation)
+          GoRoute(
+            path: '/settings/profile',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const ProfileSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/wallet',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const WalletSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/devices',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const DevicesSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/security',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const SecuritySettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/history',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const HistoryPage()),
+          ),
+          GoRoute(
+            path: '/settings/messages',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const MessagesSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/marketplace',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const MarketplaceSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/map',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const MapSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/video',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const VideoSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/ai',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const AISettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/notifications',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const NotificationsSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/privacy',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const PrivacySettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/appearance',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const AppearanceSettingsPage()),
+          ),
+          GoRoute(
+            path: '/settings/data-storage',
+            pageBuilder: (c, s) => fadeSlidePage(c, s, const DataStorageSettingsPage()),
           ),
           GoRoute(
             path: '/settings/payment',

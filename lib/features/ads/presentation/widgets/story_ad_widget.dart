@@ -6,6 +6,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../shared/utils/video_controller_lifecycle.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/ad_model.dart';
 import '../providers/ads_provider.dart';
@@ -91,7 +92,7 @@ class _StoryAdWidgetState extends ConsumerState<StoryAdWidget>
   @override
   void dispose() {
     _progress.dispose();
-    _video?.dispose();
+    disposeVideoControllerSafely(_video);
     super.dispose();
   }
 

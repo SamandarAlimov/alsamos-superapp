@@ -5,6 +5,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// v24: 2FA TOTP enroll via Supabase MFA. Two-step flow:
 ///   1) `auth.mfa.enroll(factorType: 'totp')` → returns `id`, `totp.secret`, `totp.uri`
@@ -64,10 +65,7 @@ class _TwoFactorSetupDialogState extends ConsumerState<TwoFactorSetupDialog> {
       );
       if (!mounted) return;
       Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('2FA muvaffaqiyatli yoqildi'),
-        backgroundColor: const Color(0xFF22C55E),
-      ));
+      AppToast.success(context, '2FA muvaffaqiyatli yoqildi');
     } catch (e) {
       if (!mounted) return;
       setState(() { _verifying = false; _error = 'Tasdiqlash xatosi: $e'; });
@@ -78,8 +76,7 @@ class _TwoFactorSetupDialogState extends ConsumerState<TwoFactorSetupDialog> {
     if (_secret != null) {
       await Clipboard.setData(ClipboardData(text: _secret!));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Maxfiy kalit nusxalandi'), duration: Duration(seconds: 1)));
+      AppToast.success(context, 'Maxfiy kalit nusxalandi');
     }
   }
 

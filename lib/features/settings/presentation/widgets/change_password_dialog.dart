@@ -3,6 +3,8 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 /// Flutter port of the web Change Password flow.
 /// Web uses `supabase.auth.updateUser({ password })` after re-authentication.
@@ -49,16 +51,10 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
       );
       if (!mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text("Parol muvaffaqiyatli o'zgartirildi"),
-        backgroundColor: Color(0xFF22C55E),
-      ));
+      AppToast.success(context, "Parol muvaffaqiyatli o'zgartirildi");
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Xatolik: $e'),
-        backgroundColor: const Color(0xFFEF4444),
-      ));
+      AppToast.error(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

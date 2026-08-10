@@ -41,7 +41,7 @@ class _WalletCardState extends State<WalletCard> {
             InkWell(onTap: () { HapticFeedback.selectionClick(); setState(() => _hidden = !_hidden); }, child: Icon(_hidden ? LucideIcons.eyeOff : LucideIcons.eye, color: Colors.white.withValues(alpha: 0.85), size: 16)),
           ]),
           const SizedBox(height: 4),
-          Text(_hidden ? '\u2022\u2022\u2022\u2022\u2022\u2022' : _fmt(widget.balance), style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()])),
+          Text(_hidden ? '\u2022\u2022\u2022\u2022\u2022\u2022' : _fmt(widget.balance), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()])),
           const SizedBox(height: 18),
           Row(children: [
             Expanded(child: _action(LucideIcons.plus, "Hisob to'ldirish", widget.onAddMoney)),

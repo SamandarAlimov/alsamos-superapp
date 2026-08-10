@@ -15,7 +15,7 @@ import '../navigation/nav_items.dart';
 import '../navigation/navigation_chrome.dart';
 import '../widgets/alsamos_logo.dart';
 import '../widgets/premium_motion.dart';
-import '../widgets/user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 
 /// Web 1:1 port of AppSidebar.tsx
 /// - w-64 (256px) expanded, w-[72px] collapsed
@@ -520,11 +520,13 @@ class _ProfileRow extends ConsumerWidget {
                           return showExpanded
                               ? Row(
                                   children: [
-                                    if ((profile?.avatarUrl ?? '').isNotEmpty)
-                                      UserAvatar(
+                                    if (profile != null)
+                                      StoryAvatarRing(
+                                        userId: profile.id,
                                         avatarUrl: profile?.avatarUrl,
                                         fallback: profile?.initial ?? 'U',
                                         size: 20,
+                                        ringPadding: 1.4,
                                       )
                                     else
                                       Icon(LucideIcons.user,
@@ -546,11 +548,13 @@ class _ProfileRow extends ConsumerWidget {
                                   ],
                                 )
                               : Center(
-                                  child: (profile?.avatarUrl ?? '').isNotEmpty
-                                      ? UserAvatar(
-                                          avatarUrl: profile?.avatarUrl,
-                                          fallback: profile?.initial ?? 'U',
+                                  child: profile != null
+                                      ? StoryAvatarRing(
+                                          userId: profile.id,
+                                          avatarUrl: profile.avatarUrl,
+                                          fallback: profile.initial,
                                           size: 20,
+                                          ringPadding: 1.4,
                                         )
                                       : Icon(LucideIcons.user,
                                           size: 20, color: effectiveFg),

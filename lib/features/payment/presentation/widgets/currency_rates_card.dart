@@ -38,11 +38,11 @@ class CurrencyRatesCard extends StatelessWidget {
             decoration: BoxDecoration(color: colors.muted.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12)),
             child: Row(children: [
               Text(c.flag, style: const TextStyle(fontSize: 18)), const SizedBox(width: 10),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 Text(c.code, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: colors.foreground)),
                 Text(c.name, style: TextStyle(fontSize: 11, color: colors.mutedForeground)),
-              ]),
-              const Spacer(),
+              ])),
+              const SizedBox(width: 8),
               Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
                 Text("${c.rate.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')} so'm", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: colors.foreground)),
                 Row(mainAxisSize: MainAxisSize.min, children: [

@@ -4,7 +4,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_colors.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 import 'verified_badge.dart';
 
 /// 1:1 port of web `CommentLikesDialog.tsx` (211L).
@@ -20,7 +20,8 @@ class CommentLikesDialog {
       context: context,
       builder: (_) => Dialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
-        child: _CommentLikes(likers: likers, likesCount: likesCount, onFollow: onFollow),
+        child: _CommentLikes(
+            likers: likers, likesCount: likesCount, onFollow: onFollow),
       ),
     );
   }
@@ -59,7 +60,8 @@ class _CommentLikes extends StatefulWidget {
   final List<CommentLiker> likers;
   final int likesCount;
   final Future<bool> Function(String)? onFollow;
-  const _CommentLikes({required this.likers, required this.likesCount, this.onFollow});
+  const _CommentLikes(
+      {required this.likers, required this.likesCount, this.onFollow});
   @override
   State<_CommentLikes> createState() => _CommentLikesState();
 }
@@ -137,7 +139,8 @@ class _CommentLikesState extends State<_CommentLikes> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(LucideIcons.users, size: 40, color: c.mutedForeground),
+                          Icon(LucideIcons.users,
+                              size: 40, color: c.mutedForeground),
                           const SizedBox(height: 8),
                           Text('Hali like yo\'q',
                               style: TextStyle(color: c.mutedForeground)),
@@ -159,7 +162,7 @@ class _CommentLikesState extends State<_CommentLikes> {
                                 horizontal: 16, vertical: 10),
                             child: Row(
                               children: [
-                                UserAvatar(
+                                StoryAvatarRing(
                                   avatarUrl: l.avatarUrl,
                                   fallback: l.displayName.isNotEmpty
                                       ? l.displayName[0].toUpperCase()
@@ -171,7 +174,8 @@ class _CommentLikesState extends State<_CommentLikes> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
@@ -179,7 +183,9 @@ class _CommentLikesState extends State<_CommentLikes> {
                                             child: Text(
                                               l.displayName,
                                               style: theme.textTheme.bodyMedium
-                                                  ?.copyWith(fontWeight: FontWeight.w600),
+                                                  ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w600),
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
@@ -192,7 +198,8 @@ class _CommentLikesState extends State<_CommentLikes> {
                                       Text(
                                         '@${l.username}',
                                         style: theme.textTheme.bodySmall
-                                            ?.copyWith(color: c.mutedForeground),
+                                            ?.copyWith(
+                                                color: c.mutedForeground),
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ],
@@ -226,7 +233,8 @@ class _CommentLikesState extends State<_CommentLikes> {
                                             l.isFollowing
                                                 ? 'Olib tashlash'
                                                 : 'Kuzatish',
-                                            style: const TextStyle(fontSize: 12),
+                                            style:
+                                                const TextStyle(fontSize: 12),
                                           ),
                                   ),
                               ],

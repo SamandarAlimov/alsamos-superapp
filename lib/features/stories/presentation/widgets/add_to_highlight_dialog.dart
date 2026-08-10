@@ -6,6 +6,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/highlights_provider.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// Story payload passed into the dialog.
 class HighlightStoryRef {
@@ -84,14 +85,11 @@ class _AddToHighlightDialogState extends ConsumerState<AddToHighlightDialog> {
       }
       if (mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Story highlightga qo\u2018shildi'),
-            duration: Duration(seconds: 2)));
+        AppToast.success(context, 'Story highlightga qo\u2018shildi');
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Highlightga qo\u2018shib bo\u2018lmadi')));
+        AppToast.error(context, 'Highlightga qo\u2018shib bo\u2018lmadi');
       }
     } finally {
       if (mounted) setState(() => _adding = false);
@@ -131,12 +129,15 @@ class _AddToHighlightDialogState extends ConsumerState<AddToHighlightDialog> {
               children: [
                 Icon(LucideIcons.bookmark, size: 18, color: c.foreground),
                 const SizedBox(width: 8),
-                Text('Highlight\u2019ga qo\u2018shish',
-                    style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                        color: c.foreground)),
-                const Spacer(),
+                Flexible(
+                  child: Text('Highlight\u2019ga qo\u2018shish',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          color: c.foreground)),
+                ),
+                const SizedBox(width: 8),
                 IconButton(
                   splashRadius: 18,
                   icon: Icon(LucideIcons.x, size: 18, color: c.mutedForeground),

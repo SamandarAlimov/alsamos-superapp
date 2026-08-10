@@ -31,6 +31,7 @@ class AppNotification {
   final String? postType; // 'post' | 'poll' | 'reel' | etc
   final String? postContent; // Post content for fallback
   final bool postExists;
+  final Map<String, dynamic> data;
 
   const AppNotification({
     required this.id,
@@ -47,6 +48,7 @@ class AppNotification {
     this.postType,
     this.postContent,
     this.postExists = true,
+    this.data = const {},
   });
 
   AppNotification copyWith({
@@ -63,6 +65,7 @@ class AppNotification {
     String? postType,
     String? postContent,
     bool? postExists,
+    Map<String, dynamic>? data,
   }) =>
       AppNotification(
         id: id,
@@ -79,5 +82,6 @@ class AppNotification {
         postType: postType ?? this.postType,
         postContent: postContent ?? this.postContent,
         postExists: postExists ?? this.postExists,
+        data: data ?? this.data,
       );
 }

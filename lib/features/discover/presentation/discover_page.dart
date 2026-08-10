@@ -35,9 +35,12 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../shared/widgets/alsamos_refresh_indicator.dart';
+import '../../discovery/presentation/widgets/category_filter_bar.dart';
 import '../../discovery/presentation/widgets/for_you_section.dart';
 import '../../discovery/presentation/widgets/popular_creators.dart';
+import '../../discovery/presentation/widgets/story_bar.dart';
 import '../../discovery/presentation/widgets/trending_hashtags.dart';
+import '../../discovery/presentation/widgets/trending_public_posts.dart';
 import '../../discovery/presentation/widgets/trending_videos.dart';
 
 /// Tailwind `max-w-6xl` = 1152px. Mirrors web's centered container.
@@ -97,8 +100,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final w = MediaQuery.of(context).size.width;
-    final isMobile = w < _kMdBreakpoint;       // md — toggles pull-to-refresh
-    final hideTabLabels = w < _kSmBreakpoint;  // sm — hides tab text labels
+    final isMobile = w < _kMdBreakpoint; // md — toggles pull-to-refresh
+    final hideTabLabels = w < _kSmBreakpoint; // sm — hides tab text labels
     final theme = Theme.of(context);
 
     final header = _StickyHeader(
@@ -117,12 +120,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           controller: _tab,
           physics: const ClampingScrollPhysics(),
           children: [
-            // For You — TrendingHashtags + ForYouSection
+            // For You — Stories + Categories + TrendingHashtags + ForYouSection
             _TabBody(
               hPad: hPad,
               refreshKey: _refreshKey,
               children: [
+                StoryBar(key: ValueKey('stories-$_refreshKey')),
+                const SizedBox(height: 24),
+                CategoryFilterBar(key: ValueKey('cat-$_refreshKey')),
+                const SizedBox(height: 24),
                 TrendingHashtags(key: ValueKey('th-fy-$_refreshKey')),
+                const SizedBox(height: 24),
+                TrendingPublicPosts(key: ValueKey('tpp-fy-$_refreshKey')),
                 const SizedBox(height: 24),
                 ForYouSection(key: ValueKey('fy-$_refreshKey')),
               ],
@@ -133,6 +142,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               refreshKey: _refreshKey,
               children: [
                 TrendingHashtags(key: ValueKey('th-tr-$_refreshKey')),
+                const SizedBox(height: 24),
+                TrendingPublicPosts(key: ValueKey('tpp-tr-$_refreshKey')),
                 const SizedBox(height: 24),
                 TrendingVideos(key: ValueKey('tv-tr-$_refreshKey')),
               ],
@@ -346,8 +357,7 @@ class _TabsBar extends StatelessWidget {
         overlayColor: WidgetStateProperty.all(Colors.transparent),
         labelColor: c.foreground,
         unselectedLabelColor: c.mutedForeground,
-        labelStyle:
-            const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         unselectedLabelStyle:
             const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
         tabs: [
@@ -358,7 +368,8 @@ class _TabsBar extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(t.$1, size: 16, color: _iconColorOf(controller, t, c, primary)),
+                  Icon(t.$1,
+                      size: 16, color: _iconColorOf(controller, t, c, primary)),
                   if (!hideLabels) ...[
                     const SizedBox(width: 6),
                     Text(t.$2),
@@ -372,8 +383,8 @@ class _TabsBar extends StatelessWidget {
   }
 
   /// Active tab keeps default foreground; inactive uses mutedForeground.
-  Color _iconColorOf(TabController c2, (IconData, String) tab,
-      AlsamosColors c, Color primary) {
+  Color _iconColorOf(TabController c2, (IconData, String) tab, AlsamosColors c,
+      Color primary) {
     final idx = tabs.indexOf(tab);
     return c2.index == idx ? c.foreground : c.mutedForeground;
   }

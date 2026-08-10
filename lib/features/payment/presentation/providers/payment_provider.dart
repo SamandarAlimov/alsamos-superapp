@@ -37,8 +37,8 @@ class PaymentNotifier extends StateNotifier<PaymentState> {
     }
     state = state.copyWith(isLoading: true);
     try {
-      final wallet = await _repo.fetchOrCreateWallet(_userId);
-      final txs = wallet != null ? await _repo.fetchTransactions(wallet.id) : <WalletTransaction>[];
+      final wallet = await _repo.fetchOrCreateWallet();
+      final txs = wallet != null ? await _repo.fetchTransactions() : <WalletTransaction>[];
       state = PaymentState(wallet: wallet, transactions: txs, isLoading: false);
     } catch (_) {
       state = state.copyWith(isLoading: false);

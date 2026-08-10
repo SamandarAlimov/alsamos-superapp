@@ -1,17 +1,31 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../app/theme/app_colors.dart';
 import '../../../profile/data/profile_model.dart';
-import '../../../../shared/widgets/user_avatar.dart';
-import '../../../../shared/widgets/verified_badge.dart';
 import '../providers/search_provider.dart';
+import '../providers/global_search_provider.dart';
 import '../widgets/voice_search_dialog.dart';
+import '../widgets/web_search_result_card.dart';
+import '../widgets/media_post_card.dart';
+import '../widgets/product_card.dart';
+import '../widgets/channel_card.dart';
+import '../widgets/user_result_tile.dart';
 
-enum _Tab { global, ai, all, users, posts, groups, channels, products, hashtags }
+enum _Tab {
+  global,
+  ai,
+  all,
+  users,
+  posts,
+  groups,
+  channels,
+  products,
+  hashtags
+}
 
 const _tabs = <(_Tab, String, IconData)>[
   (_Tab.global, 'Global', LucideIcons.globe),
@@ -32,7 +46,12 @@ const _trending = <(String, IconData)>[
   ('music covers', LucideIcons.star),
 ];
 
-const _recent = ['dance tutorial', 'cooking recipes', 'travel vlog', 'photography tips'];
+const _recent = [
+  'dance tutorial',
+  'cooking recipes',
+  'travel vlog',
+  'photography tips'
+];
 
 /// Faithful port of web pages/SearchPage.tsx.
 class SearchPage extends ConsumerStatefulWidget {
@@ -44,20 +63,40 @@ class SearchPage extends ConsumerStatefulWidget {
 class _SearchPageState extends ConsumerState<SearchPage> {
   final _controller = TextEditingController();
   final _focus = FocusNode();
+  final _scrollController = ScrollController();
   _Tab _tab = _Tab.all;
   bool _focused = false;
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _controller.text = ref.read(searchQueryProvider);
     _focus.addListener(() => setState(() => _focused = _focus.hasFocus));
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_tab == _Tab.global) {
+      final max = _scrollController.position.maxScrollExtent;
+      final current = _scrollController.position.pixels;
+      if (max - current < 200) {
+        final state = ref.read(globalSearchProvider);
+        if (state.hasMore && !state.isLoading) {
+          ref
+              .read(globalSearchProvider.notifier)
+              .search(_controller.text, loadMore: true);
+        }
+      }
+    }
   }
 
   @override
   void dispose() {
     _controller.dispose();
     _focus.dispose();
+    _scrollController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -79,7 +118,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             Container(
               decoration: BoxDecoration(
                 color: c.background.withValues(alpha: 0.8),
-                border: Border(bottom: BorderSide(color: c.border.withValues(alpha: 0.5))),
+                border: Border(
+                    bottom: BorderSide(color: c.border.withValues(alpha: 0.5))),
               ),
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
               child: Column(
@@ -92,10 +132,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           duration: const Duration(milliseconds: 250),
                           height: 44,
                           decoration: BoxDecoration(
-                            color: _focused ? primary.withValues(alpha: 0.05) : c.muted.withValues(alpha: 0.4),
+                            color: _focused
+                                ? primary.withValues(alpha: 0.05)
+                                : c.muted.withValues(alpha: 0.4),
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(
-                              color: _focused ? primary.withValues(alpha: 0.2) : Colors.transparent,
+                              color: _focused
+                                  ? primary.withValues(alpha: 0.2)
+                                  : Colors.transparent,
                               width: 2,
                             ),
                           ),
@@ -103,36 +147,46 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                             children: [
                               const SizedBox(width: 12),
                               Icon(LucideIcons.search,
-                                  size: 18, color: _focused ? primary : c.mutedForeground),
+                                  size: 18,
+                                  color:
+                                      _focused ? primary : c.mutedForeground),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: TextField(
                                   controller: _controller,
                                   focusNode: _focus,
-                                  onChanged: (v) =>
-                                      ref.read(searchQueryProvider.notifier).state = v,
-                                  style: TextStyle(fontSize: 14, color: c.foreground),
+                                  onChanged: (v) => ref
+                                      .read(searchQueryProvider.notifier)
+                                      .state = v,
+                                  style: TextStyle(
+                                      fontSize: 14, color: c.foreground),
                                   decoration: InputDecoration(
                                     hintText: 'Qidirish...',
                                     border: InputBorder.none,
                                     isCollapsed: true,
                                     hintStyle: TextStyle(
-                                        color: c.mutedForeground.withValues(alpha: 0.6)),
+                                        color: c.mutedForeground
+                                            .withValues(alpha: 0.6)),
                                   ),
                                 ),
                               ),
                               if (hasQuery)
                                 _circleBtn(LucideIcons.x, c, () {
                                   _controller.clear();
-                                  ref.read(searchQueryProvider.notifier).state = '';
+                                  ref.read(searchQueryProvider.notifier).state =
+                                      '';
                                   _focus.requestFocus();
                                 }),
                               const SizedBox(width: 4),
                               _circleBtn(LucideIcons.mic, c, () async {
-                                final result = await VoiceSearchDialog.show(context);
-                                if (result != null && result.isNotEmpty && mounted) {
+                                final result =
+                                    await VoiceSearchDialog.show(context);
+                                if (result != null &&
+                                    result.isNotEmpty &&
+                                    mounted) {
                                   _controller.text = result;
-                                  ref.read(searchQueryProvider.notifier).state = result;
+                                  ref.read(searchQueryProvider.notifier).state =
+                                      result;
                                 }
                               }),
                               const SizedBox(width: 6),
@@ -153,7 +207,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                       itemBuilder: (_, i) {
                         final t = _tabs[i];
                         final active = _tab == t.$1;
-                        final allData = ref.watch(searchAllProvider).asData?.value;
+                        final allData =
+                            ref.watch(searchAllProvider).asData?.value;
                         int count = 0;
                         if (allData != null) {
                           switch (t.$1) {
@@ -165,6 +220,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                               count = allData.channels.length;
                             case _Tab.products:
                               count = allData.products.length;
+                            case _Tab.hashtags:
+                              count = allData.tags.length;
                             case _Tab.all:
                               count = allData.total;
                             default:
@@ -176,33 +233,49 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 14),
                             decoration: BoxDecoration(
-                              color: active ? primary : c.muted.withValues(alpha: 0.4),
+                              color: active
+                                  ? primary
+                                  : c.muted.withValues(alpha: 0.4),
                               borderRadius: BorderRadius.circular(12),
                               boxShadow: active
-                                  ? [BoxShadow(color: primary.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 2))]
+                                  ? [
+                                      BoxShadow(
+                                          color:
+                                              primary.withValues(alpha: 0.35),
+                                          blurRadius: 12,
+                                          offset: const Offset(0, 2))
+                                    ]
                                   : null,
                             ),
                             child: Row(
                               children: [
                                 Icon(t.$3,
                                     size: 14,
-                                    color: active ? theme.colorScheme.onPrimary : c.mutedForeground),
+                                    color: active
+                                        ? theme.colorScheme.onPrimary
+                                        : c.mutedForeground),
                                 const SizedBox(width: 6),
                                 Text(t.$2,
                                     style: TextStyle(
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
-                                        color: active ? theme.colorScheme.onPrimary : c.mutedForeground)),
+                                        color: active
+                                            ? theme.colorScheme.onPrimary
+                                            : c.mutedForeground)),
                                 if (hasQuery && count > 0 && !active) ...[
                                   const SizedBox(width: 6),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(
                                         color: primary.withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(10)),
+                                        borderRadius:
+                                            BorderRadius.circular(10)),
                                     child: Text(count > 99 ? '99+' : '$count',
                                         style: TextStyle(
-                                            fontSize: 10, fontWeight: FontWeight.bold, color: primary)),
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: primary)),
                                   ),
                                 ],
                               ],
@@ -258,7 +331,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             const SizedBox(width: 8),
             Text('Trendda',
                 style: TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w600, color: c.foreground)),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: c.foreground)),
           ],
         ),
         const SizedBox(height: 12),
@@ -266,7 +341,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               onTap: () => _setQuery(t.$1),
               borderRadius: BorderRadius.circular(12),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 child: Row(
                   children: [
                     Container(
@@ -285,7 +361,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                                 fontWeight: FontWeight.w500,
                                 color: c.foreground))),
                     Icon(LucideIcons.chevronRight,
-                        size: 16, color: c.mutedForeground.withValues(alpha: 0.5)),
+                        size: 16,
+                        color: c.mutedForeground.withValues(alpha: 0.5)),
                   ],
                 ),
               ),
@@ -300,12 +377,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               decoration: BoxDecoration(
                   color: c.muted.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(10)),
-              child: Icon(LucideIcons.clock, size: 16, color: c.mutedForeground),
+              child:
+                  Icon(LucideIcons.clock, size: 16, color: c.mutedForeground),
             ),
             const SizedBox(width: 8),
             Text('Oxirgi qidiruvlar',
                 style: TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w600, color: c.foreground)),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: c.foreground)),
           ],
         ),
         const SizedBox(height: 12),
@@ -316,11 +396,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               .map((term) => GestureDetector(
                     onTap: () => _setQuery(term),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
                         color: c.muted.withValues(alpha: 0.4),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: c.border.withValues(alpha: 0.3)),
+                        border:
+                            Border.all(color: c.border.withValues(alpha: 0.3)),
                       ),
                       child: Text(term,
                           style: TextStyle(
@@ -340,60 +422,219 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     ref.read(searchQueryProvider.notifier).state = v;
   }
 
-  Widget _tabContent(AlsamosColors c, Color primary, ThemeData theme, String query,
-      AsyncValue<List<FullProfile>> results) {
+  Widget _tabContent(AlsamosColors c, Color primary, ThemeData theme,
+      String query, AsyncValue<List<FullProfile>> results) {
     final allAsync = ref.watch(searchAllProvider);
     switch (_tab) {
       case _Tab.global:
-        // v29: Global = all combined results (foydalanuvchilar+postlar+kanallar+mahsulotlar)
+        // Real web search with pagination, history, states
+        return _globalTabContent(c, primary, query);
+      case _Tab.ai:
         return allAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('$e')),
           data: (r) {
-            final total = r.users.length + r.posts.length + r.channels.length + r.products.length;
-            if (total == 0) return _noResults(c, query);
-            return ListView(
+            // Empty query -> show AI intro
+            if (query.trim().isEmpty) {
+              return _aiTabContent(c, primary, query);
+            }
+
+            // Mixed results sorted by relevance
+            final mixedResults =
+                <({String type, dynamic data, double relevance})>[];
+
+            // Add users with relevance score
+            for (final user in r.users) {
+              final username = (user.username ?? '').toLowerCase();
+              final displayName = (user.displayName ?? '').toLowerCase();
+              final q = query.toLowerCase();
+
+              double score = 0.0;
+              if (username.contains(q)) score += 10.0;
+              if (displayName.contains(q)) score += 8.0;
+              if (username.startsWith(q)) score += 5.0;
+              if (user.isVerified == true) score += 2.0;
+
+              if (score > 0) {
+                mixedResults.add((type: 'user', data: user, relevance: score));
+              }
+            }
+
+            // Add posts with relevance score
+            for (final post in r.posts) {
+              final content = (post.content ?? '').toLowerCase();
+              final q = query.toLowerCase();
+
+              double score = 0.0;
+              final words = q.split(' ');
+              for (final word in words) {
+                if (content.contains(word)) {
+                  score += 3.0;
+                  // Bonus for multiple occurrences
+                  score += (content.split(word).length - 1) * 0.5;
+                }
+              }
+
+              // Boost by engagement
+              final likes = post.likesCount;
+              final comments = post.commentsCount;
+              score += (likes * 0.01) + (comments * 0.02);
+
+              if (score > 0) {
+                mixedResults.add((type: 'post', data: post, relevance: score));
+              }
+            }
+
+            // Add channels with relevance score
+            for (final channel in r.channels) {
+              final name = (channel['name'] ?? channel['title'] ?? '')
+                  .toString()
+                  .toLowerCase();
+              final description =
+                  (channel['description'] ?? '').toString().toLowerCase();
+              final q = query.toLowerCase();
+
+              double score = 0.0;
+              if (name.contains(q)) score += 12.0;
+              if (description.contains(q)) score += 5.0;
+              if (name.startsWith(q)) score += 6.0;
+
+              if (score > 0) {
+                mixedResults
+                    .add((type: 'channel', data: channel, relevance: score));
+              }
+            }
+
+            // Add products with relevance score
+            for (final product in r.products) {
+              final title = (product['title'] ?? '').toString().toLowerCase();
+              final description =
+                  (product['description'] ?? '').toString().toLowerCase();
+              final q = query.toLowerCase();
+
+              double score = 0.0;
+              final words = q.split(' ');
+              for (final word in words) {
+                if (title.contains(word)) score += 8.0;
+                if (description.contains(word)) score += 3.0;
+              }
+              if (title.startsWith(q)) score += 5.0;
+
+              if (score > 0) {
+                mixedResults
+                    .add((type: 'product', data: product, relevance: score));
+              }
+            }
+
+            // Sort by relevance (highest first)
+            mixedResults.sort((a, b) => b.relevance.compareTo(a.relevance));
+
+            if (mixedResults.isEmpty) {
+              return _noResults(c, query);
+            }
+
+            // Display mixed results
+            return ListView.builder(
               padding: const EdgeInsets.all(16),
-              children: [
-                if (r.users.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.user, 'Foydalanuvchilar', r.users.length),
-                  ...r.users.take(3).map((u) => _userCard(c, u)),
-                  const SizedBox(height: 12),
-                ],
-                if (r.posts.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.fileText, 'Postlar', r.posts.length),
-                  const SizedBox(height: 8),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final crossAxisCount = constraints.maxWidth > 1200 ? 3 : constraints.maxWidth > 600 ? 2 : 1;
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.75,
+              itemCount: mixedResults.length + 1,
+              itemBuilder: (_, i) {
+                if (i == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            primary.withValues(alpha: 0.08),
+                            const Color(0xFF8B5CF6).withValues(alpha: 0.06),
+                          ],
                         ),
-                        itemCount: r.posts.take(6).length,
-                        itemBuilder: (_, i) => _compactPostCard(c, r.posts[i]),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (r.channels.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.radio, 'Kanallar', r.channels.length),
-                  ...r.channels.take(5).map((ch) => _channelCard(c, ch)),
-                ],
-              ],
+                        borderRadius: BorderRadius.circular(14),
+                        border:
+                            Border.all(color: primary.withValues(alpha: 0.15)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [primary, const Color(0xFF8B5CF6)],
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(LucideIcons.sparkles,
+                                size: 16, color: Colors.white),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'AI tomonidan tartiblangan natijalar',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: c.foreground,
+                                  ),
+                                ),
+                                Text(
+                                  '${mixedResults.length} natija topildi',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: c.mutedForeground,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
+                final result = mixedResults[i - 1];
+
+                // Render based on type
+                switch (result.type) {
+                  case 'user':
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: UserResultTile(user: result.data),
+                    );
+                  case 'post':
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: SizedBox(
+                        height: 280,
+                        child: MediaPostCard(post: result.data),
+                      ),
+                    );
+                  case 'channel':
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ChannelCard(channel: result.data, isGroup: false),
+                    );
+                  case 'product':
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: ProductCard(product: result.data),
+                    );
+                  default:
+                    return const SizedBox.shrink();
+                }
+              },
             );
           },
         );
-      case _Tab.ai:
-        return _aiTabContent(c, primary, query);
       case _Tab.groups:
-        // v29: Groups = channels filtered (web teskari mos)
+        // Groups = channels filtered (web teskari mos)
         return allAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('$e')),
@@ -403,55 +644,78 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   padding: const EdgeInsets.all(16),
                   itemCount: r.channels.length + 1,
                   itemBuilder: (_, i) {
-                    if (i == 0) return Padding(padding: const EdgeInsets.only(bottom: 8), child: _sectionHeader(c, primary, LucideIcons.users, 'Guruhlar', r.channels.length));
-                    return _channelCard(c, r.channels[i - 1]);
+                    if (i == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _sectionHeader(c, primary, LucideIcons.users,
+                            'Guruhlar', r.channels.length),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ChannelCard(
+                          channel: r.channels[i - 1], isGroup: true),
+                    );
                   },
                 ),
         );
       case _Tab.hashtags:
-        // v29: Hashtags = post content'dan #tag chiqarish + frekvensiya bo'yicha sort
+        // Hashtags from backend aggregation (much more efficient than client-side extraction)
         return allAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('$e')),
           data: (r) {
-            final counts = <String, int>{};
-            final re = RegExp(r'#([a-zA-Z0-9_\u0400-\u04FF\u0100-\u017F]+)');
-            for (final p in r.posts) {
-              final content = (p.content ?? '');
-              for (final m in re.allMatches(content)) {
-                final tag = m.group(1)!.toLowerCase();
-                counts[tag] = (counts[tag] ?? 0) + 1;
-              }
-            }
-            final tags = counts.entries.toList()
-              ..sort((a, b) => b.value.compareTo(a.value));
-            if (tags.isEmpty) return _noResults(c, query);
+            if (r.tags.isEmpty) return _noResults(c, query);
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                _sectionHeader(c, primary, LucideIcons.hash, 'Teglar', tags.length),
-                ...tags.take(30).map((e) => Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: c.card,
+                _sectionHeader(
+                    c, primary, LucideIcons.hash, 'Teglar', r.tags.length),
+                ...r.tags.map((tag) {
+                  final tagName = tag['tag']?.toString() ?? '';
+                  final postCount = tag['post_count'] as int? ?? 0;
+                  
+                  return InkWell(
+                    onTap: () {
+                      // Update search query to show posts with this tag
+                      _setQuery('#$tagName');
+                    },
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: c.border.withValues(alpha: 0.4)),
-                  ),
-                  child: Row(children: [
-                    Container(
-                      width: 36, height: 36,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
                       decoration: BoxDecoration(
-                        color: primary.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
+                        color: c.card,
+                        borderRadius: BorderRadius.circular(12),
+                        border:
+                            Border.all(color: c.border.withValues(alpha: 0.4)),
                       ),
-                      child: Icon(LucideIcons.hash, size: 18, color: primary),
+                      child: Row(children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child:
+                              Icon(LucideIcons.hash, size: 18, color: primary),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: Text('#$tagName',
+                                style: TextStyle(
+                                    color: c.foreground,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700))),
+                        Text('$postCount ta post',
+                            style: TextStyle(
+                                color: c.mutedForeground, fontSize: 12)),
+                      ]),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text('#${e.key}', style: TextStyle(color: c.foreground, fontSize: 15, fontWeight: FontWeight.w700))),
-                    Text('${e.value} ta post', style: TextStyle(color: c.mutedForeground, fontSize: 12)),
-                  ]),
-                )),
+                  );
+                }),
               ],
             );
           },
@@ -470,7 +734,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         : constraints.maxWidth > 600
                             ? 2
                             : 1;
-                    
+
                     return CustomScrollView(
                       slivers: [
                         SliverPadding(
@@ -478,26 +742,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           sliver: SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.only(bottom: 12),
-                              child: _sectionHeader(c, primary, LucideIcons.fileText, 'Postlar', r.posts.length),
+                              child: _sectionHeader(
+                                  c,
+                                  primary,
+                                  LucideIcons.fileText,
+                                  'Postlar',
+                                  r.posts.length),
                             ),
                           ),
                         ),
                         SliverPadding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           sliver: SliverGrid(
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: crossAxisCount,
                               mainAxisSpacing: 12,
                               crossAxisSpacing: 12,
-                              childAspectRatio: 0.75, // Compact ratio
+                              childAspectRatio:
+                                  0.65, // Instagram-style taller cards
                             ),
                             delegate: SliverChildBuilderDelegate(
-                              (context, index) => _compactPostCard(c, r.posts[index]),
+                              (context, index) =>
+                                  MediaPostCard(post: r.posts[index]),
                               childCount: r.posts.length,
                             ),
                           ),
                         ),
-                        const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
+                        const SliverPadding(
+                            padding: EdgeInsets.only(bottom: 16)),
                       ],
                     );
                   },
@@ -513,9 +786,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   padding: const EdgeInsets.all(16),
                   itemCount: r.channels.length + 1,
                   itemBuilder: (_, i) {
-                    if (i == 0) return Padding(padding: const EdgeInsets.only(bottom: 8), child: _sectionHeader(c, primary, LucideIcons.radio, 'Kanallar', r.channels.length));
-                    final ch = r.channels[i - 1];
-                    return _channelCard(c, ch);
+                    if (i == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _sectionHeader(c, primary, LucideIcons.radio,
+                            'Kanallar', r.channels.length),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ChannelCard(
+                          channel: r.channels[i - 1], isGroup: false),
+                    );
                   },
                 ),
         );
@@ -525,11 +807,42 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           error: (e, _) => Center(child: Text('$e')),
           data: (r) => r.products.isEmpty
               ? _noResults(c, query)
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.75),
-                  itemCount: r.products.length,
-                  itemBuilder: (_, i) => _productCard(c, r.products[i]),
+              : CustomScrollView(
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.all(16),
+                      sliver: SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _sectionHeader(
+                              c,
+                              primary,
+                              LucideIcons.shoppingBag,
+                              'Mahsulotlar',
+                              r.products.length),
+                        ),
+                      ),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      sliver: SliverGrid(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio:
+                              0.75, // Slightly taller for product info
+                        ),
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) =>
+                              ProductCard(product: r.products[index]),
+                          childCount: r.products.length,
+                        ),
+                      ),
+                    ),
+                    const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
+                  ],
                 ),
         );
       case _Tab.users:
@@ -538,13 +851,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           error: (e, _) => Center(child: Text('$e')),
           data: (users) {
             if (users.isEmpty) return _noResults(c, query);
-            return ListView(
+            return ListView.builder(
               padding: const EdgeInsets.all(16),
-              children: [
-                _sectionHeader(c, primary, LucideIcons.user, 'Foydalanuvchilar', users.length),
-                const SizedBox(height: 8),
-                ...users.map((u) => _userCard(c, u)),
-              ],
+              itemCount: users.length + 1,
+              itemBuilder: (_, i) {
+                if (i == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _sectionHeader(c, primary, LucideIcons.user,
+                        'Foydalanuvchilar', users.length),
+                  );
+                }
+                return UserResultTile(user: users[i - 1]);
+              },
             );
           },
         );
@@ -557,44 +876,89 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                // Users section
                 if (r.users.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.user, 'Foydalanuvchilar', r.users.length),
-                  const SizedBox(height: 8),
-                  ...r.users.take(5).map((u) => _userCard(c, u)),
-                  const SizedBox(height: 16),
-                ],
-                if (r.posts.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.fileText, 'Postlar', r.posts.length),
-                  const SizedBox(height: 8),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final crossAxisCount = constraints.maxWidth > 1200 ? 3 : constraints.maxWidth > 600 ? 2 : 1;
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.75,
-                        ),
-                        itemCount: r.posts.take(6).length,
-                        itemBuilder: (_, i) => _compactPostCard(c, r.posts[i]),
-                      );
-                    },
+                  _sectionHeaderWithSeeAll(
+                    c,
+                    primary,
+                    LucideIcons.user,
+                    'Foydalanuvchilar',
+                    r.users.length,
+                    () => setState(() => _tab = _Tab.users),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
+                  ...r.users.take(3).map((u) => UserResultTile(user: u)),
+                  const SizedBox(height: 20),
                 ],
+
+                // Posts section (horizontal scroll)
+                if (r.posts.isNotEmpty) ...[
+                  _sectionHeaderWithSeeAll(
+                    c,
+                    primary,
+                    LucideIcons.fileText,
+                    'Postlar',
+                    r.posts.length,
+                    () => setState(() => _tab = _Tab.posts),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 280, // Height for AspectRatio 0.65 cards
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: r.posts.take(10).length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      itemBuilder: (_, i) => SizedBox(
+                        width: 180, // Fixed width for horizontal scroll
+                        child: MediaPostCard(post: r.posts[i]),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+
+                // Channels section
                 if (r.channels.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.radio, 'Kanallar', r.channels.length),
+                  _sectionHeaderWithSeeAll(
+                    c,
+                    primary,
+                    LucideIcons.radio,
+                    'Kanallar',
+                    r.channels.length,
+                    () => setState(() => _tab = _Tab.channels),
+                  ),
                   const SizedBox(height: 8),
-                  ...r.channels.take(5).map((ch) => _channelCard(c, ch)),
-                  const SizedBox(height: 16),
+                  ...r.channels.take(3).map((ch) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: ChannelCard(channel: ch, isGroup: false),
+                      )),
+                  const SizedBox(height: 20),
                 ],
+
+                // Products section (2x2 grid)
                 if (r.products.isNotEmpty) ...[
-                  _sectionHeader(c, primary, LucideIcons.shoppingBag, 'Mahsulotlar', r.products.length),
+                  _sectionHeaderWithSeeAll(
+                    c,
+                    primary,
+                    LucideIcons.shoppingBag,
+                    'Mahsulotlar',
+                    r.products.length,
+                    () => setState(() => _tab = _Tab.products),
+                  ),
                   const SizedBox(height: 8),
-                  ...r.products.take(4).map((pr) => _productCardRow(c, pr)),
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.75,
+                    ),
+                    itemCount: r.products.take(4).length,
+                    itemBuilder: (_, i) => ProductCard(product: r.products[i]),
+                  ),
                 ],
               ],
             );
@@ -618,7 +982,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         const SizedBox(width: 8),
         Text(title,
             style: TextStyle(
-                fontSize: 14, fontWeight: FontWeight.w600, color: c.foreground)),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: c.foreground)),
         const SizedBox(width: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -632,42 +998,62 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
-  Widget _userCard(AlsamosColors c, FullProfile u) {
-    return InkWell(
-      onTap: () => context.push('/profile/${u.id}'),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            UserAvatar(avatarUrl: u.avatarUrl, fallback: u.initial, size: 46),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                          child: Text(u.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w600, color: c.foreground))),
-                      if (u.isVerified) ...[
-                        const SizedBox(width: 4),
-                        const VerifiedBadge(size: 13),
-                      ],
-                    ],
-                  ),
-                  Text('@${u.username ?? 'user'} · ${u.followersCount} obunachi',
-                      style: TextStyle(color: c.mutedForeground, fontSize: 12)),
-                ],
-              ),
-            ),
-          ],
+  Widget _sectionHeaderWithSeeAll(AlsamosColors c, Color primary, IconData icon,
+      String title, int count, VoidCallback onSeeAll) {
+    return Row(
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+              color: primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8)),
+          child: Icon(icon, size: 14, color: primary),
         ),
-      ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: c.foreground)),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+              color: c.muted.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10)),
+          child: Text('$count',
+              style: TextStyle(fontSize: 11, color: c.mutedForeground)),
+        ),
+        const Spacer(),
+        TextButton(
+          onPressed: onSeeAll,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Hammasi',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: primary,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(LucideIcons.chevronRight, size: 14, color: primary),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -712,7 +1098,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         ),
                       ],
                     ),
-                    child: const Icon(LucideIcons.sparkles, size: 20, color: Colors.white),
+                    child: const Icon(LucideIcons.sparkles,
+                        size: 20, color: Colors.white),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -745,7 +1132,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   children: [
                     Row(
                       children: [
-                        Icon(LucideIcons.messageCircle, size: 14, color: primary),
+                        Icon(LucideIcons.messageCircle,
+                            size: 14, color: primary),
                         const SizedBox(width: 6),
                         Text('Sizning so\'rovingiz',
                             style: TextStyle(
@@ -767,7 +1155,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Icon(LucideIcons.zap, size: 14, color: const Color(0xFF8B5CF6)),
+                  Icon(LucideIcons.zap,
+                      size: 14, color: const Color(0xFF8B5CF6)),
                   const SizedBox(width: 6),
                   Text('Tavsiyalar:',
                       style: TextStyle(
@@ -806,7 +1195,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   )),
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: primary.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(10),
@@ -820,7 +1210,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                       child: Text(
                           'To\'liq AI javob tez orada qo\'shiladi. Hozircha qidiruv barcha ma\'lumotlardan natija beradi.',
                           style: TextStyle(
-                              fontSize: 11, color: c.mutedForeground, height: 1.4)),
+                              fontSize: 11,
+                              color: c.mutedForeground,
+                              height: 1.4)),
                     ),
                   ],
                 ),
@@ -833,8 +1225,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   // ignore: unused_element
-  Widget _glassInfo(
-      AlsamosColors c, Color primary, IconData icon, String title, String desc) {
+  Widget _glassInfo(AlsamosColors c, Color primary, IconData icon, String title,
+      String desc) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Container(
@@ -881,7 +1273,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
-
   Widget _noResults(AlsamosColors c, String query) {
     return Center(
       child: Padding(
@@ -901,9 +1292,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             const SizedBox(height: 16),
             Text('Natija topilmadi',
                 style: TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w600, color: c.foreground)),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: c.foreground)),
             const SizedBox(height: 4),
-            Text('"$query" bo\'yicha hech narsa topilmadi. Boshqa so\'z bilan qidirib ko\'ring.',
+            Text(
+                '"$query" bo\'yicha hech narsa topilmadi. Boshqa so\'z bilan qidirib ko\'ring.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: c.mutedForeground)),
           ],
@@ -912,439 +1306,278 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
-  Widget _compactPostCard(AlsamosColors c, dynamic post) {
-    // Extract post data
-    final Map<String, dynamic> postData;
-    if (post is Map) {
-      postData = Map<String, dynamic>.from(post);
-    } else {
-      postData = {
-        'id': post.id,
-        'user_id': post.userId,
-        'content': post.content,
-        'media_urls': post.mediaUrls,
-        'media_type': post.mediaType,
-        'likes_count': post.likesCount ?? 0,
-        'comments_count': post.commentsCount ?? 0,
-        'views_count': post.viewsCount ?? 0,
-        'created_at': post.createdAt.toIso8601String(),
-        'profile': post.profile != null ? {
-          'id': post.profile!.id,
-          'username': post.profile!.username,
-          'display_name': post.profile!.displayName,
-          'avatar_url': post.profile!.avatarUrl,
-          'is_verified': post.profile!.isVerified ?? false,
-        } : null,
-      };
+  // ────────────────────────────────────────────────────────────────────────────
+  // Global web search tab content
+  // ────────────────────────────────────────────────────────────────────────────
+  Widget _globalTabContent(AlsamosColors c, Color primary, String query) {
+    final state = ref.watch(globalSearchProvider);
+
+    // Empty query → show initial state (history)
+    if (query.trim().isEmpty) {
+      return _globalInitialState(c, primary);
     }
-    
-    final content = (postData['content'] ?? '').toString();
-    final mediaUrls = (postData['media_urls'] as List?)?.cast<String>() ?? [];
-    final mediaType = (postData['media_type'] ?? '').toString().toLowerCase();
-    final likesCount = postData['likes_count'] ?? 0;
-    final commentsCount = postData['comments_count'] ?? 0;
-    final viewsCount = postData['views_count'] ?? 0;
-    final profile = postData['profile'] as Map<String, dynamic>?;
-    final displayName = profile?['display_name'] ?? profile?['username'] ?? 'User';
-    final avatarUrl = profile?['avatar_url'] as String?;
-    final isVerified = profile?['is_verified'] == true;
-    
-    // Check for poll
-    final hasPoll = content.contains('[POLL]') && content.contains('[/POLL]');
-    final isVideo = mediaType.contains('video') || mediaType.contains('reel') || mediaType.contains('short');
-    final isAudio = mediaType.contains('audio') || mediaType.contains('music');
-    
-    return GestureDetector(
-      onTap: () {
-        context.push('/post/${postData['id']}');
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: c.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: c.border),
+
+    // Debounce search input
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted && query.trim().isNotEmpty) {
+        ref.read(globalSearchProvider.notifier).search(query);
+      }
+    });
+
+    // Loading (first page)
+    if (state.isLoading && state.results.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Error
+    if (state.error != null && state.results.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: c.muted.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  LucideIcons.alertCircle,
+                  size: 28,
+                  color: c.mutedForeground.withValues(alpha: 0.5),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Xatolik yuz berdi',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: c.foreground,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                state.error!,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: c.mutedForeground),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () {
+                  ref.read(globalSearchProvider.notifier).search(query);
+                },
+                icon: const Icon(LucideIcons.refreshCw, size: 16),
+                label: const Text('Qayta urinib ko\'rish'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primary,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      );
+    }
+
+    // Empty results
+    if (state.results.isEmpty) {
+      return _noResults(c, query);
+    }
+
+    // Results with infinite scroll
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: state.results.length + 1, // +1 for loader or end marker
+      itemBuilder: (_, i) {
+        if (i == state.results.length) {
+          // Bottom loader/end marker
+          if (state.isLoading) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          } else if (!state.hasMore) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: Text(
+                  'Barcha natijalar ko\'rsatildi',
+                  style: TextStyle(fontSize: 12, color: c.mutedForeground),
+                ),
+              ),
+            );
+          }
+          return const SizedBox.shrink();
+        }
+
+        return WebSearchResultCard(result: state.results[i]);
+      },
+    );
+  }
+
+  Widget _globalInitialState(AlsamosColors c, Color primary) {
+    return FutureBuilder<List<String>>(
+      future: ref.read(globalSearchProvider.notifier).getHistory(),
+      builder: (context, snapshot) {
+        final history = snapshot.data ?? [];
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
           children: [
-            // Media preview or special type indicator
-            AspectRatio(
-              aspectRatio: 1,
-              child: Stack(
-                fit: StackFit.expand,
+            // Header
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(LucideIcons.globe, size: 16, color: primary),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Global qidiruv',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: c.foreground,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: c.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.border.withValues(alpha: 0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (mediaUrls.isNotEmpty && !isAudio)
-                    Image.network(
-                      mediaUrls.first,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: c.muted,
-                        child: Icon(LucideIcons.image, color: c.mutedForeground, size: 32),
-                      ),
-                    )
-                  else if (hasPoll)
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            AppColors.alsamosOrange.withValues(alpha: 0.2),
-                            const Color(0xFF8B5CF6).withValues(alpha: 0.2),
-                          ],
+                  Row(
+                    children: [
+                      Icon(LucideIcons.info, size: 14, color: primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Web qidiruvi',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: primary,
                         ),
                       ),
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 64,
-                              height: 64,
-                              decoration: BoxDecoration(
-                                color: AppColors.alsamosOrange.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: const Icon(
-                                LucideIcons.barChart3,
-                                size: 32,
-                                color: AppColors.alsamosOrange,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'So\'rovnoma',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: c.foreground,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else if (isAudio)
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            const Color(0xFFEC4899).withValues(alpha: 0.2),
-                            const Color(0xFF8B5CF6).withValues(alpha: 0.2),
-                          ],
-                        ),
-                      ),
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 64,
-                              height: 64,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEC4899).withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: const Icon(
-                                LucideIcons.music,
-                                size: 32,
-                                color: Color(0xFFEC4899),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Audio',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: c.foreground,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else
-                    Container(
-                      color: c.muted,
-                      child: Center(
-                        child: Icon(
-                          LucideIcons.fileText,
-                          size: 32,
-                          color: c.mutedForeground,
-                        ),
-                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Google, Bing, DuckDuckGo va Yandex kabi qidiruv tizimlaridan real natijalarni ko\'ring.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: c.mutedForeground,
+                      height: 1.4,
                     ),
-                  
-                  // Video play button overlay
-                  if (isVideo && mediaUrls.isNotEmpty)
-                    Center(
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          LucideIcons.play,
-                          color: Colors.white,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                  
-                  // Multiple media badge
-                  if (mediaUrls.length > 1 && !isAudio)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(LucideIcons.images, size: 12, color: Colors.white),
-                            const SizedBox(width: 4),
-                            Text(
-                              '+${mediaUrls.length - 1}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  
-                  // Post type badge (top-left)
-                  if (isVideo || isAudio || hasPoll)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: isVideo
-                              ? const Color(0xFF3B82F6).withValues(alpha: 0.9)
-                              : isAudio
-                                  ? const Color(0xFFEC4899).withValues(alpha: 0.9)
-                                  : AppColors.alsamosOrange.withValues(alpha: 0.9),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isVideo
-                                  ? LucideIcons.video
-                                  : isAudio
-                                      ? LucideIcons.music
-                                      : LucideIcons.barChart3,
-                              size: 10,
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              isVideo
-                                  ? 'Video'
-                                  : isAudio
-                                      ? 'Audio'
-                                      : 'Poll',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  ),
                 ],
               ),
             ),
-            
-            // Content
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // User info
-                    Row(
-                      children: [
-                        Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: c.muted,
-                            shape: BoxShape.circle,
-                          ),
-                          child: avatarUrl != null
-                              ? ClipOval(
-                                  child: Image.network(
-                                    avatarUrl,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Icon(
-                                      LucideIcons.user,
-                                      size: 12,
-                                      color: c.mutedForeground,
-                                    ),
-                                  ),
-                                )
-                              : Icon(
-                                  LucideIcons.user,
-                                  size: 12,
-                                  color: c.mutedForeground,
-                                ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  displayName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: c.foreground,
-                                  ),
-                                ),
-                              ),
-                              if (isVerified) ...[
-                                const SizedBox(width: 3),
-                                const VerifiedBadge(size: 10),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
+            if (history.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: c.muted.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    const SizedBox(height: 8),
-                    // Content text (clean from poll markup)
-                    Expanded(
-                      child: Text(
-                        hasPoll 
-                            ? content.replaceAll(RegExp(r'\[POLL\].*?\[/POLL\]', dotAll: true), '').trim()
-                            : content,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.4,
-                          color: c.foreground,
-                        ),
+                    child: Icon(LucideIcons.clock,
+                        size: 16, color: c.mutedForeground),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Oxirgi qidiruvlar',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: c.foreground,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      ref.read(globalSearchProvider.notifier).clearHistory();
+                      setState(() {});
+                    },
+                    child: Text(
+                      'Tozalash',
+                      style: TextStyle(fontSize: 12, color: primary),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: history.take(10).map((term) {
+                  return GestureDetector(
+                    onTap: () {
+                      _controller.text = term;
+                      ref.read(searchQueryProvider.notifier).state = term;
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: c.muted.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(12),
+                        border:
+                            Border.all(color: c.border.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(LucideIcons.search,
+                              size: 12, color: c.mutedForeground),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              term,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: c.foreground,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    // Stats
-                    Row(
-                      children: [
-                        _compactStat(LucideIcons.heart, likesCount, c),
-                        const SizedBox(width: 10),
-                        _compactStat(LucideIcons.messageCircle, commentsCount, c),
-                        const Spacer(),
-                        _compactStat(LucideIcons.eye, viewsCount, c),
-                      ],
-                    ),
-                  ],
-                ),
+                  );
+                }).toList(),
               ),
-            ),
+            ],
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _compactStat(IconData icon, int count, AlsamosColors c) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: c.mutedForeground),
-        const SizedBox(width: 4),
-        Text(
-          count > 999 ? '${(count / 1000).toStringAsFixed(1)}k' : '$count',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-            color: c.mutedForeground,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _productCardRow(AlsamosColors c, dynamic prod) => _productCard(c, prod);
-
-  Widget _channelCard(AlsamosColors c, dynamic ch) {
-    final name = (ch is Map ? ch['name'] : (ch.name ?? ch.title ?? '')) ?? '';
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.card,
-        border: Border.all(color: c.border),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(LucideIcons.radio, color: c.mutedForeground),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              name.toString(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: c.foreground, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _productCard(AlsamosColors c, dynamic prod) {
-    final title = (prod is Map ? prod['title'] : (prod.title ?? '')) ?? '';
-    final price = (prod is Map ? prod['price'] : (prod.price ?? 0)) ?? 0;
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.card,
-        border: Border.all(color: c.border),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title.toString(),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: c.foreground, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '$price so\'m',
-            style: TextStyle(color: AppColors.alsamosOrange, fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/widgets/state_views.dart';
 import '../../data/map_models.dart';
 import '../providers/map_provider.dart';
 
@@ -32,7 +35,7 @@ class LocationHistoryPanel extends ConsumerWidget {
     final historyState = ref.watch(locationHistoryProvider);
 
     if (historyState.loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const LoadingView(label: 'Joylashuv tarixi yuklanmoqda...');
     }
 
     return ListView(
@@ -52,30 +55,40 @@ class LocationHistoryPanel extends ConsumerWidget {
             c: c,
           )
         else
-          ...historyState.frequentPlaces.map(
-            (place) => _FrequentPlaceCard(
-              place: place,
-              c: c,
-              onNavigate: () => onNavigateToPlace?.call(
-                place.latitude,
-                place.longitude,
-                place.name,
-              ),
-              onEditName: (newName) async {
-                await ref.read(locationHistoryProvider.notifier).updateName(place.id, newName);
-              },
-              onDelete: () async {
-                await ref.read(locationHistoryProvider.notifier).delete(place.id);
-              },
-            ),
+          ...List.generate(
+            historyState.frequentPlaces.length,
+            (i) {
+              final place = historyState.frequentPlaces[i];
+              return _FrequentPlaceCard(
+                place: place,
+                c: c,
+                onNavigate: () => onNavigateToPlace?.call(
+                  place.latitude,
+                  place.longitude,
+                  place.name,
+                ),
+                onEditName: (newName) async {
+                  await ref
+                      .read(locationHistoryProvider.notifier)
+                      .updateName(place.id, newName);
+                },
+                onDelete: () async {
+                  await ref
+                      .read(locationHistoryProvider.notifier)
+                      .delete(place.id);
+                },
+              );
+            },
           ),
 
         const SizedBox(height: 24),
 
         // Distance stats
         _DistanceStats(
-          get7DayTotal: () => ref.read(locationHistoryProvider.notifier).getTotalDistance(7),
-          get30DayTotal: () => ref.read(locationHistoryProvider.notifier).getTotalDistance(30),
+          get7DayTotal: () =>
+              ref.read(locationHistoryProvider.notifier).getTotalDistance(7),
+          get30DayTotal: () =>
+              ref.read(locationHistoryProvider.notifier).getTotalDistance(30),
           c: c,
         ),
 
@@ -95,11 +108,12 @@ class LocationHistoryPanel extends ConsumerWidget {
             c: c,
           )
         else
-          ...historyState.dailyRoutes.take(15).map(
-            (route) => _DailyRouteCard(
-              route: route,
+          ...List.generate(
+            math.min(15, historyState.dailyRoutes.length),
+            (i) => _DailyRouteCard(
+              route: historyState.dailyRoutes[i],
               c: c,
-              onView: () => onViewRoute?.call(route),
+              onView: () => onViewRoute?.call(historyState.dailyRoutes[i]),
             ),
           ),
       ],
@@ -238,7 +252,8 @@ class _FrequentPlaceCard extends StatelessWidget {
                 ),
               ),
               PopupMenuButton(
-                icon: Icon(LucideIcons.moreVertical, size: 18, color: c.mutedForeground),
+                icon: Icon(LucideIcons.moreVertical,
+                    size: 18, color: c.mutedForeground),
                 itemBuilder: (context) => [
                   PopupMenuItem(
                     child: Row(
@@ -254,9 +269,11 @@ class _FrequentPlaceCard extends StatelessWidget {
                     onTap: onDelete,
                     child: Row(
                       children: [
-                        const Icon(LucideIcons.trash, size: 16, color: Colors.red),
+                        const Icon(LucideIcons.trash,
+                            size: 16, color: Colors.red),
                         const SizedBox(width: 8),
-                        const Text('O\'chirish', style: TextStyle(color: Colors.red)),
+                        const Text('O\'chirish',
+                            style: TextStyle(color: Colors.red)),
                       ],
                     ),
                   ),
@@ -303,7 +320,11 @@ class _FrequentPlaceCard extends StatelessWidget {
     return switch (type) {
       'home' => (LucideIcons.home, const Color(0xFF22C55E), 'Uy'),
       'work' => (LucideIcons.briefcase, const Color(0xFF3B82F6), 'Ish'),
-      'study' => (LucideIcons.graduationCap, const Color(0xFF8B5CF6), 'Ta\'lim'),
+      'study' => (
+          LucideIcons.graduationCap,
+          const Color(0xFF8B5CF6),
+          'Ta\'lim'
+        ),
       _ => (LucideIcons.mapPin, const Color(0xFF6B7280), 'Boshqa'),
     };
   }
@@ -366,7 +387,8 @@ class _DailyRouteCard extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
               shape: BoxShape.circle,
             ),
             child: Icon(

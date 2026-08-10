@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_theme.dart';
+import '../../core/responsive/breakpoints.dart';
+import '../../core/widgets/state_views.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/messages/presentation/widgets/call_invite_listener.dart';
 import '../navigation/app_routes.dart';
@@ -12,11 +14,6 @@ import 'mobile_menu_drawer.dart';
 import '../navigation/bottom_navbar.dart';
 import '../widgets/location_permission_dialog.dart';
 
-/// Ported 1:1 from web `AppLayout.tsx`.
-/// - Auth-gated (redirect to / if not authenticated; spinner while loading).
-/// - Hide MobileHeader on /messages, /map, /videos.
-/// - Desktop: collapsible sidebar. Mobile: header + bottom navbar.
-/// - Sidebar auto-collapses below 1100px.
 class AppLayout extends ConsumerStatefulWidget {
   final Widget child;
   const AppLayout({super.key, required this.child});
@@ -26,11 +23,10 @@ class AppLayout extends ConsumerStatefulWidget {
 }
 
 class _AppLayoutState extends ConsumerState<AppLayout> {
-  bool _sidebarExpanded = true;
-  bool _locationDialogShown = false; // v43: bir martalik ko'rsatish
+  bool? _sidebarExpandedPref;
+  bool _locationDialogShown = false;
 
   void _maybeShowLocationDialog(String? userId) {
-    // v43: auth tayyor bo'lgandan keyin bir marta ko'rsatamiz
     if (_locationDialogShown || userId == null) return;
     _locationDialogShown = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -52,6 +48,10 @@ class _AppLayoutState extends ConsumerState<AppLayout> {
         location.startsWith('${AppRoutes.messages}/');
   }
 
+  void _toggleSidebarExpansion(bool currentExpanded) {
+    setState(() => _sidebarExpandedPref = !currentExpanded);
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
@@ -60,65 +60,84 @@ class _AppLayoutState extends ConsumerState<AppLayout> {
     if (auth.isLoading) {
       return Scaffold(
         backgroundColor: c.background,
-        body: Center(
-          child: CircularProgressIndicator(
-              color: Theme.of(context).colorScheme.primary),
-        ),
+        body: const LoadingView(label: 'Yuklanmoqda...'),
       );
     }
 
     if (!auth.isAuthenticated) {
-      // Defer navigation to after build.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (context.mounted) context.go(AppRoutes.auth);
       });
       return const SizedBox.shrink();
     }
 
-    // v43: Auth tayyor — LocationPermissionDialog (bir martalik) ulanadi
     _maybeShowLocationDialog(auth.user?.id);
 
-    final width = MediaQuery.sizeOf(context).width;
-    final isDesktop = width >= 768; // md breakpoint
-    final autoCollapse = width < 1100;
-    final expanded = _sidebarExpanded && !autoCollapse;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final mode = resolveNavMode(width);
+        final location = GoRouterState.of(context).uri.path;
+
+        switch (mode) {
+          case NavMode.sidebarExpanded:
+            return _buildDockedSidebar(c, location,
+                expanded: true, width: width);
+          case NavMode.sidebarRail:
+            final userWantsExpanded = _sidebarExpandedPref ?? false;
+            final canExpand = width >= 1156;
+            final expanded = userWantsExpanded && canExpand;
+            return _buildDockedSidebar(c, location,
+                expanded: expanded, width: width);
+          case NavMode.bottomNav:
+            return _buildMobileLayout(c, location);
+        }
+      },
+    );
+  }
+
+  Widget _buildDockedSidebar(AlsamosColors c, String location,
+      {required bool expanded, required double width}) {
     final sidebarWidth = expanded ? 256.0 : 72.0;
-    final location = GoRouterState.of(context).uri.path;
-    final hideHeader = _hideMobileHeader(location);
-
-    if (isDesktop) {
-      return Scaffold(
-        backgroundColor: c.background,
-        body: CallInviteListener(
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned.fill(
-                left: sidebarWidth,
-                child: widget.child,
-              ),
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: sidebarWidth + 32,
-                child: AppSidebar(
-                  expanded: expanded,
-                  onToggle: () =>
-                      setState(() => _sidebarExpanded = !_sidebarExpanded),
+    return Scaffold(
+      backgroundColor: c.background,
+      body: CallInviteListener(
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Row(
+              children: [
+                SizedBox(width: sidebarWidth),
+                Expanded(
+                  child: SafeArea(
+                    left: false,
+                    bottom: false,
+                    child: widget.child,
+                  ),
                 ),
+              ],
+            ),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: sidebarWidth + 32,
+              child: AppSidebar(
+                expanded: expanded,
+                onToggle: () => _toggleSidebarExpansion(expanded),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    // Mobile
+  Widget _buildMobileLayout(AlsamosColors c, String location) {
+    final hideHeader = _hideMobileHeader(location);
     final hideBottomNav = _hideBottomNav(location);
     return Scaffold(
       backgroundColor: c.background,
-      extendBody: true, // Allow body to extend behind bottom navbar (webdagi fixed overlay kabi)
       appBar: hideHeader
           ? null
           : MobileHeader(onMenu: () => MobileMenuDrawer.open(context)),

@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../app/i18n/app_strings.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 class _OrderItem {
   final String id;
@@ -223,7 +224,7 @@ class _OrderCard extends StatelessWidget {
                 child: Icon(st.icon, color: st.color, size: 20)),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(order.orderNumber, style: TextStyle(color: c.foreground, fontSize: 16, fontWeight: FontWeight.w800)),
+              Text(order.orderNumber, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.foreground, fontSize: 16, fontWeight: FontWeight.w800)),
               Text(st.label, style: TextStyle(color: st.color, fontSize: 12, fontWeight: FontWeight.w600)),
             ])),
           ]),
@@ -247,7 +248,7 @@ class _OrderCard extends StatelessWidget {
           const Divider(height: 32),
           if (order.address != null) ...[
             Row(children: [Icon(LucideIcons.mapPin, size: 16, color: c.mutedForeground), const SizedBox(width: 6),
-              Expanded(child: Text(order.address!, style: TextStyle(color: c.foreground, fontSize: 13))),
+              Expanded(child: Text(order.address!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.foreground, fontSize: 13))),
             ]),
             const SizedBox(height: 16),
           ],
@@ -257,7 +258,7 @@ class _OrderCard extends StatelessWidget {
           ]),
           const SizedBox(height: 20),
           if (order.status == 'delivered') SizedBox(width: double.infinity, child: OutlinedButton.icon(
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Qayta buyurtma'))),
+            onPressed: () => AppToast.info(context, 'Qayta buyurtma'),
             style: OutlinedButton.styleFrom(side: BorderSide(color: c.border), padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
             icon: const Icon(LucideIcons.rotateCcw, size: 16),

@@ -5,7 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 class _Convo {
   final String id;
@@ -109,9 +110,9 @@ class _FwdState extends ConsumerState<ForwardMessageDialog> {
       await _client.from('messages').insert(inserts);
       if (!mounted) return;
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Forwarded to ${_selected.length} chat${_selected.length == 1 ? '' : 's'}')));
+      AppToast.success(context, "Yuborildi");
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to forward')));
+      if (mounted) AppToast.error(context, "Uzatib bo'lmadi");
     } finally {
       if (mounted) setState(() => _forwarding = false);
     }
@@ -162,7 +163,7 @@ class _FwdState extends ConsumerState<ForwardMessageDialog> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                             child: Row(children: [
                               Checkbox(value: sel, onChanged: (v) => _toggleConvo(cv.id)),
-                              UserAvatar(avatarUrl: cv.avatarUrl, fallback: cv.label()[0].toUpperCase(), size: 38),
+                              StoryAvatarRing(userId: null, avatarUrl: cv.avatarUrl, fallback: cv.label()[0].toUpperCase(), size: 38),
                               const SizedBox(width: 10),
                               Expanded(child: Text(cv.label(), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
                               if (cv.type == 'channel') Icon(LucideIcons.megaphone, size: 14, color: c.mutedForeground)

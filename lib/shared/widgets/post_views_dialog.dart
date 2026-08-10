@@ -6,7 +6,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_colors.dart';
 import '../../features/home/presentation/providers/post_views_provider.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 import 'verified_badge.dart';
 
 /// 1:1 port of web `PostViewsDialog.tsx` with realtime support.
@@ -72,10 +72,10 @@ class _PostViewsSheetState extends ConsumerState<_PostViewsSheet> {
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final theme = Theme.of(context);
-    
+
     // Realtime viewers list
     final viewersAsync = ref.watch(postViewersProvider(widget.postId));
-    
+
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       minChildSize: 0.5,
@@ -158,13 +158,13 @@ class _PostViewsSheetState extends ConsumerState<_PostViewsSheet> {
                 onChanged: (v) => setState(() => _query = v),
                 decoration: InputDecoration(
                   hintText: 'Qidirish...',
-                  prefixIcon:
-                      Icon(LucideIcons.search, size: 18, color: c.mutedForeground),
+                  prefixIcon: Icon(LucideIcons.search,
+                      size: 18, color: c.mutedForeground),
                   filled: true,
                   fillColor: c.muted.withValues(alpha: 0.4),
                   isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide.none,
@@ -183,7 +183,7 @@ class _PostViewsSheetState extends ConsumerState<_PostViewsSheet> {
                     return v.displayName.toLowerCase().contains(q) ||
                         v.username.toLowerCase().contains(q);
                   }).toList();
-                  
+
                   return filtered.isEmpty
                       ? _EmptyState(query: _query)
                       : ListView.builder(
@@ -232,7 +232,7 @@ class _ViewerTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
-            UserAvatar(
+            StoryAvatarRing(
               avatarUrl: viewer.avatarUrl,
               fallback: viewer.displayName.isNotEmpty
                   ? viewer.displayName[0].toUpperCase()
@@ -251,8 +251,8 @@ class _ViewerTile extends StatelessWidget {
                       Flexible(
                         child: Text(
                           viewer.displayName,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600),
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -273,8 +273,8 @@ class _ViewerTile extends StatelessWidget {
             ),
             Text(
               _relative(viewer.viewedAt),
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: c.mutedForeground),
+              style:
+                  theme.textTheme.bodySmall?.copyWith(color: c.mutedForeground),
             ),
           ],
         ),
@@ -318,9 +318,7 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              query.isEmpty
-                  ? 'Hali hech kim ko\'rmagan'
-                  : '"$query" topilmadi',
+              query.isEmpty ? 'Hali hech kim ko\'rmagan' : '"$query" topilmadi',
               style: TextStyle(color: c.mutedForeground, fontSize: 14),
               textAlign: TextAlign.center,
             ),

@@ -6,6 +6,7 @@ import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../app/router/page_transitions.dart';
 import '../../data/story_models.dart';
 import '../providers/stories_provider.dart';
@@ -29,8 +30,11 @@ class StoriesRing extends ConsumerWidget {
 
     // Skeleton loader (matches web shimmer behavior)
     if (state.isLoading && state.groups.isEmpty) {
-      return SizedBox(
-        height: 104,
+      return ConstrainedBox(
+        constraints: const BoxConstraints(
+          minHeight: 104,
+          maxHeight: 120,
+        ),
         child: ListView.builder(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -70,31 +74,39 @@ class StoriesRing extends ConsumerWidget {
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
       ),
-      child: SizedBox(
-        height: 104,
-        child: ListView(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          minHeight: 104,
+          maxHeight: 120,
+        ),
+        child: ListView.builder(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          children: [
-            _AddStoryBubble(avatarUrl: me?.avatarUrl, label: 'Siz'),
-            const SizedBox(width: 4),
-            for (var i = 0; i < state.groups.length; i++)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: _StoryBubble(
-                  group: state.groups[i],
-                  allViewed: state.groups[i].stories.every(
-                    (st) => state.viewedIds.contains(st.id),
-                  ),
-                  onTap: () {
-                    for (final st in state.groups[i].stories) {
-                      ref.read(storiesProvider.notifier).markViewed(st);
-                    }
-                    StoryViewer.show(context, state.groups, i);
-                  },
+          itemCount: state.groups.length + 2,
+          itemBuilder: (_, index) {
+            if (index == 0) {
+              return _AddStoryBubble(avatarUrl: me?.avatarUrl, label: 'Siz');
+            }
+            if (index == 1) {
+              return const SizedBox(width: 4);
+            }
+            final i = index - 2;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _StoryBubble(
+                group: state.groups[i],
+                allViewed: state.groups[i].stories.every(
+                  (st) => state.viewedIds.contains(st.id),
                 ),
+                onTap: () {
+                  for (final st in state.groups[i].stories) {
+                    ref.read(storiesProvider.notifier).markViewed(st);
+                  }
+                  StoryViewer.show(context, state.groups, i);
+                },
               ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -126,6 +138,7 @@ class _AddStoryBubbleState extends State<_AddStoryBubble> {
         child: SizedBox(
           width: 72,
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Stack(
                 clipBehavior: Clip.none,
@@ -200,6 +213,12 @@ class _StoryBubbleState extends State<_StoryBubble> {
   @override
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
+    final fallbackChar = (widget.group.displayName ??
+            widget.group.username ??
+            'U')
+        .substring(0, 1)
+        .toUpperCase();
+
     return GestureDetector(
       onTapDown: (_) => setState(() => _scale = 0.95),
       onTapUp: (_) {
@@ -213,58 +232,29 @@ class _StoryBubbleState extends State<_StoryBubble> {
         child: SizedBox(
           width: 72,
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.all(2.5),
-                decoration: widget.allViewed
-                    ? BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: c.muted,
-                      )
-                    : const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomLeft,
-                          end: Alignment.topRight,
-                          colors: [
-                            Color(0xFFFB923C), // alsamos-orange-light
-                            Color(0xFFC2410C), // alsamos-orange-dark
-                          ],
-                        ),
-                      ),
-                child: Hero(
-                  // v45: story ring → viewer shared element transition
-                  tag: HeroTags.storyRing(widget.group.userId),
-                  flightShuttleBuilder: (_, __, ___, ____, _____) => Material(
-                    color: Colors.transparent,
-                    child: ClipOval(
-                      child: UserAvatar(
-                        avatarUrl: widget.group.avatarUrl,
-                        fallback: (widget.group.displayName ??
-                                widget.group.username ??
-                                'U')
-                            .substring(0, 1)
-                            .toUpperCase(),
-                        size: 58,
-                      ),
-                    ),
-                  ),
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: c.background,
-                    ),
+              Hero(
+                tag: HeroTags.storyRing(widget.group.userId),
+                flightShuttleBuilder: (_, __, ___, ____, _____) => Material(
+                  color: Colors.transparent,
+                  child: ClipOval(
                     child: UserAvatar(
                       avatarUrl: widget.group.avatarUrl,
-                      fallback: (widget.group.displayName ??
-                              widget.group.username ??
-                              'U')
-                          .substring(0, 1)
-                          .toUpperCase(),
+                      fallback: fallbackChar,
                       size: 58,
                     ),
                   ),
+                ),
+                child: StoryAvatarRing(
+                  userId: widget.group.userId,
+                  avatarUrl: widget.group.avatarUrl,
+                  fallback: fallbackChar,
+                  size: 54,
+                  ringPadding: 3,
+                  storyCount: widget.group.stories.length,
+                  inactiveBorderColor:
+                      widget.allViewed ? c.muted : null,
                 ),
               ),
               const SizedBox(height: 6),

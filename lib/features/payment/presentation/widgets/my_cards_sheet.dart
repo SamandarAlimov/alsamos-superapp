@@ -107,8 +107,8 @@ class _MyCardsSheetState extends ConsumerState<MyCardsSheet> {
                           style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600, letterSpacing: 2)),
                       const SizedBox(height: 14),
                       Row(children: [
-                        Text((card['holder'] as String?) ?? '', style: const TextStyle(color: Colors.white, fontSize: 13)),
-                        const Spacer(),
+                        Expanded(child: Text((card['holder'] as String?) ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13))),
+                        const SizedBox(width: 8),
                         Text((card['expiry'] as String?) ?? '', style: const TextStyle(color: Colors.white, fontSize: 13)),
                       ]),
                     ]),

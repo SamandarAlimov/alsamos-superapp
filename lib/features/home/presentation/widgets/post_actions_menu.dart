@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
 /// Ports `src/components/PostActionsMenu.tsx`.
@@ -43,6 +44,10 @@ class PostActionsMenu extends ConsumerWidget {
     return showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.75,
+      ),
       builder: (_) => PostActionsMenu(
         postId: postId,
         postUserId: postUserId,
@@ -62,7 +67,7 @@ class PostActionsMenu extends ConsumerWidget {
     await Clipboard.setData(ClipboardData(text: url));
     if (!context.mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Link copied'), duration: Duration(seconds: 2)));
+    AppToast.success(context, 'Havola nusxalandi');
   }
 
   Future<void> _copyText(BuildContext context) async {
@@ -70,7 +75,7 @@ class PostActionsMenu extends ConsumerWidget {
     await Clipboard.setData(ClipboardData(text: postContent!));
     if (!context.mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Text copied'), duration: Duration(seconds: 2)));
+    AppToast.success(context, 'Matn nusxalandi');
   }
 
   Future<void> _report(BuildContext context, WidgetRef ref) async {
@@ -82,7 +87,7 @@ class PostActionsMenu extends ConsumerWidget {
     } catch (_) {}
     if (!context.mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Report submitted')));
+    AppToast.success(context, 'Shikoyat yuborildi');
   }
 
   Future<void> _toggleBookmark(BuildContext context, WidgetRef ref) async {
@@ -95,13 +100,13 @@ class PostActionsMenu extends ConsumerWidget {
         await client.from('bookmarks').delete().eq('id', existing['id'] as String);
         if (context.mounted) {
           Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bookmark removed')));
+          AppToast.info(context, 'Xatcho\'p olib tashlandi');
         }
       } else {
         await client.from('bookmarks').insert({'user_id': me, 'post_id': postId});
         if (context.mounted) {
           Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bookmarked')));
+          AppToast.info(context, 'Xatcho\'pga qo\'shildi');
         }
       }
     } catch (_) {}
@@ -147,6 +152,11 @@ class PostActionsMenu extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(margin: const EdgeInsets.symmetric(vertical: 8), width: 40, height: 4, decoration: BoxDecoration(color: c.border, borderRadius: BorderRadius.circular(2))),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
             if (isOwner) ...[
               _Item(icon: LucideIcons.edit, label: 'Edit post', onTap: () { Navigator.of(context).pop(); onEdit?.call(); }),
               _Item(
@@ -188,19 +198,21 @@ class PostActionsMenu extends ConsumerWidget {
               label: "Bildirishnomalarni o\u2018chirish",
               onTap: () {
                 Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text("Ushbu post bildirishnomalari o\u2018chirildi")),
-                );
+                AppToast.info(
+                    context, "Ushbu post bildirishnomalari o\u2018chirildi");
               },
             ),
             if (!isOwner) ...[
-              _Item(icon: LucideIcons.eyeOff, label: 'Not interested', onTap: () { Navigator.of(context).pop(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("We'll show fewer posts like this"))); }),
+              _Item(icon: LucideIcons.eyeOff, label: 'Not interested', onTap: () { Navigator.of(context).pop(); AppToast.info(context, "Bunday postlar kamroq ko\u2018rsatiladi"); }),
               _Item(icon: LucideIcons.flag, label: 'Report', destructive: true, onTap: () => _report(context, ref)),
             ],
             if (isOwner)
               _Item(icon: LucideIcons.trash2, label: 'Delete', destructive: true, onTap: () => _confirmDelete(context)),
             const SizedBox(height: 6),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -226,7 +238,12 @@ class _Item extends StatelessWidget {
         child: Row(children: [
           Icon(icon, size: 18, color: iconColor ?? color),
           const SizedBox(width: 14),
-          Text(label, style: TextStyle(fontSize: 14, color: color)),
+          Flexible(
+            child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, color: color)),
+          ),
         ]),
       ),
     );
@@ -246,6 +263,10 @@ Future<void> _showCollectionSheet(BuildContext context, WidgetRef ref) async {
   await showModalBottomSheet<void>(
     context: context,
     backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.of(context).size.height * 0.75,
+    ),
     builder: (ctx) => SafeArea(
       top: false,
       child: Container(
@@ -267,33 +288,44 @@ Future<void> _showCollectionSheet(BuildContext context, WidgetRef ref) async {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
-              child: Row(children: [
-                Text(
-                  "Saqlangan ro\u2018yxatlar",
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: c.foreground,
-                  ),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+                      child: Row(children: [
+                        Expanded(
+                          child: Text(
+                            "Saqlangan ro\u2018yxatlar",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: c.foreground,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(LucideIcons.plus, size: 18, color: AppColors.alsamosOrange),
+                      ]),
+                    ),
+                    for (final s in seeded)
+                      _Item(
+                        icon: s.$2,
+                        label: s.$1,
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          AppToast.success(context, "\u201C${s.$1}\u201D ga qo\u2018shildi");
+                        },
+                      ),
+                    const SizedBox(height: 6),
+                  ],
                 ),
-                const Spacer(),
-                Icon(LucideIcons.plus, size: 18, color: AppColors.alsamosOrange),
-              ]),
-            ),
-            for (final s in seeded)
-              _Item(
-                icon: s.$2,
-                label: s.$1,
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("\u201C${s.$1}\u201D ga qo\u2018shildi")),
-                  );
-                },
               ),
-            const SizedBox(height: 6),
+            ),
           ],
         ),
       ),

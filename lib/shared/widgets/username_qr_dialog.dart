@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../app/theme/app_theme.dart';
-import 'user_avatar.dart';
+import 'qr_scan_page.dart';
+import '../stories/story_avatar_ring.dart';
+import 'app_toast.dart';
 
 class UsernameQrDialog extends StatelessWidget {
   const UsernameQrDialog({
@@ -62,17 +65,28 @@ class UsernameQrDialog extends StatelessWidget {
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Row(children: [
-            UserAvatar(
+            StoryAvatarRing(
+              userId: null,
               avatarUrl: avatarUrl,
               fallback: title.isNotEmpty ? title[0].toUpperCase() : 'A',
               size: 44,
             ),
             const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 2),
-              Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: c.mutedForeground)),
-            ])),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, color: c.mutedForeground)),
+                ])),
             IconButton(
               tooltip: 'Yopish',
               onPressed: () => Navigator.of(context).pop(),
@@ -102,21 +116,42 @@ class UsernameQrDialog extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          Text(data, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: c.mutedForeground)),
+          Text(data,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: c.mutedForeground)),
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: data));
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Havola nusxalandi')),
-                );
-              },
-              icon: const Icon(LucideIcons.copy, size: 16),
-              label: const Text('Nusxalash'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: data));
+                    if (!context.mounted) return;
+                    AppToast.success(context, 'Havola nusxalandi');
+                  },
+                  icon: const Icon(LucideIcons.copy, size: 16),
+                  label: const Text('Nusxalash'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                tooltip: 'Ulashish',
+                onPressed: () => Share.share(data),
+                icon: const Icon(LucideIcons.share2, size: 17),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                tooltip: 'QR skanerlash',
+                onPressed: () async {
+                  final scanned = await AlsamosQrScanPage.open(context);
+                  if (!context.mounted || scanned == null) return;
+                  resolveAlsamosQr(context, scanned);
+                },
+                icon: const Icon(LucideIcons.scanLine, size: 17),
+              ),
+            ],
           ),
         ]),
       ),
