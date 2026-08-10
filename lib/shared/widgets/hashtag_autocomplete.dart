@@ -15,6 +15,7 @@ class TrendingHashtag {
 
 class HashtagAutocomplete extends StatefulWidget {
   final String query;
+  final String? conversationId;
   final ValueChanged<String> onSelect;
   final VoidCallback onClose;
   final double? top;
@@ -24,6 +25,7 @@ class HashtagAutocomplete extends StatefulWidget {
   const HashtagAutocomplete({
     super.key,
     required this.query,
+    this.conversationId,
     required this.onSelect,
     required this.onClose,
     this.top,
@@ -57,19 +59,33 @@ class _HashtagAutocompleteState extends State<HashtagAutocomplete> {
   Future<void> _fetch(String q) async {
     setState(() => _loading = true);
     try {
-      final res = await Supabase.instance.client
-          .from('posts')
-          .select('content')
-          .not('content', 'is', null)
-          .order('created_at', ascending: false)
-          .limit(200);
       final Map<String, int> counts = {};
-      for (final row in (res as List)) {
-        final m = Map<String, dynamic>.from(row as Map);
-        final content = (m['content'] as String?) ?? '';
-        for (final match in _tagRe.allMatches(content)) {
-          final tag = match.group(1)!.toLowerCase();
+      if (widget.conversationId != null) {
+        final rows = await Supabase.instance.client
+            .from('message_hashtags')
+            .select('tag')
+            .eq('conversation_id', widget.conversationId!)
+            .order('created_at', ascending: false)
+            .limit(200);
+        for (final row in (rows as List)) {
+          final tag = (row as Map)['tag']?.toString().toLowerCase();
+          if (tag == null || tag.isEmpty) continue;
           counts[tag] = (counts[tag] ?? 0) + 1;
+        }
+      } else {
+        final res = await Supabase.instance.client
+            .from('posts')
+            .select('content')
+            .not('content', 'is', null)
+            .order('created_at', ascending: false)
+            .limit(200);
+        for (final row in (res as List)) {
+          final m = Map<String, dynamic>.from(row as Map);
+          final content = (m['content'] as String?) ?? '';
+          for (final match in _tagRe.allMatches(content)) {
+            final tag = match.group(1)!.toLowerCase();
+            counts[tag] = (counts[tag] ?? 0) + 1;
+          }
         }
       }
       var list = counts.entries
@@ -78,7 +94,8 @@ class _HashtagAutocompleteState extends State<HashtagAutocomplete> {
         ..sort((a, b) => b.count.compareTo(a.count));
       if (q.isNotEmpty) {
         final qLow = q.toLowerCase();
-        list = list.where((h) => h.hashtag.toLowerCase().contains(qLow)).toList();
+        list =
+            list.where((h) => h.hashtag.toLowerCase().contains(qLow)).toList();
       }
       if (!mounted) return;
       setState(() {
@@ -104,8 +121,8 @@ class _HashtagAutocompleteState extends State<HashtagAutocomplete> {
       child: Material(
         color: Colors.transparent,
         child: Container(
-          constraints: BoxConstraints(
-              maxWidth: widget.maxWidth ?? 280, minWidth: 200),
+          constraints:
+              BoxConstraints(maxWidth: widget.maxWidth ?? 280, minWidth: 200),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             border: Border.all(color: c.border),

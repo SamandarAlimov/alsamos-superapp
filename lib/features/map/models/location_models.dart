@@ -138,13 +138,13 @@ class FrequentPlace {
   String get icon {
     switch (placeType) {
       case PlaceType.home:
-        return '🏠';
+        return 'home';
       case PlaceType.work:
-        return '💼';
+        return 'work';
       case PlaceType.study:
-        return '📚';
+        return 'study';
       case PlaceType.other:
-        return '📍';
+        return 'other';
     }
   }
 

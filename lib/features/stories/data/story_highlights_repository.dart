@@ -1,4 +1,5 @@
-import '../../../core/supabase/supabase_client.dart';
+import '../../../core/data/base_repository.dart';
+import '../../../core/data/supabase_data_source.dart';
 
 /// A single item saved into a highlight (a snapshot of a former story).
 class HighlightItem {
@@ -51,7 +52,11 @@ class StoryHighlight {
 
   int get itemCount => items.length;
 
-  StoryHighlight copyWith({String? name, String? coverUrl, List<HighlightItem>? items}) =>
+  StoryHighlight copyWith({
+    String? name,
+    String? coverUrl,
+    List<HighlightItem>? items,
+  }) =>
       StoryHighlight(
         id: id,
         userId: userId,
@@ -61,7 +66,10 @@ class StoryHighlight {
         createdAt: createdAt,
       );
 
-  factory StoryHighlight.fromMap(Map<String, dynamic> m, {List<HighlightItem>? items}) =>
+  factory StoryHighlight.fromMap(
+    Map<String, dynamic> m, {
+    List<HighlightItem>? items,
+  }) =>
       StoryHighlight(
         id: m['id'] as String,
         userId: m['user_id'] as String? ?? '',
@@ -73,58 +81,76 @@ class StoryHighlight {
 }
 
 /// Highlights data access, ported from web `useStoryHighlights.ts`.
-class StoryHighlightsRepository {
-  const StoryHighlightsRepository();
+class StoryHighlightsRepository extends BaseRepository {
+  final SupabaseDataSource _db;
+
+  const StoryHighlightsRepository({
+    SupabaseDataSource db = const SupabaseDataSource(),
+  }) : _db = db;
 
   /// Fetch all highlights for a user plus their items (single round trip via nested select).
-  Future<List<StoryHighlight>> fetchHighlights(String userId) async {
-    final data = await supabase
-        .from('story_highlights')
-        .select('*, items:story_highlight_items(*)')
-        .eq('user_id', userId)
-        .order('created_at', ascending: false);
-    return (data as List).map<StoryHighlight>((row) {
-      final m = Map<String, dynamic>.from(row as Map);
-      final rawItems = (m['items'] as List?) ?? const [];
-      final items = rawItems
-          .map((it) => HighlightItem.fromMap(Map<String, dynamic>.from(it as Map)))
-          .toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return StoryHighlight.fromMap(m, items: items);
-    }).toList();
-  }
+  Future<List<StoryHighlight>> fetchHighlights(String userId) =>
+      guard('fetchHighlights', () async {
+        final data = await _db
+            .table('story_highlights')
+            .select('*, items:story_highlight_items(*)')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false);
+        return (data as List).map<StoryHighlight>((row) {
+          final m = Map<String, dynamic>.from(row as Map);
+          final rawItems = (m['items'] as List?) ?? const [];
+          final items = rawItems
+              .map(
+                (it) => HighlightItem.fromMap(
+                  Map<String, dynamic>.from(it as Map),
+                ),
+              )
+              .toList()
+            ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+          return StoryHighlight.fromMap(m, items: items);
+        }).toList();
+      });
 
   Future<StoryHighlight?> createHighlight({
     required String userId,
     required String name,
     String? coverUrl,
-  }) async {
-    final data = await supabase
-        .from('story_highlights')
-        .insert({
-          'user_id': userId,
-          'name': name,
-          'cover_url': coverUrl,
-        })
-        .select()
-        .maybeSingle();
-    return data != null
-        ? StoryHighlight.fromMap(Map<String, dynamic>.from(data))
-        : null;
-  }
+  }) =>
+      guard('createHighlight', () async {
+        final data = await _db
+            .table('story_highlights')
+            .insert({
+              'user_id': userId,
+              'name': name,
+              'cover_url': coverUrl,
+            })
+            .select()
+            .maybeSingle();
+        return data != null
+            ? StoryHighlight.fromMap(Map<String, dynamic>.from(data))
+            : null;
+      });
 
-  Future<void> updateHighlight(String highlightId,
-      {String? name, String? coverUrl}) async {
-    final updates = <String, dynamic>{};
-    if (name != null) updates['name'] = name;
-    if (coverUrl != null) updates['cover_url'] = coverUrl;
-    if (updates.isEmpty) return;
-    await supabase.from('story_highlights').update(updates).eq('id', highlightId);
-  }
+  Future<void> updateHighlight(
+    String highlightId, {
+    String? name,
+    String? coverUrl,
+  }) =>
+      guard('updateHighlight', () async {
+        final updates = <String, dynamic>{};
+        if (name != null) updates['name'] = name;
+        if (coverUrl != null) updates['cover_url'] = coverUrl;
+        if (updates.isEmpty) return;
+        await _db
+            .table('story_highlights')
+            .update(updates)
+            .eq('id', highlightId);
+      });
 
-  Future<void> deleteHighlight(String highlightId) async {
-    await supabase.from('story_highlights').delete().eq('id', highlightId);
-  }
+  Future<void> deleteHighlight(String highlightId) =>
+      guard('deleteHighlight', () async {
+        await _db.table('story_highlights').delete().eq('id', highlightId);
+      });
 
   Future<void> addStoryToHighlight({
     required String highlightId,
@@ -132,32 +158,35 @@ class StoryHighlightsRepository {
     required String mediaUrl,
     required String mediaType,
     String? caption,
-  }) async {
-    await supabase.from('story_highlight_items').insert({
-      'highlight_id': highlightId,
-      'story_id': storyId,
-      'media_url': mediaUrl,
-      'media_type': mediaType,
-      'caption': caption,
-    });
-  }
+  }) =>
+      guard('addStoryToHighlight', () async {
+        await _db.table('story_highlight_items').insert({
+          'highlight_id': highlightId,
+          'story_id': storyId,
+          'media_url': mediaUrl,
+          'media_type': mediaType,
+          'caption': caption,
+        });
+      });
 
-  Future<void> removeHighlightItem(String itemId) async {
-    await supabase.from('story_highlight_items').delete().eq('id', itemId);
-  }
+  Future<void> removeHighlightItem(String itemId) =>
+      guard('removeHighlightItem', () async {
+        await _db.table('story_highlight_items').delete().eq('id', itemId);
+      });
 
-  Future<List<Map<String, dynamic>>> fetchArchivedStories(String userId) async {
-    final data = await supabase
-        .from('stories')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', ascending: false);
-    final now = DateTime.now();
-    return (data as List)
-        .map((m) => Map<String, dynamic>.from(m as Map))
-        .where((m) {
-      final exp = DateTime.tryParse(m['expires_at'] as String? ?? '');
-      return exp != null && exp.isBefore(now);
-    }).toList();
-  }
+  Future<List<Map<String, dynamic>>> fetchArchivedStories(String userId) =>
+      guard('fetchArchivedStories', () async {
+        final data = await _db
+            .table('stories')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false);
+        final now = DateTime.now();
+        return (data as List)
+            .map((m) => Map<String, dynamic>.from(m as Map))
+            .where((m) {
+          final exp = DateTime.tryParse(m['expires_at'] as String? ?? '');
+          return exp != null && exp.isBefore(now);
+        }).toList();
+      });
 }

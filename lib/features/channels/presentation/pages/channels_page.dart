@@ -21,18 +21,34 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
   final _queryCtrl = TextEditingController();
 
   @override
-  void dispose() { _queryCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _queryCtrl.dispose();
+    super.dispose();
+  }
 
   List<Channel> _filter(List<Channel> all) {
     final q = _queryCtrl.text.toLowerCase();
     List<Channel> base;
     switch (_tab) {
-      case _Tab.my: base = all.where((c) => c.isMember).toList(); break;
-      case _Tab.discover: base = all.where((c) => !c.isMember && c.channelType == 'public').toList(); break;
-      case _Tab.popular: base = List.of(all)..sort((a, b) => b.subscriberCount.compareTo(a.subscriberCount)); base = base.take(20).toList(); break;
+      case _Tab.my:
+        base = all.where((c) => c.isMember).toList();
+        break;
+      case _Tab.discover:
+        base =
+            all.where((c) => !c.isMember && c.channelType == 'public').toList();
+        break;
+      case _Tab.popular:
+        base = List.of(all)
+          ..sort((a, b) => b.subscriberCount.compareTo(a.subscriberCount));
+        base = base.take(20).toList();
+        break;
     }
     if (q.isEmpty) return base;
-    return base.where((c) => c.name.toLowerCase().contains(q) || (c.username?.toLowerCase().contains(q) ?? false)).toList();
+    return base
+        .where((c) =>
+            c.name.toLowerCase().contains(q) ||
+            (c.username?.toLowerCase().contains(q) ?? false))
+        .toList();
   }
 
   String _fmt(int n) {
@@ -43,43 +59,80 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
 
   Future<void> _createDialog() async {
     final nameCtrl = TextEditingController();
+    final usernameCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     var type = 'public';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Yangi kanal', style: TextStyle(fontWeight: FontWeight.bold)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Yangi kanal',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'Kanal nomi', hintText: '@username')),
+            TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'Kanal nomi', hintText: '@username')),
             const SizedBox(height: 10),
-            TextField(controller: descCtrl, maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Tavsif (ixtiyoriy)')),
+            TextField(
+              controller: usernameCtrl,
+              decoration: const InputDecoration(
+                  labelText: 'Public username', hintText: 'alsamos_news'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+                controller: descCtrl,
+                maxLines: 2,
+                decoration:
+                    const InputDecoration(labelText: 'Tavsif (ixtiyoriy)')),
             const SizedBox(height: 10),
             Row(children: [
-              const Text('Turi:', style: TextStyle(fontWeight: FontWeight.w500)),
+              const Text('Turi:',
+                  style: TextStyle(fontWeight: FontWeight.w500)),
               const Spacer(),
               DropdownButton<String>(
-                value: type, underline: const SizedBox(),
+                value: type,
+                underline: const SizedBox(),
                 items: const [
-                  DropdownMenuItem(value: 'public', child: Row(children: [Icon(LucideIcons.globe, size: 14), SizedBox(width: 4), Text('Ochiq')])),
-                  DropdownMenuItem(value: 'private', child: Row(children: [Icon(LucideIcons.lock, size: 14), SizedBox(width: 4), Text('Yopiq')])),
+                  DropdownMenuItem(
+                      value: 'public',
+                      child: Row(children: [
+                        Icon(LucideIcons.globe, size: 14),
+                        SizedBox(width: 4),
+                        Text('Ochiq')
+                      ])),
+                  DropdownMenuItem(
+                      value: 'private',
+                      child: Row(children: [
+                        Icon(LucideIcons.lock, size: 14),
+                        SizedBox(width: 4),
+                        Text('Yopiq')
+                      ])),
                 ],
                 onChanged: (v) => setS(() => type = v ?? 'public'),
               ),
             ]),
           ]),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Bekor')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Yaratish')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Bekor')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Yaratish')),
           ],
         ),
       ),
     );
     if (ok == true && nameCtrl.text.trim().isNotEmpty) {
-      await ref.read(channelsProvider.notifier).create(nameCtrl.text.trim(), type, description: descCtrl.text.trim());
+      await ref.read(channelsProvider.notifier).create(
+            nameCtrl.text.trim(),
+            type,
+            description: descCtrl.text.trim(),
+            username: usernameCtrl.text.trim(),
+          );
     }
   }
 
@@ -108,18 +161,24 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
                 children: [
                   Row(
                     children: [
-                      Icon(LucideIcons.megaphone, size: 24, color: AppColors.alsamosOrange),
+                      Icon(LucideIcons.megaphone,
+                          size: 24, color: AppColors.alsamosOrange),
                       const SizedBox(width: 8),
                       const Expanded(
                         child: Text('Kanallar',
-                            style: TextStyle(fontFamily: 'SpaceGrotesk',
-                                fontSize: 20, fontWeight: FontWeight.bold)),
+                            style: TextStyle(
+                                fontFamily: 'SpaceGrotesk',
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold)),
                       ),
                       FilledButton.icon(
                         onPressed: _createDialog,
                         icon: const Icon(LucideIcons.plus, size: 16),
-                        label: const Text('Yaratish', style: TextStyle(fontSize: 13)),
-                        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                        label: const Text('Yaratish',
+                            style: TextStyle(fontSize: 13)),
+                        style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8)),
                       ),
                     ],
                   ),
@@ -130,7 +189,8 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
                       hintText: 'Kanallarni qidirish...',
-                      prefixIcon: Icon(LucideIcons.search, size: 18, color: c.mutedForeground),
+                      prefixIcon: Icon(LucideIcons.search,
+                          size: 18, color: c.mutedForeground),
                       filled: true,
                       fillColor: c.muted.withValues(alpha: 0.6),
                       border: OutlineInputBorder(
@@ -142,6 +202,14 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
                   ),
                   const SizedBox(height: 10),
                   // Tabs
+                  if (channelsAsync.error != null) ...[
+                    const SizedBox(height: 8),
+                    _InlineError(
+                      message: channelsAsync.error!,
+                      onRetry: () => ref.read(channelsProvider.notifier).load(),
+                      c: c,
+                    ),
+                  ],
                   Container(
                     padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
@@ -149,15 +217,24 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
                         borderRadius: BorderRadius.circular(12)),
                     child: Row(
                       children: [
-                        _TabBtn(label: 'Mening', icon: LucideIcons.bookmark,
+                        _TabBtn(
+                            label: 'Mening',
+                            icon: LucideIcons.bookmark,
                             active: _tab == _Tab.my,
-                            onTap: () => setState(() => _tab = _Tab.my), c: c),
-                        _TabBtn(label: 'Topish', icon: LucideIcons.search,
+                            onTap: () => setState(() => _tab = _Tab.my),
+                            c: c),
+                        _TabBtn(
+                            label: 'Topish',
+                            icon: LucideIcons.search,
                             active: _tab == _Tab.discover,
-                            onTap: () => setState(() => _tab = _Tab.discover), c: c),
-                        _TabBtn(label: 'Mashhur', icon: LucideIcons.trendingUp,
+                            onTap: () => setState(() => _tab = _Tab.discover),
+                            c: c),
+                        _TabBtn(
+                            label: 'Mashhur',
+                            icon: LucideIcons.trendingUp,
                             active: _tab == _Tab.popular,
-                            onTap: () => setState(() => _tab = _Tab.popular), c: c),
+                            onTap: () => setState(() => _tab = _Tab.popular),
+                            c: c),
                       ],
                     ),
                   ),
@@ -170,18 +247,25 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
             child: isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : filtered.isEmpty
-                    ? _EmptyChannels(tab: _tab, onCreateTap: _createDialog, c: c)
+                    ? _EmptyChannels(
+                        tab: _tab, onCreateTap: _createDialog, c: c)
                     : RefreshIndicator(
-                        onRefresh: () => ref.read(channelsProvider.notifier).load(),
+                        onRefresh: () =>
+                            ref.read(channelsProvider.notifier).load(),
                         child: ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
                           itemCount: filtered.length,
                           itemBuilder: (_, i) => _ChannelCard(
                             channel: filtered[i],
                             fmt: _fmt,
                             onTap: () => _openChannel(filtered[i]),
-                            onJoin: () => ref.read(channelsProvider.notifier).join(filtered[i].id),
-                            onLeave: () => ref.read(channelsProvider.notifier).leave(filtered[i].id),
+                            onJoin: () => ref
+                                .read(channelsProvider.notifier)
+                                .join(filtered[i].id),
+                            onLeave: () => ref
+                                .read(channelsProvider.notifier)
+                                .leave(filtered[i].id),
                             c: c,
                           ),
                         ),
@@ -200,10 +284,17 @@ class _ChannelsPageState extends ConsumerState<ChannelsPage> {
 }
 
 class _TabBtn extends StatelessWidget {
-  final String label; final IconData icon; final bool active;
-  final VoidCallback onTap; final AlsamosColors c;
-  const _TabBtn({required this.label, required this.icon, required this.active,
-      required this.onTap, required this.c});
+  final String label;
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+  final AlsamosColors c;
+  const _TabBtn(
+      {required this.label,
+      required this.icon,
+      required this.active,
+      required this.onTap,
+      required this.c});
   @override
   Widget build(BuildContext context) {
     return Expanded(
@@ -219,11 +310,17 @@ class _TabBtn extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 14, color: active ? AppColors.alsamosOrange : c.mutedForeground),
+              Icon(icon,
+                  size: 14,
+                  color: active ? AppColors.alsamosOrange : c.mutedForeground),
               const SizedBox(width: 4),
-              Text(label, style: TextStyle(
-                  fontSize: 12, fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-                  color: active ? AppColors.alsamosOrange : c.mutedForeground)),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                      color: active
+                          ? AppColors.alsamosOrange
+                          : c.mutedForeground)),
             ],
           ),
         ),
@@ -232,12 +329,58 @@ class _TabBtn extends StatelessWidget {
   }
 }
 
-class _ChannelCard extends StatelessWidget {
-  final Channel channel; final String Function(int) fmt;
-  final VoidCallback onTap; final VoidCallback onJoin; final VoidCallback onLeave;
+class _InlineError extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
   final AlsamosColors c;
-  const _ChannelCard({required this.channel, required this.fmt, required this.onTap,
-      required this.onJoin, required this.onLeave, required this.c});
+  const _InlineError({
+    required this.message,
+    required this.onRetry,
+    required this.c,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          const Icon(LucideIcons.circleAlert, size: 16, color: Colors.red),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: c.foreground),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Qayta')),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChannelCard extends StatelessWidget {
+  final Channel channel;
+  final String Function(int) fmt;
+  final VoidCallback onTap;
+  final VoidCallback onJoin;
+  final VoidCallback onLeave;
+  final AlsamosColors c;
+  const _ChannelCard(
+      {required this.channel,
+      required this.fmt,
+      required this.onTap,
+      required this.onJoin,
+      required this.onLeave,
+      required this.c});
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -253,13 +396,17 @@ class _ChannelCard extends StatelessWidget {
           children: [
             // Avatar
             Container(
-              width: 52, height: 52,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
                   color: AppColors.alsamosOrange.withValues(alpha: 0.12),
                   shape: BoxShape.circle),
               child: channel.avatarUrl != null
-                  ? ClipOval(child: Image.network(channel.avatarUrl!, width: 52, height: 52, fit: BoxFit.cover))
-                  : Icon(LucideIcons.megaphone, size: 22, color: AppColors.alsamosOrange),
+                  ? ClipOval(
+                      child: Image.network(channel.avatarUrl!,
+                          width: 52, height: 52, fit: BoxFit.cover))
+                  : Icon(LucideIcons.megaphone,
+                      size: 22, color: AppColors.alsamosOrange),
             ),
             const SizedBox(width: 12),
             // Info
@@ -271,35 +418,47 @@ class _ChannelCard extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(channel.name,
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 14)),
                       ),
                       const SizedBox(width: 4),
                       Icon(
-                        channel.channelType == 'private' ? LucideIcons.lock : LucideIcons.globe,
+                        channel.channelType == 'private'
+                            ? LucideIcons.lock
+                            : LucideIcons.globe,
                         size: 13,
-                        color: channel.channelType == 'private' ? c.mutedForeground : AppColors.alsamosOrange,
+                        color: channel.channelType == 'private'
+                            ? c.mutedForeground
+                            : AppColors.alsamosOrange,
                       ),
                     ],
                   ),
                   if (channel.username != null)
                     Text('@${channel.username}',
-                        style: TextStyle(fontSize: 12, color: c.mutedForeground)),
+                        style:
+                            TextStyle(fontSize: 12, color: c.mutedForeground)),
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      Icon(LucideIcons.users, size: 12, color: c.mutedForeground),
+                      Icon(LucideIcons.users,
+                          size: 12, color: c.mutedForeground),
                       const SizedBox(width: 4),
                       Text(fmt(channel.subscriberCount),
-                          style: TextStyle(fontSize: 12, color: c.mutedForeground)),
+                          style: TextStyle(
+                              fontSize: 12, color: c.mutedForeground)),
                       if (channel.isPaid) ...[
                         const SizedBox(width: 6),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                              color: c.muted, borderRadius: BorderRadius.circular(6)),
+                              color: c.muted,
+                              borderRadius: BorderRadius.circular(6)),
                           child: Text('Pullik',
-                              style: TextStyle(fontSize: 10, color: c.mutedForeground)),
+                              style: TextStyle(
+                                  fontSize: 10, color: c.mutedForeground)),
                         ),
                       ],
                     ],
@@ -312,7 +471,8 @@ class _ChannelCard extends StatelessWidget {
               FilledButton(
                 onPressed: onJoin,
                 style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 7)),
                 child: const Text('Obuna', style: TextStyle(fontSize: 12)),
               )
             else if (channel.memberRole == 'admin')
@@ -321,13 +481,16 @@ class _ChannelCard extends StatelessWidget {
                 decoration: BoxDecoration(
                     border: Border.all(color: c.border),
                     borderRadius: BorderRadius.circular(8)),
-                child: const Text('Admin', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+                child: const Text('Admin',
+                    style:
+                        TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
               )
             else
               OutlinedButton(
                 onPressed: onLeave,
                 style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 7)),
                 child: const Text('Chiqish', style: TextStyle(fontSize: 12)),
               ),
           ],
@@ -338,15 +501,19 @@ class _ChannelCard extends StatelessWidget {
 }
 
 class _EmptyChannels extends StatelessWidget {
-  final _Tab tab; final VoidCallback onCreateTap; final AlsamosColors c;
-  const _EmptyChannels({required this.tab, required this.onCreateTap, required this.c});
+  final _Tab tab;
+  final VoidCallback onCreateTap;
+  final AlsamosColors c;
+  const _EmptyChannels(
+      {required this.tab, required this.onCreateTap, required this.c});
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(LucideIcons.megaphone, size: 64, color: c.mutedForeground.withValues(alpha: 0.3)),
+          Icon(LucideIcons.megaphone,
+              size: 64, color: c.mutedForeground.withValues(alpha: 0.3)),
           const SizedBox(height: 12),
           Text(
             tab == _Tab.my ? "Hali kanallaringiz yo'q" : 'Kanal topilmadi',

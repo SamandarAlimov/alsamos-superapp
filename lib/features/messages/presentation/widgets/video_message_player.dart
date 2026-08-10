@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../shared/utils/video_controller_lifecycle.dart';
+
 // Telegram-style circular video message — matches web VideoMessagePlayer.tsx
 class VideoMessagePlayer extends StatefulWidget {
   final String url;
@@ -42,7 +44,7 @@ class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
   }
 
   @override
-  void dispose() { _ctrl.removeListener(_listener); _ctrl.dispose(); super.dispose(); }
+  void dispose() { _ctrl.removeListener(_listener); disposeVideoControllerSafely(_ctrl); super.dispose(); }
 
   void _toggle() {
     HapticFeedback.selectionClick();

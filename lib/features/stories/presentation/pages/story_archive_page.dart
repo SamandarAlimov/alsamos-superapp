@@ -11,6 +11,9 @@ import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/highlights_provider.dart';
+import '../../../../shared/utils/video_controller_lifecycle.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 /// Pixel-perfect port of web `StoryArchivePage.tsx` (309 lines).
 ///
@@ -160,13 +163,16 @@ class _Header extends StatelessWidget {
         const Icon(LucideIcons.archive,
             size: 24, color: AppColors.alsamosOrange),
         const SizedBox(width: 8),
-        Text(
-          'Story Archive',
-          style: TextStyle(
-            color: c.foreground,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.3,
+        Flexible(
+          child: Text(
+            'Story Archive',
+            style: TextStyle(
+              color: c.foreground,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.3,
+            ),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
@@ -328,12 +334,15 @@ class _StoryTileState extends State<_StoryTile> {
                           Icon(LucideIcons.plus,
                               size: 14, color: c.foreground),
                           const SizedBox(width: 4),
-                          Text(
-                            "Highlight'ga",
-                            style: TextStyle(
-                                color: c.foreground,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600),
+                          Flexible(
+                            child: Text(
+                              "Highlight'ga",
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: c.foreground,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ],
                       ),
@@ -397,7 +406,7 @@ class _VideoThumbState extends State<_VideoThumb> {
 
   @override
   void dispose() {
-    _ctrl?.dispose();
+    disposeVideoControllerSafely(_ctrl);
     super.dispose();
   }
 
@@ -458,16 +467,12 @@ class _AddToHighlightDialogState extends State<_AddToHighlightDialog> {
     try {
       await widget.onSubmit(_selectedId!, _nameCtrl.text.trim());
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Highlight'ga qo'shildi"),
-            duration: Duration(seconds: 2)));
+        AppToast.success(context, "Highlight'ga qo'shildi");
         Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Xatolik: $e'),
-            duration: const Duration(seconds: 3)));
+        AppToast.error(context, friendlyError(e));
         setState(() => _adding = false);
       }
     }
@@ -752,11 +757,14 @@ class _HighlightSelect extends StatelessWidget {
                     Icon(LucideIcons.plus,
                         size: 16, color: AppColors.alsamosOrange),
                     SizedBox(width: 8),
-                    Text('Yangi highlight yaratish',
-                        style: TextStyle(
-                            color: AppColors.alsamosOrange,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600)),
+                    Flexible(
+                      child: Text('Yangi highlight yaratish',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: AppColors.alsamosOrange,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                    ),
                   ],
                 ),
               ),

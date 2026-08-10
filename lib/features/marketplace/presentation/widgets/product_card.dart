@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/premium_motion.dart';
 import '../../data/models/product_model.dart';
 import '../providers/marketplace_provider.dart';
@@ -62,16 +63,30 @@ class _ProductCardState extends ConsumerState<ProductCard>
 
   Future<void> _toggleLike() async {
     if (_busy) return;
+    final wasLiked = _liked;
     setState(() {
       _busy = true;
       _liked = !_liked;
     });
     HapticFeedback.mediumImpact();
     _heart.forward(from: 0).then((_) => _heart.reverse());
+    
     final ok = await ref
         .read(marketplaceRepoProvider)
-        .toggleLike(widget.product.id, !_liked);
-    if (!ok && mounted) setState(() => _liked = !_liked);
+        .toggleLike(widget.product.id, wasLiked);
+    
+    if (!ok && mounted) {
+      setState(() => _liked = wasLiked);
+      if (mounted) {
+        AppToast.error(context, 'Xatolik yuz berdi');
+      }
+    } else if (mounted) {
+      AppToast.success(
+        context, 
+        _liked ? 'Saqlanganlar ga qoʼshildi' : 'Saqlanganlar dan oʼchirildi'
+      );
+    }
+    
     if (mounted) setState(() => _busy = false);
     widget.onLikeChange?.call();
   }
@@ -109,7 +124,7 @@ class _ProductCardState extends ConsumerState<ProductCard>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AspectRatio(
-            aspectRatio: 1,
+            aspectRatio: 1.15, // Slightly wider than square to leave more room for content below
             child: Stack(fit: StackFit.expand, children: [
               ClipRRect(
                 borderRadius:
@@ -259,94 +274,107 @@ class _ProductCardState extends ConsumerState<ProductCard>
                 ),
             ]),
           ),
-          Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text('\$${_money(p.price)}',
-                        style: TextStyle(
-                            color: c.foreground,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800)),
-                    if (p.hasDiscount) ...[
-                      const SizedBox(width: 6),
-                      Text('\$${_money(p.compareAtPrice!)}',
-                          style: TextStyle(
-                              color: c.mutedForeground,
-                              fontSize: 11,
-                              decoration: TextDecoration.lineThrough)),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                SizedBox(
-                  height: 32,
-                  child: Text(p.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: c.foreground.withValues(alpha: 0.9),
-                          fontSize: 12.5,
-                          height: 1.25)),
-                ),
-                if ((p.seller?.rating ?? 0) > 0) ...[
-                  const SizedBox(height: 4),
-                  Row(children: [
-                    const Icon(LucideIcons.star,
-                        size: 11, color: Color(0xFFFBBF24)),
-                    const SizedBox(width: 3),
-                    Text(p.seller!.rating.toStringAsFixed(1),
-                        style: TextStyle(
-                            color: c.foreground,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 4),
-                    Text('· ${p.seller!.totalSales} sotuv',
-                        style:
-                            TextStyle(color: c.mutedForeground, fontSize: 11)),
-                  ]),
-                ],
-                if (p.seller != null) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.only(top: 4),
-                    decoration: BoxDecoration(
-                      border: Border(
-                          top: BorderSide(
-                              color: c.border.withValues(alpha: 0.3))),
-                    ),
-                    child: Row(children: [
-                      Expanded(
-                        child: Text(p.seller!.businessName,
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Flexible(
+                        child: Text('\$${_money(p.price)}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                color: c.mutedForeground, fontSize: 10)),
+                                color: c.foreground,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800)),
                       ),
-                      if (p.seller!.isVerified)
-                        Icon(LucideIcons.shieldCheck, size: 11, color: brand),
-                    ]),
+                      if (p.hasDiscount) ...[
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text('\$${_money(p.compareAtPrice!)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: c.mutedForeground,
+                                  fontSize: 11,
+                                  decoration: TextDecoration.lineThrough)),
+                        ),
+                      ],
+                    ],
                   ),
-                ] else if (p.location != null) ...[
                   const SizedBox(height: 4),
-                  Row(children: [
-                    Icon(LucideIcons.mapPin,
-                        size: 10, color: c.mutedForeground),
-                    const SizedBox(width: 3),
-                    Expanded(
-                        child: Text(p.location!,
+                  Flexible(
+                    child: Text(p.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: c.foreground.withValues(alpha: 0.9),
+                            fontSize: 12.5,
+                            height: 1.25)),
+                  ),
+                  const Spacer(),
+                  if ((p.seller?.rating ?? 0) > 0) ...[
+                    Row(children: [
+                      const Icon(LucideIcons.star,
+                          size: 11, color: Color(0xFFFBBF24)),
+                      const SizedBox(width: 3),
+                      Text(p.seller!.rating.toStringAsFixed(1),
+                          style: TextStyle(
+                              color: c.foreground,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text('· ${p.seller!.totalSales} sotuv',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: c.mutedForeground, fontSize: 10))),
-                  ]),
+                            style:
+                                TextStyle(color: c.mutedForeground, fontSize: 11)),
+                      ),
+                    ]),
+                    const SizedBox(height: 4),
+                  ],
+                  if (p.seller != null) ...[
+                    Container(
+                      padding: const EdgeInsets.only(top: 2),
+                      decoration: BoxDecoration(
+                        border: Border(
+                            top: BorderSide(
+                                color: c.border.withValues(alpha: 0.3))),
+                      ),
+                      child: Row(children: [
+                        Expanded(
+                          child: Text(p.seller!.businessName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: c.mutedForeground, fontSize: 10)),
+                        ),
+                        if (p.seller!.isVerified)
+                          Icon(LucideIcons.shieldCheck, size: 11, color: brand),
+                      ]),
+                    ),
+                  ] else if (p.location != null) ...[
+                    Row(children: [
+                      Icon(LucideIcons.mapPin,
+                          size: 10, color: c.mutedForeground),
+                      const SizedBox(width: 3),
+                      Expanded(
+                          child: Text(p.location!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: c.mutedForeground, fontSize: 10))),
+                    ]),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],
@@ -406,24 +434,35 @@ class _ProductCardState extends ConsumerState<ProductCard>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Text('\$${_money(p.price)}',
-                          style: TextStyle(
-                              color: brand,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800)),
-                      if (p.hasDiscount) ...[
-                        const SizedBox(width: 6),
-                        Text('\$${_money(p.compareAtPrice!)}',
-                            style: TextStyle(
-                                color: c.mutedForeground,
-                                fontSize: 11,
-                                decoration: TextDecoration.lineThrough)),
+                  Flexible(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Flexible(
+                          child: Text('\$${_money(p.price)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: brand,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800)),
+                        ),
+                        if (p.hasDiscount) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text('\$${_money(p.compareAtPrice!)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: c.mutedForeground,
+                                    fontSize: 11,
+                                    decoration: TextDecoration.lineThrough)),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,

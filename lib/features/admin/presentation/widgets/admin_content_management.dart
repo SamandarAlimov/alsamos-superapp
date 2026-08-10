@@ -3,7 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 import '../../data/admin_repository.dart';
 
@@ -266,7 +266,8 @@ class _AdminContentManagementState extends State<AdminContentManagement>
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                UserAvatar(
+                StoryAvatarRing(
+                  userId: p['user_id'] as String?,
                   avatarUrl: pr['avatar_url'] as String?,
                   fallback:
                       ((pr['username'] as String?) ?? '?')[0].toUpperCase(),
@@ -294,12 +295,13 @@ class _AdminContentManagementState extends State<AdminContentManagement>
                           const SizedBox(width: 4),
                           const VerifiedBadge(size: 12),
                         ],
-                        const SizedBox(width: 6),
-                        Text('@${pr['username'] ?? 'unknown'}',
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: c.mutedForeground)),
                       ]),
+                      Text('@${pr['username'] ?? 'unknown'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: c.mutedForeground)),
                       const SizedBox(height: 4),
                       Text(p['content'] as String? ?? '',
                           maxLines: 3,
@@ -381,7 +383,8 @@ class _AdminContentManagementState extends State<AdminContentManagement>
             border: Border.all(color: c.border),
           ),
           child: Row(children: [
-            UserAvatar(
+            StoryAvatarRing(
+              userId: cm['user_id'] as String?,
               avatarUrl: pr['avatar_url'] as String?,
               fallback:
                   ((pr['username'] as String?) ?? '?')[0].toUpperCase(),
@@ -409,11 +412,12 @@ class _AdminContentManagementState extends State<AdminContentManagement>
                       const SizedBox(width: 4),
                       const VerifiedBadge(size: 12),
                     ],
-                    const SizedBox(width: 6),
-                    Text('@${pr['username'] ?? 'unknown'}',
-                        style: TextStyle(
-                            fontSize: 11, color: c.mutedForeground)),
                   ]),
+                  Text('@${pr['username'] ?? 'unknown'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 11, color: c.mutedForeground)),
                   const SizedBox(height: 4),
                   Text(cm['content'] as String? ?? '',
                       maxLines: 2,
@@ -486,7 +490,8 @@ class _AdminContentManagementState extends State<AdminContentManagement>
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  UserAvatar(
+                  StoryAvatarRing(
+                    userId: u['id'] as String?,
                     avatarUrl: u['avatar_url'] as String?,
                     fallback:
                         ((u['username'] as String?) ?? '?')[0].toUpperCase(),
@@ -612,7 +617,8 @@ class _AdminContentManagementState extends State<AdminContentManagement>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  UserAvatar(
+                  StoryAvatarRing(
+                    userId: p['user_id'] as String?,
                     avatarUrl: pr['avatar_url'] as String?,
                     fallback:
                         ((pr['username'] as String?) ?? '?')[0].toUpperCase(),
@@ -867,7 +873,8 @@ class _UserDetailsViewState extends State<_UserDetailsView> {
               children: [
                 Row(children: [
                   Stack(clipBehavior: Clip.none, children: [
-                    UserAvatar(
+                    StoryAvatarRing(
+                      userId: u['id'] as String?,
                       avatarUrl: u['avatar_url'] as String?,
                       fallback:
                           ((u['username'] as String?) ?? '?')[0].toUpperCase(),

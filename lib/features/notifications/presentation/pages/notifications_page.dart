@@ -9,11 +9,14 @@ import 'package:video_player/video_player.dart';
 
 import '../../../../app/i18n/app_strings.dart';
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/content/utils/content_metadata.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/empty_state.dart';
 import '../../../../shared/widgets/poll_display.dart';
 import '../../data/notification_model.dart';
 import '../providers/notifications_provider.dart';
+import '../../../../shared/utils/video_controller_lifecycle.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// Faithful port of web pages/NotificationsPage.tsx.
 class NotificationsPage extends ConsumerStatefulWidget {
@@ -142,15 +145,19 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                         padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
                         child: Row(
                           children: [
-                            Builder(builder: (ctx) {
-                              ref.watch(localeProvider);
-                              return Text(
-                                  AppStrings.of(ref).t('pages.notifications'),
-                                  style: const TextStyle(
-                                      fontFamily: 'SpaceGrotesk',
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold));
-                            }),
+                            Flexible(
+                              child: Builder(builder: (ctx) {
+                                ref.watch(localeProvider);
+                                return Text(
+                                    AppStrings.of(ref).t('pages.notifications'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontFamily: 'SpaceGrotesk',
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold));
+                              }),
+                            ),
                             if (unread > 0) ...[
                               const SizedBox(width: 8),
                               Container(
@@ -274,30 +281,74 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
     for (final n in items) {
       map.putIfAbsent(_section(n.createdAt), () => []).add(n);
     }
-    final widgets = <Widget>[];
+    final sections = <({String title, List<AppNotification> items})>[];
     for (final sec in order) {
       final group = map[sec];
-      if (group == null || group.isEmpty) continue;
-      widgets.add(Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-        child: Row(
-          children: [
-            Icon(LucideIcons.sparkles, size: 12, color: c.mutedForeground),
-            const SizedBox(width: 6),
-            Text(sec.toUpperCase(),
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5,
-                    color: c.mutedForeground)),
-          ],
-        ),
-      ));
-      for (final n in group) {
-        widgets.add(_item(n, c, theme));
+      if (group != null && group.isNotEmpty) {
+        sections.add((title: sec, items: group));
       }
     }
-    return ListView(children: widgets);
+
+    int itemCount = 0;
+    for (final s in sections) {
+      itemCount += 1 + s.items.length; // header + items
+    }
+
+    return ListView.builder(
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        int offset = 0;
+        for (final s in sections) {
+          if (index == offset) {
+            // Section header
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.sparkles,
+                      size: 12, color: c.mutedForeground),
+                  const SizedBox(width: 6),
+                  Text(s.title.toUpperCase(),
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                          color: c.mutedForeground)),
+                ],
+              ),
+            );
+          }
+          if (index < offset + 1 + s.items.length) {
+            // Item within this section
+            final itemIndex = index - offset - 1;
+            return _item(s.items[itemIndex], c, theme);
+          }
+          offset += 1 + s.items.length;
+        }
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Future<void> _respondToCollaboration(
+    AppNotification notification, {
+    required bool accept,
+  }) async {
+    final ok = await ref
+        .read(notificationsProvider.notifier)
+        .respondToCollaborationInvite(notification, accept: accept);
+    if (!mounted) return;
+    if (ok) {
+      AppToast.success(
+        context,
+        accept ? 'Hamkorlik qabul qilindi' : 'Hamkorlik rad etildi',
+      );
+    } else {
+      AppToast.error(
+        context,
+        'Hamkorlik so\'rovini yangilab bo\'lmadi',
+      );
+    }
   }
 
   Widget _item(AppNotification n, AlsamosColors c, ThemeData theme) {
@@ -380,15 +431,19 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
               children: [
                 // Avatar + gradient type badge
                 SizedBox(
-                  width: 48,
-                  height: 48,
+                  width: 56,
+                  height: 56,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      UserAvatar(
+                      Center(
+                        child: StoryAvatarRing(
+                          userId: n.actor?.id,
                           avatarUrl: n.actor?.avatarUrl,
                           fallback: n.actor?.initial ?? 'A',
-                          size: 48),
+                          size: 48,
+                        ),
+                      ),
                       Positioned(
                         bottom: -2,
                         right: -2,
@@ -469,6 +524,36 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                           ],
                         ],
                       ),
+                      if (n.type == 'collaboration_invite' &&
+                          (n.data['collaboration_id']?.toString().isNotEmpty ??
+                              false)) ...[
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () =>
+                                  _respondToCollaboration(n, accept: false),
+                              icon: const Icon(LucideIcons.x, size: 14),
+                              label: const Text('Rad etish'),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                foregroundColor: c.mutedForeground,
+                              ),
+                            ),
+                            FilledButton.icon(
+                              onPressed: () =>
+                                  _respondToCollaboration(n, accept: true),
+                              icon: const Icon(LucideIcons.check, size: 14),
+                              label: const Text('Qabul qilish'),
+                              style: FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -580,26 +665,19 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
       context.go('/user/${n.actor!.id}');
     } else if (n.postId != null && n.postId!.isNotEmpty) {
       if (!n.postExists) {
-        _showUnavailablePostSnackBar();
+        _showUnavailablePostToast();
         return;
       }
       context.go('/post/${n.postId}');
     } else if (n.actor?.id != null) {
       context.go('/user/${n.actor!.id}');
     } else {
-      _showUnavailablePostSnackBar();
+      _showUnavailablePostToast();
     }
   }
 
-  void _showUnavailablePostSnackBar() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Bu post o\'chirilgan yoki mavjud emas'),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-        backgroundColor: AlsamosColors.of(context).destructive,
-      ),
-    );
+  void _showUnavailablePostToast() {
+    AppToast.error(context, 'Bu post o\'chirilgan yoki mavjud emas');
   }
 
   String _bodyText(AppNotification n) {
@@ -663,10 +741,8 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   }
 
   String _cleanPostText(String? content) {
-    if (content == null) return '';
-    return content
-        .replaceAll(RegExp(r'\[POLL\].*?\[/POLL\]', dotAll: true), '')
-        .replaceAll(RegExp(r'\[(MUSIC|ASPECT):[^\]]+\]'), '')
+    return stripPostMetadata(content)
+        .replaceAll(RegExp(r'\[ASPECT:[^\]]+\]'), '')
         .trim();
   }
 
@@ -729,7 +805,7 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
 
     if (!n.postExists) {
       return GestureDetector(
-        onTap: _showUnavailablePostSnackBar,
+        onTap: _showUnavailablePostToast,
         child: previewShell(
           color: c.muted.withValues(alpha: 0.55),
           child: Column(
@@ -983,7 +1059,7 @@ class _NotificationVideoPreviewState extends State<_NotificationVideoPreview> {
     _controller = null;
     _ready = false;
     _error = null;
-    controller?.dispose();
+    disposeVideoControllerSafely(controller);
   }
 
   @override

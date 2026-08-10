@@ -14,14 +14,14 @@ final categoriesProvider = FutureProvider<List<ProductCategory>>((ref) async {
     return await ref.read(marketplaceRepoProvider).fetchCategories();
   } catch (_) {
     return const [
-      ProductCategory(id: '1', slug: 'electronics', name: 'Elektronika', icon: '📱'),
-      ProductCategory(id: '2', slug: 'fashion', name: 'Kiyim', icon: '👟'),
-      ProductCategory(id: '3', slug: 'home', name: 'Uy', icon: '🏠'),
-      ProductCategory(id: '4', slug: 'beauty', name: 'Goʼzallik', icon: '💄'),
-      ProductCategory(id: '5', slug: 'sports', name: 'Sport', icon: '⚽'),
-      ProductCategory(id: '6', slug: 'auto', name: 'Avto', icon: '🚗'),
-      ProductCategory(id: '7', slug: 'books', name: 'Kitoblar', icon: '📚'),
-      ProductCategory(id: '8', slug: 'food', name: 'Oziq-ovqat', icon: '🍔'),
+      ProductCategory(id: '1', slug: 'electronics', name: 'Elektronika', icon: 'smartphone'),
+      ProductCategory(id: '2', slug: 'fashion', name: 'Kiyim', icon: 'shirt'),
+      ProductCategory(id: '3', slug: 'home', name: 'Uy', icon: 'home'),
+      ProductCategory(id: '4', slug: 'beauty', name: 'Goʼzallik', icon: 'sparkles'),
+      ProductCategory(id: '5', slug: 'sports', name: 'Sport', icon: 'dumbbell'),
+      ProductCategory(id: '6', slug: 'auto', name: 'Avto', icon: 'car'),
+      ProductCategory(id: '7', slug: 'books', name: 'Kitoblar', icon: 'book-open'),
+      ProductCategory(id: '8', slug: 'food', name: 'Oziq-ovqat', icon: 'utensils'),
     ];
   }
 });
@@ -58,34 +58,166 @@ class ProductFilter {
 
 final productFilterProvider = StateProvider<ProductFilter>((_) => const ProductFilter());
 
-final productsProvider = FutureProvider.autoDispose<List<Product>>((ref) async {
+// Pagination state for products
+class PaginatedProductsState {
+  final List<Product> products;
+  final bool isLoadingMore;
+  final bool hasMore;
+  final int currentPage;
+  final String? error;
+
+  const PaginatedProductsState({
+    this.products = const [],
+    this.isLoadingMore = false,
+    this.hasMore = true,
+    this.currentPage = 0,
+    this.error,
+  });
+
+  PaginatedProductsState copyWith({
+    List<Product>? products,
+    bool? isLoadingMore,
+    bool? hasMore,
+    int? currentPage,
+    String? error,
+  }) =>
+      PaginatedProductsState(
+        products: products ?? this.products,
+        isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+        hasMore: hasMore ?? this.hasMore,
+        currentPage: currentPage ?? this.currentPage,
+        error: error,
+      );
+}
+
+class PaginatedProductsNotifier extends StateNotifier<PaginatedProductsState> {
+  PaginatedProductsNotifier(this._repo, this._filter) : super(const PaginatedProductsState()) {
+    loadInitial();
+  }
+
+  final MarketplaceRepository _repo;
+  final ProductFilter _filter;
+  static const _pageSize = 20;
+
+  Future<void> loadInitial() async {
+    state = const PaginatedProductsState(isLoadingMore: true);
+    try {
+      final products = await _repo.fetchProducts(
+        categorySlug: _filter.category == 'all' ? null : _filter.category,
+        search: _filter.search.isEmpty ? null : _filter.search,
+        limit: _pageSize,
+      );
+
+      // Client-side filtering and sorting
+      final filtered = products.where((p) {
+        return p.price >= _filter.minPrice && p.price <= _filter.maxPrice;
+      }).toList();
+
+      _sortProducts(filtered, _filter.sortBy);
+
+      state = PaginatedProductsState(
+        products: filtered,
+        isLoadingMore: false,
+        hasMore: filtered.length >= _pageSize,
+        currentPage: 1,
+      );
+    } catch (e) {
+      state = PaginatedProductsState(
+        isLoadingMore: false,
+        hasMore: false,
+        error: e.toString(),
+      );
+    }
+  }
+
+  Future<void> loadMore() async {
+    if (state.isLoadingMore || !state.hasMore) return;
+
+    state = state.copyWith(isLoadingMore: true);
+    
+    try {
+      // In a real implementation, this would pass offset/page to backend
+      // For now, we'll simulate pagination by fetching more and filtering
+      final allProducts = await _repo.fetchProducts(
+        categorySlug: _filter.category == 'all' ? null : _filter.category,
+        search: _filter.search.isEmpty ? null : _filter.search,
+        limit: _pageSize * (state.currentPage + 1),
+      );
+
+      final filtered = allProducts.where((p) {
+        return p.price >= _filter.minPrice && p.price <= _filter.maxPrice;
+      }).toList();
+
+      _sortProducts(filtered, _filter.sortBy);
+
+      // Only add new products not already in state
+      final existingIds = state.products.map((p) => p.id).toSet();
+      final newProducts = filtered.where((p) => !existingIds.contains(p.id)).toList();
+
+      state = state.copyWith(
+        products: [...state.products, ...newProducts],
+        isLoadingMore: false,
+        hasMore: newProducts.isNotEmpty && filtered.length >= _pageSize * (state.currentPage + 1),
+        currentPage: state.currentPage + 1,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoadingMore: false,
+        error: e.toString(),
+      );
+    }
+  }
+
+  void _sortProducts(List<Product> products, String sortBy) {
+    switch (sortBy) {
+      case 'price_low':
+        products.sort((a, b) => a.price.compareTo(b.price));
+        break;
+      case 'price_high':
+        products.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      case 'popular':
+        products.sort((a, b) => b.likesCount.compareTo(a.likesCount));
+        break;
+      default: // newest
+        products.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+  }
+}
+
+final paginatedProductsProvider =
+    StateNotifierProvider.autoDispose<PaginatedProductsNotifier, PaginatedProductsState>((ref) {
   final filter = ref.watch(productFilterProvider);
   final repo = ref.read(marketplaceRepoProvider);
-  try {
-    final list = await repo.fetchProducts(
-      categorySlug: filter.category,
-      search: filter.search.isEmpty ? null : filter.search,
-      limit: 60,
-    );
-    final filtered = list.where((p) {
-      return p.price >= filter.minPrice && p.price <= filter.maxPrice;
-    }).toList();
-    filtered.sort((a, b) {
-      switch (filter.sortBy) {
-        case 'price_low':
-          return a.price.compareTo(b.price);
-        case 'price_high':
-          return b.price.compareTo(a.price);
-        case 'popular':
-          return b.likesCount.compareTo(a.likesCount);
-        default:
-          return b.createdAt.compareTo(a.createdAt);
-      }
-    });
-    return filtered;
-  } catch (_) {
-    return _demoProducts();
+  return PaginatedProductsNotifier(repo, filter);
+});
+
+// Keep the old provider for compatibility but mark it as using pagination internally
+final productsProvider = FutureProvider.autoDispose<List<Product>>((ref) async {
+  final paginatedState = ref.watch(paginatedProductsProvider);
+  // If still loading initial, wait
+  if (paginatedState.currentPage == 0 && paginatedState.isLoadingMore) {
+    return ref.read(marketplaceRepoProvider).fetchProducts(limit: 20).then((list) {
+      final filter = ref.read(productFilterProvider);
+      final filtered = list.where((p) {
+        return p.price >= filter.minPrice && p.price <= filter.maxPrice;
+      }).toList();
+      filtered.sort((a, b) {
+        switch (filter.sortBy) {
+          case 'price_low':
+            return a.price.compareTo(b.price);
+          case 'price_high':
+            return b.price.compareTo(a.price);
+          case 'popular':
+            return b.likesCount.compareTo(a.likesCount);
+          default:
+            return b.createdAt.compareTo(a.createdAt);
+        }
+      });
+      return filtered;
+    }).catchError((_) => _demoProducts());
   }
+  return paginatedState.products;
 });
 
 // ---------- Saved ----------

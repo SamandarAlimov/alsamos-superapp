@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/utils/video_controller_lifecycle.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/ad_model.dart';
 import '../providers/ads_provider.dart';
@@ -77,7 +78,7 @@ class _FeedAdCardState extends ConsumerState<FeedAdCard> {
 
   @override
   void dispose() {
-    _video?.dispose();
+    disposeVideoControllerSafely(_video);
     super.dispose();
   }
 

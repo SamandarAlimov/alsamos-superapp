@@ -2,7 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/ai_models.dart';
+import '../../data/ai_models_v2.dart';
 import '../../data/ai_repository.dart';
+import '../../data/intent_detector.dart';
 
 final aiRepositoryProvider = Provider<AiRepository>((ref) => AiRepository());
 
@@ -14,15 +16,24 @@ class ForwardedPost {
   const ForwardedPost({required this.id, this.content, this.authorName, this.mediaUrl});
 }
 
+enum AiView { chat, projects, artifacts, connectors, plugins }
+
 class AiState {
   final List<AiConversation> conversations;
   final List<AiMessage> messages;
   final String? currentConversationId;
-  final bool isLoading; // streaming a reply
+  final bool isLoading;
   final bool isGeneratingImage;
   final bool conversationsLoading;
-  final String mode; // 'chat' | 'imagine'
   final ForwardedPost? forwardedPost;
+
+  // V2 fields
+  final AiView currentView;
+  final bool showArtifactPanel;
+  final bool sidebarCollapsed;
+  final List<AttachedFile> attachments;
+  final DetectedIntent? lastIntent;
+  final String? selectedModel;
 
   const AiState({
     this.conversations = const [],
@@ -31,9 +42,17 @@ class AiState {
     this.isLoading = false,
     this.isGeneratingImage = false,
     this.conversationsLoading = true,
-    this.mode = 'chat',
     this.forwardedPost,
+    this.currentView = AiView.chat,
+    this.showArtifactPanel = false,
+    this.sidebarCollapsed = false,
+    this.attachments = const [],
+    this.lastIntent,
+    this.selectedModel,
   });
+
+  bool get isBusy => isLoading || isGeneratingImage;
+  bool get isNewChat => currentConversationId == null && messages.isEmpty;
 
   AiState copyWith({
     List<AiConversation>? conversations,
@@ -43,9 +62,16 @@ class AiState {
     bool? isLoading,
     bool? isGeneratingImage,
     bool? conversationsLoading,
-    String? mode,
     ForwardedPost? forwardedPost,
     bool clearForwarded = false,
+    AiView? currentView,
+    bool? showArtifactPanel,
+    bool? sidebarCollapsed,
+    List<AttachedFile>? attachments,
+    DetectedIntent? lastIntent,
+    bool clearIntent = false,
+    String? selectedModel,
+    bool clearModel = false,
   }) =>
       AiState(
         conversations: conversations ?? this.conversations,
@@ -55,8 +81,13 @@ class AiState {
         isLoading: isLoading ?? this.isLoading,
         isGeneratingImage: isGeneratingImage ?? this.isGeneratingImage,
         conversationsLoading: conversationsLoading ?? this.conversationsLoading,
-        mode: mode ?? this.mode,
         forwardedPost: clearForwarded ? null : (forwardedPost ?? this.forwardedPost),
+        currentView: currentView ?? this.currentView,
+        showArtifactPanel: showArtifactPanel ?? this.showArtifactPanel,
+        sidebarCollapsed: sidebarCollapsed ?? this.sidebarCollapsed,
+        attachments: attachments ?? this.attachments,
+        lastIntent: clearIntent ? null : (lastIntent ?? this.lastIntent),
+        selectedModel: clearModel ? null : (selectedModel ?? this.selectedModel),
       );
 }
 
@@ -76,39 +107,63 @@ class AiNotifier extends StateNotifier<AiState> {
     try {
       final convs = await _repo.loadConversations(_userId);
       state = state.copyWith(conversations: convs, conversationsLoading: false);
-      if (convs.isNotEmpty) {
-        state = state.copyWith(
-          currentConversationId: convs.first.id,
-          messages: convs.first.messages,
-          mode: convs.first.type,
-        );
-      }
     } catch (_) {
       state = state.copyWith(conversationsLoading: false);
     }
   }
 
-  void setMode(String mode) {
-    if (mode == 'chat' || mode == 'imagine') {
-      state = state.copyWith(mode: mode);
-    }
+  void setView(AiView view) {
+    state = state.copyWith(currentView: view);
+  }
+
+  void toggleSidebarCollapsed() {
+    state = state.copyWith(sidebarCollapsed: !state.sidebarCollapsed);
+  }
+
+  void toggleArtifactPanel() {
+    state = state.copyWith(showArtifactPanel: !state.showArtifactPanel);
+  }
+
+  void setModel(String model) {
+    state = state.copyWith(selectedModel: model);
   }
 
   void startNew() {
-    state = state.copyWith(messages: const [], clearCurrent: true, clearForwarded: true);
+    state = state.copyWith(
+      messages: const [],
+      clearCurrent: true,
+      clearForwarded: true,
+      clearIntent: true,
+      attachments: const [],
+    );
   }
 
   void openConversation(AiConversation conv) {
     state = state.copyWith(
       messages: conv.messages,
       currentConversationId: conv.id,
-      mode: conv.type,
       clearForwarded: true,
+      clearIntent: true,
+      currentView: AiView.chat,
     );
   }
 
   void clearForwardedPost() {
     state = state.copyWith(clearForwarded: true);
+  }
+
+  void addAttachment(AttachedFile file) {
+    state = state.copyWith(attachments: [...state.attachments, file]);
+  }
+
+  void removeAttachment(int index) {
+    final list = List<AttachedFile>.from(state.attachments);
+    if (index < list.length) list.removeAt(index);
+    state = state.copyWith(attachments: list);
+  }
+
+  void clearAttachments() {
+    state = state.copyWith(attachments: const []);
   }
 
   Future<void> attachForwardedPost(String postId, {String? fallbackContent}) async {
@@ -123,7 +178,6 @@ class AiNotifier extends StateNotifier<AiState> {
               mediaUrl: post.mediaUrl,
             )
           : ForwardedPost(id: postId, content: fallbackContent),
-      mode: 'chat',
     );
   }
 
@@ -132,6 +186,20 @@ class AiNotifier extends StateNotifier<AiState> {
     final remaining = state.conversations.where((c) => c.id != id).toList();
     state = state.copyWith(conversations: remaining);
     if (state.currentConversationId == id) startNew();
+  }
+
+  /// Unified send - automatically routes to image generation if intent detected
+  Future<void> send(String text) async {
+    if (_userId == null || text.trim().isEmpty || state.isBusy) return;
+
+    final intent = IntentDetector.detect(text);
+    state = state.copyWith(lastIntent: intent);
+
+    if (intent.type == IntentType.imageGen && intent.isHighConfidence) {
+      await generateImage(text);
+    } else {
+      await sendMessage(text);
+    }
   }
 
   Future<void> sendMessage(String text) async {
@@ -144,7 +212,6 @@ class AiNotifier extends StateNotifier<AiState> {
     final working = [...state.messages, userMsg];
     state = state.copyWith(messages: working, isLoading: true);
 
-    // Build forwarded-post context (matches web AIPage behaviour)
     String? contextInfo;
     final fp = state.forwardedPost;
     if (fp != null) {
@@ -202,11 +269,7 @@ class AiNotifier extends StateNotifier<AiState> {
       content: prompt.trim(),
     );
     final working = [...state.messages, userMsg];
-    state = state.copyWith(
-      messages: working,
-      isGeneratingImage: true,
-      mode: 'imagine',
-    );
+    state = state.copyWith(messages: working, isGeneratingImage: true);
     try {
       final res = await _repo.generateImage(prompt.trim());
       final assistant = AiMessage(
@@ -231,7 +294,6 @@ class AiNotifier extends StateNotifier<AiState> {
   }
 
   Future<void> regenerate() async {
-    // Find the last user message and resend it (matches web ReactCcw action).
     final msgs = state.messages;
     AiMessage? lastUser;
     for (var i = msgs.length - 1; i >= 0; i--) {
@@ -241,20 +303,14 @@ class AiNotifier extends StateNotifier<AiState> {
       }
     }
     if (lastUser == null) return;
-    // Drop the trailing assistant reply if present.
     final trimmed = msgs.last.role == 'assistant'
         ? msgs.sublist(0, msgs.length - 1)
         : List<AiMessage>.from(msgs);
-    // Also drop the last user message so sendMessage re-appends it cleanly.
     if (trimmed.isNotEmpty && trimmed.last.id == lastUser.id) {
       trimmed.removeLast();
     }
     state = state.copyWith(messages: trimmed);
-    if (state.mode == 'imagine') {
-      await generateImage(lastUser.content);
-    } else {
-      await sendMessage(lastUser.content);
-    }
+    await send(lastUser.content);
   }
 
   Future<void> _persist(List<AiMessage> msgs, String context) async {
@@ -280,11 +336,11 @@ class AiNotifier extends StateNotifier<AiState> {
           );
         }
       }
-    } catch (_) {/* persistence best-effort */}
+    } catch (_) {}
   }
 }
 
 final aiProvider = StateNotifierProvider<AiNotifier, AiState>((ref) {
-  final userId = ref.watch(authProvider).user?.id;
-  return AiNotifier(ref.watch(aiRepositoryProvider), userId);
+  final userId = ref.read(authProvider).user?.id;
+  return AiNotifier(ref.read(aiRepositoryProvider), userId);
 });

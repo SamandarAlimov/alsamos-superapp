@@ -4,7 +4,8 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_colors.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
+import 'app_toast.dart';
 
 /// 1:1 port of web `SharePostDialog.tsx`.
 /// Tabs: Conversations (in-app share) | External (copy/Twitter/Facebook/WhatsApp/Email).
@@ -224,7 +225,8 @@ class _ShareSheetState extends State<_ShareSheet>
                               }),
                               activeColor: theme.colorScheme.primary,
                             ),
-                            UserAvatar(
+                            StoryAvatarRing(
+                              userId: null,
                               avatarUrl: conv.avatarUrl,
                               fallback: conv.name.isNotEmpty
                                   ? conv.name[0].toUpperCase()
@@ -291,11 +293,7 @@ class _ShareSheetState extends State<_ShareSheet>
                   widget.onSendToChats
                       ?.call(_selected.toList(), _msgCtrl.text.trim());
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content: Text(
-                            'Yuborildi: ${_selected.length} ta suhbat')),
-                  );
+                  AppToast.success(context, 'Yuborildi: ${_selected.length} ta suhbat');
                 },
               ),
             ),

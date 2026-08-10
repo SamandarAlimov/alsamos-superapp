@@ -6,7 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../shared/navigation/app_routes.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
@@ -31,11 +31,13 @@ class _LikeUser {
 /// Bottom-sheet dialog that lists users who liked a post.
 /// Ports `src/components/PostLikesDialog.tsx`.
 class PostLikesDialog extends ConsumerStatefulWidget {
-  const PostLikesDialog({super.key, required this.postId, required this.likesCount});
+  const PostLikesDialog(
+      {super.key, required this.postId, required this.likesCount});
   final String postId;
   final int likesCount;
 
-  static Future<void> show(BuildContext context, {required String postId, required int likesCount}) {
+  static Future<void> show(BuildContext context,
+      {required String postId, required int likesCount}) {
     return showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -45,7 +47,8 @@ class PostLikesDialog extends ConsumerStatefulWidget {
         minChildSize: 0.4,
         maxChildSize: 0.9,
         expand: false,
-        builder: (_, sc) => PostLikesDialog(postId: postId, likesCount: likesCount),
+        builder: (_, sc) =>
+            PostLikesDialog(postId: postId, likesCount: likesCount),
       ),
     );
   }
@@ -70,7 +73,8 @@ class _PostLikesDialogState extends ConsumerState<PostLikesDialog> {
     try {
       final res = await _client
           .from('post_likes')
-          .select('id, user_id, created_at, profile:profiles!post_likes_user_id_fkey(id, username, display_name, avatar_url, is_verified)')
+          .select(
+              'id, user_id, created_at, profile:profiles!post_likes_user_id_fkey(id, username, display_name, avatar_url, is_verified)')
           .eq('post_id', widget.postId)
           .order('created_at', ascending: false);
       final list = (res as List).map((r) {
@@ -93,7 +97,9 @@ class _PostLikesDialogState extends ConsumerState<PostLikesDialog> {
             .select('following_id')
             .eq('follower_id', me)
             .inFilter('following_id', ids);
-        final set = {for (final f in (follows as List)) f['following_id'] as String};
+        final set = {
+          for (final f in (follows as List)) f['following_id'] as String
+        };
         for (final u in list) {
           u.isFollowing = set.contains(u.userId);
         }
@@ -115,12 +121,19 @@ class _PostLikesDialogState extends ConsumerState<PostLikesDialog> {
     setState(() => _followLoading = u.userId);
     try {
       if (u.isFollowing) {
-        await _client.from('follows').delete().eq('follower_id', me).eq('following_id', u.userId);
+        await _client
+            .from('follows')
+            .delete()
+            .eq('follower_id', me)
+            .eq('following_id', u.userId);
       } else {
-        await _client.from('follows').insert({'follower_id': me, 'following_id': u.userId});
+        await _client
+            .from('follows')
+            .insert({'follower_id': me, 'following_id': u.userId});
       }
       setState(() => u.isFollowing = !u.isFollowing);
-    } catch (_) {} finally {
+    } catch (_) {
+    } finally {
       if (mounted) setState(() => _followLoading = null);
     }
   }
@@ -143,7 +156,8 @@ class _PostLikesDialogState extends ConsumerState<PostLikesDialog> {
             margin: const EdgeInsets.symmetric(vertical: 10),
             width: 40,
             height: 4,
-            decoration: BoxDecoration(color: c.border, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+                color: c.border, borderRadius: BorderRadius.circular(2)),
           ),
           // Header
           Padding(
@@ -151,62 +165,89 @@ class _PostLikesDialogState extends ConsumerState<PostLikesDialog> {
             child: Row(children: [
               const Icon(LucideIcons.heart, color: Color(0xFFef4444), size: 20),
               const SizedBox(width: 8),
-              const Text('Likes', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              const Text('Likes',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(width: 6),
-              Text('(${widget.likesCount})', style: TextStyle(color: c.mutedForeground, fontSize: 14)),
+              Text('(${widget.likesCount})',
+                  style: TextStyle(color: c.mutedForeground, fontSize: 14)),
             ]),
           ),
           const Divider(height: 1),
           Expanded(
             child: _loading
-                ? Center(child: CircularProgressIndicator(color: theme.colorScheme.primary))
+                ? Center(
+                    child: CircularProgressIndicator(
+                        color: theme.colorScheme.primary))
                 : _users.isEmpty
-                    ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(LucideIcons.users, size: 40, color: c.mutedForeground.withValues(alpha: 0.5)),
-                        const SizedBox(height: 8),
-                        Text('No likes yet', style: TextStyle(color: c.mutedForeground)),
-                      ])
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                            Icon(LucideIcons.users,
+                                size: 40,
+                                color:
+                                    c.mutedForeground.withValues(alpha: 0.5)),
+                            const SizedBox(height: 8),
+                            Text('No likes yet',
+                                style: TextStyle(color: c.mutedForeground)),
+                          ])
                     : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         itemCount: _users.length,
                         itemBuilder: (_, i) {
                           final u = _users[i];
                           return InkWell(
                             onTap: () {
                               Navigator.of(context).pop();
-                              context.push('${AppRoutes.userProfile}/${u.username ?? u.userId}');
+                              context.push(
+                                  '${AppRoutes.userProfile}/${u.username ?? u.userId}');
                             },
                             borderRadius: BorderRadius.circular(10),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 8),
                               child: Row(children: [
-                                UserAvatar(
+                                StoryAvatarRing(
+                                  userId: u.userId,
                                   avatarUrl: u.avatarUrl,
-                                  fallback: (u.displayName ?? u.username ?? 'U')[0].toUpperCase(),
+                                  fallback:
+                                      (u.displayName ?? u.username ?? 'U')[0]
+                                          .toUpperCase(),
                                   size: 40,
-                                  backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
+                                  backgroundColor: theme.colorScheme.primary
+                                      .withValues(alpha: 0.1),
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(children: [
                                         Flexible(
                                           child: Text(
-                                            u.displayName ?? u.username ?? 'User',
+                                            u.displayName ??
+                                                u.username ??
+                                                'User',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                            style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w500),
                                           ),
                                         ),
-                                        if (u.isVerified) ...[const SizedBox(width: 4), const VerifiedBadge(size: 12)],
+                                        if (u.isVerified) ...[
+                                          const SizedBox(width: 4),
+                                          const VerifiedBadge(size: 12)
+                                        ],
                                       ]),
                                       if (u.username != null)
                                         Text('@${u.username}',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(fontSize: 12, color: c.mutedForeground)),
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: c.mutedForeground)),
                                     ],
                                   ),
                                 ),
@@ -215,23 +256,47 @@ class _PostLikesDialogState extends ConsumerState<PostLikesDialog> {
                                     height: 32,
                                     child: u.isFollowing
                                         ? OutlinedButton(
-                                            onPressed: _followLoading == u.userId ? null : () => _toggleFollow(u),
+                                            onPressed:
+                                                _followLoading == u.userId
+                                                    ? null
+                                                    : () => _toggleFollow(u),
                                             style: OutlinedButton.styleFrom(
-                                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                                              textStyle: const TextStyle(fontSize: 12),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12),
+                                              textStyle:
+                                                  const TextStyle(fontSize: 12),
                                             ),
                                             child: _followLoading == u.userId
-                                                ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
+                                                ? const SizedBox(
+                                                    width: 12,
+                                                    height: 12,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                            strokeWidth: 2))
                                                 : const Text('Following'),
                                           )
                                         : FilledButton(
-                                            onPressed: _followLoading == u.userId ? null : () => _toggleFollow(u),
+                                            onPressed:
+                                                _followLoading == u.userId
+                                                    ? null
+                                                    : () => _toggleFollow(u),
                                             style: FilledButton.styleFrom(
-                                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                                              textStyle: const TextStyle(fontSize: 12),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12),
+                                              textStyle:
+                                                  const TextStyle(fontSize: 12),
                                             ),
                                             child: _followLoading == u.userId
-                                                ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                                ? const SizedBox(
+                                                    width: 12,
+                                                    height: 12,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            color:
+                                                                Colors.white))
                                                 : const Text('Follow'),
                                           ),
                                   ),

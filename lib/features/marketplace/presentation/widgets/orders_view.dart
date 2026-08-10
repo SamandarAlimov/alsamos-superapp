@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/responsive/breakpoints.dart';
+import '../../../../core/widgets/state_views.dart';
 import '../../data/models/product_model.dart';
 import '../providers/marketplace_provider.dart';
 
@@ -17,12 +19,10 @@ class OrdersView extends ConsumerWidget {
     final c = AlsamosColors.of(context);
     final orders = ref.watch(buyerOrdersProvider);
     return orders.when(
-      loading: () => const Center(
-          child: Padding(
-              padding: EdgeInsets.all(40), child: CircularProgressIndicator())),
-      error: (e, _) => Padding(
-        padding: const EdgeInsets.all(40),
-        child: Center(child: Text('$e', style: TextStyle(color: c.mutedForeground))),
+      loading: () => const LoadingView(label: 'Buyurtmalar yuklanmoqda...'),
+      error: (e, _) => ErrorView(
+        error: e,
+        onRetry: () => ref.invalidate(buyerOrdersProvider),
       ),
       data: (list) {
         if (list.isEmpty) {
@@ -43,11 +43,16 @@ class OrdersView extends ConsumerWidget {
             ]),
           );
         }
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: list.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (_, i) => _OrderCard(order: list[i]),
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (_, i) => _OrderCard(order: list[i]),
+            ),
+          ),
         );
       },
     );
@@ -63,7 +68,8 @@ class _OrderCard extends StatelessWidget {
     final c = AlsamosColors.of(context);
     final brand = Theme.of(context).colorScheme.primary;
     final first = order.items.isNotEmpty ? order.items.first : null;
-    final imgUrl = first?.imageUrl ?? 'https://placehold.co/120x120?text=No+Image';
+    final imgUrl =
+        first?.imageUrl ?? 'https://placehold.co/120x120?text=No+Image';
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () => _OrderDetailSheet.show(context, order),
@@ -83,7 +89,8 @@ class _OrderCard extends StatelessWidget {
                 width: 60,
                 height: 60,
                 fit: BoxFit.cover,
-                errorWidget: (_, __, ___) => Container(width: 60, height: 60, color: c.muted),
+                errorWidget: (_, __, ___) =>
+                    Container(width: 60, height: 60, color: c.muted),
               ),
             ),
             const SizedBox(width: 10),
@@ -102,9 +109,12 @@ class _OrderCard extends StatelessWidget {
                   Text('#${order.orderNumber}',
                       style: TextStyle(color: c.mutedForeground, fontSize: 11)),
                   const SizedBox(height: 4),
-                  Text('${order.items.length} mahsulot · \$${order.total.toStringAsFixed(2)}',
+                  Text(
+                      '${order.items.length} mahsulot · \$${order.total.toStringAsFixed(2)}',
                       style: TextStyle(
-                          color: brand, fontSize: 13, fontWeight: FontWeight.w700)),
+                          color: brand,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700)),
                 ],
               ),
             ),
@@ -128,9 +138,7 @@ class _OrderCard extends StatelessWidget {
       ),
       child: Text(info.label,
           style: TextStyle(
-              color: info.color,
-              fontSize: 11,
-              fontWeight: FontWeight.w700)),
+              color: info.color, fontSize: 11, fontWeight: FontWeight.w700)),
     );
   }
 
@@ -197,162 +205,179 @@ class _OrderDetailSheet extends StatelessWidget {
     final c = AlsamosColors.of(context);
     final brand = Theme.of(context).colorScheme.primary;
     final mq = MediaQuery.of(context);
+    final sheetMaxWidth =
+        context.responsive.isDesktop ? 640.0 : double.infinity;
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
       minChildSize: 0.5,
       maxChildSize: 0.95,
       expand: false,
-      builder: (context, scroll) => Container(
-        decoration: BoxDecoration(
-          color: c.background,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: EdgeInsets.only(bottom: mq.padding.bottom),
-        child: Column(children: [
-          const SizedBox(height: 8),
-          Container(
-            width: 36,
-            height: 4,
+      builder: (context, scroll) => Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: sheetMaxWidth),
+          child: Container(
             decoration: BoxDecoration(
-                color: c.border, borderRadius: BorderRadius.circular(8)),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Buyurtma',
-                        style: TextStyle(
-                            color: c.foreground,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800)),
-                    Text('#${order.orderNumber}',
-                        style: TextStyle(color: c.mutedForeground, fontSize: 12)),
-                  ],
-                ),
+              color: c.background,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: EdgeInsets.only(bottom: mq.padding.bottom),
+            child: Column(children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: c.border, borderRadius: BorderRadius.circular(8)),
               ),
-              IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(LucideIcons.x, size: 20),
-              ),
-            ]),
-          ),
-          Expanded(
-            child: ListView(
-              controller: scroll,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                Text('Mahsulotlar',
-                    style: TextStyle(
-                        color: c.foreground, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                ...order.items.map((it) {
-                  final url = it.imageUrl ??
-                      'https://placehold.co/120x120?text=No+Image';
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: c.border.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: url,
-                          width: 52,
-                          height: 52,
-                          fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) =>
-                              Container(width: 52, height: 52, color: c.muted),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(it.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: c.foreground,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 2),
-                            Text('\$${it.price.toStringAsFixed(2)} × ${it.quantity}',
-                                style: TextStyle(
-                                    color: c.mutedForeground, fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      Text('\$${it.total.toStringAsFixed(2)}',
-                          style: TextStyle(
-                              color: brand, fontWeight: FontWeight.w800)),
-                    ]),
-                  );
-                }),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: c.card,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: c.border.withValues(alpha: 0.3)),
-                  ),
-                  child: Column(children: [
-                    _totalRow(c, 'Jami', order.subtotal),
-                    _totalRow(c, 'Yetkazish', order.shippingCost),
-                    const Divider(),
-                    _totalRow(c, 'Umumiy', order.total, big: true),
-                  ]),
-                ),
-                if (order.shippingAddress != null) ...[
-                  const SizedBox(height: 14),
-                  Text('Yetkazib berish manzili',
-                      style: TextStyle(
-                          color: c.foreground, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: c.border.withValues(alpha: 0.3)),
-                    ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(children: [
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(order.shippingAddress!.fullName,
+                        Text('Buyurtma',
                             style: TextStyle(
                                 color: c.foreground,
-                                fontWeight: FontWeight.w600)),
-                        Text(order.shippingAddress!.phone,
-                            style:
-                                TextStyle(color: c.mutedForeground, fontSize: 13)),
-                        Text(
-                          '${order.shippingAddress!.street}, ${order.shippingAddress!.city}'
-                          '${order.shippingAddress!.state?.isNotEmpty == true ? ", ${order.shippingAddress!.state}" : ""}',
-                          style: TextStyle(color: c.mutedForeground, fontSize: 13),
-                        ),
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800)),
+                        Text('#${order.orderNumber}',
+                            style: TextStyle(
+                                color: c.mutedForeground, fontSize: 12)),
                       ],
                     ),
                   ),
-                ],
-                const SizedBox(height: 24),
-              ],
-            ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(LucideIcons.x, size: 20),
+                  ),
+                ]),
+              ),
+              Expanded(
+                child: ListView(
+                  controller: scroll,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  children: [
+                    Text('Mahsulotlar',
+                        style: TextStyle(
+                            color: c.foreground, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    ...order.items.map((it) {
+                      final url = it.imageUrl ??
+                          'https://placehold.co/120x120?text=No+Image';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: c.card,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: c.border.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: CachedNetworkImage(
+                              imageUrl: url,
+                              width: 52,
+                              height: 52,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) => Container(
+                                  width: 52, height: 52, color: c.muted),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(it.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: c.foreground,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600)),
+                                const SizedBox(height: 2),
+                                Text(
+                                    '\$${it.price.toStringAsFixed(2)} × ${it.quantity}',
+                                    style: TextStyle(
+                                        color: c.mutedForeground,
+                                        fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                          Text('\$${it.total.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                  color: brand, fontWeight: FontWeight.w800)),
+                        ]),
+                      );
+                    }),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: c.card,
+                        borderRadius: BorderRadius.circular(12),
+                        border:
+                            Border.all(color: c.border.withValues(alpha: 0.3)),
+                      ),
+                      child: Column(children: [
+                        _totalRow(c, 'Jami', order.subtotal),
+                        _totalRow(c, 'Yetkazish', order.shippingCost),
+                        const Divider(),
+                        _totalRow(c, 'Umumiy', order.total, big: true),
+                      ]),
+                    ),
+                    if (order.shippingAddress != null) ...[
+                      const SizedBox(height: 14),
+                      Text('Yetkazib berish manzili',
+                          style: TextStyle(
+                              color: c.foreground,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: c.card,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: c.border.withValues(alpha: 0.3)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(order.shippingAddress!.fullName,
+                                style: TextStyle(
+                                    color: c.foreground,
+                                    fontWeight: FontWeight.w600)),
+                            Text(order.shippingAddress!.phone,
+                                style: TextStyle(
+                                    color: c.mutedForeground, fontSize: 13)),
+                            Text(
+                              '${order.shippingAddress!.street}, ${order.shippingAddress!.city}'
+                              '${order.shippingAddress!.state?.isNotEmpty == true ? ", ${order.shippingAddress!.state}" : ""}',
+                              style: TextStyle(
+                                  color: c.mutedForeground, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            ]),
           ),
-        ]),
+        ),
       ),
     );
   }
 
-  Widget _totalRow(AlsamosColors c, String label, double v, {bool big = false}) {
+  Widget _totalRow(AlsamosColors c, String label, double v,
+      {bool big = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(

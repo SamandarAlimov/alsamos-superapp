@@ -12,6 +12,8 @@ import '../../../../app/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/ad_model.dart';
 import '../providers/ads_provider.dart';
+import '../../../../shared/utils/video_controller_lifecycle.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 const List<String> _kCtaOptions = [
   'Learn More',
@@ -557,7 +559,7 @@ class _CreateAdDialogState extends ConsumerState<_CreateAdDialog> {
     _dailyCtrl.dispose();
     _ageMinCtrl.dispose();
     _ageMaxCtrl.dispose();
-    _previewVideo?.dispose();
+    disposeVideoControllerSafely(_previewVideo);
     super.dispose();
   }
 
@@ -600,7 +602,7 @@ class _CreateAdDialogState extends ConsumerState<_CreateAdDialog> {
       // For video: initialize a playable preview from the uploaded URL
       // (web does this with URL.createObjectURL + `<video controls>`).
       if (isVideo) {
-        await _previewVideo?.dispose();
+        disposeVideoControllerSafely(_previewVideo);
         _previewVideo = VideoPlayerController.networkUrl(Uri.parse(url))
           ..setLooping(true);
         try {
@@ -615,9 +617,7 @@ class _CreateAdDialogState extends ConsumerState<_CreateAdDialog> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _uploading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Yuklashda xatolik')),
-      );
+      AppToast.error(context, 'Yuklashda xatolik');
     }
   }
 
@@ -650,9 +650,7 @@ class _CreateAdDialogState extends ConsumerState<_CreateAdDialog> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Yaratishda xatolik')),
-      );
+      AppToast.error(context, 'Yaratishda xatolik');
     }
   }
 
@@ -861,7 +859,7 @@ class _CreateAdDialogState extends ConsumerState<_CreateAdDialog> {
                       onTap: () => setState(() {
                         _previewBytes = null;
                         _mediaUrl = null;
-                        _previewVideo?.dispose();
+                        disposeVideoControllerSafely(_previewVideo);
                         _previewVideo = null;
                       }),
                       child: const SizedBox(

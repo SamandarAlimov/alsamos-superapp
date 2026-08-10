@@ -136,9 +136,13 @@ class SellerStorefrontSheet extends ConsumerWidget {
                                       color: c.foreground,
                                       fontWeight: FontWeight.w700)),
                               const SizedBox(width: 6),
-                              Text('· ${s.totalSales} sotuv',
-                                  style: TextStyle(
-                                      color: c.mutedForeground, fontSize: 12)),
+                              Flexible(
+                                child: Text('· ${s.totalSales} sotuv',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: c.mutedForeground, fontSize: 12)),
+                              ),
                             ]),
                           ],
                         ),
@@ -210,12 +214,16 @@ class SellerStorefrontSheet extends ConsumerWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(children: [
-                                  Text(r.user?.username ?? r.user?.displayName ?? '—',
-                                      style: TextStyle(
-                                          color: c.foreground,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 12)),
-                                  const Spacer(),
+                                  Flexible(
+                                    child: Text(r.user?.username ?? r.user?.displayName ?? '—',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: c.foreground,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12)),
+                                  ),
+                                  const SizedBox(width: 8),
                                   ...List.generate(
                                       5,
                                       (i) => Icon(

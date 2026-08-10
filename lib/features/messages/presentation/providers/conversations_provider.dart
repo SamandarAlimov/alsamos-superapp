@@ -16,18 +16,35 @@ final messagesRepositoryProvider =
 /// Realtime list of the current user's conversations (web useConversations).
 final conversationsProvider = StateNotifierProvider<ConversationsNotifier,
     AsyncValue<List<Conversation>>>((ref) {
+  // Use ref.read() instead of ref.watch() to avoid provider invalidation
+  // when auth state changes (e.g., token refresh, presence update).
+  final userId = ref.read(authProvider).user?.id;
+  return ConversationsNotifier(
+    ref.read(messagesRepositoryProvider),
+    userId,
+    onFoldersChanged: () => ref.invalidate(chatFoldersProvider),
+  );
+});
+
+final chatFoldersProvider = FutureProvider<List<ChatFolder>>((ref) async {
   final userId = ref.watch(authProvider).user?.id;
-  return ConversationsNotifier(ref.read(messagesRepositoryProvider), userId);
+  if (userId == null) return [];
+  return ref.read(messagesRepositoryProvider).fetchChatFolders(userId);
 });
 
 class ConversationsNotifier
     extends StateNotifier<AsyncValue<List<Conversation>>> {
   final MessagesRepository _repo;
   final String? _userId;
+  final VoidCallback? _onFoldersChanged;
   dynamic _channel;
+  Timer? _reloadDebounce;
+  bool _loadInFlight = false;
 
-  ConversationsNotifier(this._repo, this._userId)
-      : super(const AsyncValue.loading()) {
+  ConversationsNotifier(this._repo, this._userId,
+      {VoidCallback? onFoldersChanged})
+      : _onFoldersChanged = onFoldersChanged,
+        super(const AsyncValue.loading()) {
     if (_userId != null) {
       _loadCache();
       load();
@@ -64,10 +81,15 @@ class ConversationsNotifier
     } catch (_) {}
   }
 
+  void _scheduleReload() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 300), () => load());
+  }
+
   Future<void> load() async {
-    if (_userId == null) {
-      return;
-    }
+    if (_userId == null) return;
+    if (_loadInFlight) return;
+    _loadInFlight = true;
     try {
       final conversations = await _repo.fetchConversations(_userId);
       if (!mounted) return;
@@ -83,6 +105,8 @@ class ConversationsNotifier
       } else {
         state = AsyncValue.error(e, st);
       }
+    } finally {
+      _loadInFlight = false;
     }
   }
 
@@ -99,10 +123,22 @@ class ConversationsNotifier
 
       final currentPinned = res?['is_pinned'] as bool? ?? false;
       final newPinned = !currentPinned;
+      final nextOrder = newPinned
+          ? ((state.valueOrNull
+                      ?.where((c) => c.isPinned)
+                      .map((c) => c.pinnedOrder ?? 0)
+                      .fold<int>(0, (a, b) => a > b ? a : b) ??
+                  0) +
+              1)
+          : null;
+      _patchConversation(
+        conversationId,
+        (c) => c.copyWith(isPinned: newPinned, pinnedOrder: nextOrder),
+      );
 
       await supabase
           .from('conversation_participants')
-          .update({'is_pinned': newPinned})
+          .update({'is_pinned': newPinned, 'pinned_order': nextOrder})
           .eq('conversation_id', conversationId)
           .eq('user_id', _userId);
 
@@ -114,41 +150,72 @@ class ConversationsNotifier
     }
   }
 
-  /// Mute/Unmute conversation (web handleMuteConversation)
-  Future<bool> toggleMute(String conversationId) async {
+  Future<bool> setMute(String conversationId, Duration? duration) async {
     if (_userId == null) return false;
     try {
-      final res = await supabase
-          .from('conversation_participants')
-          .select('is_muted')
-          .eq('conversation_id', conversationId)
-          .eq('user_id', _userId)
-          .maybeSingle();
-
-      final currentMuted = res?['is_muted'] as bool? ?? false;
-      final newMuted = !currentMuted;
+      _patchConversation(
+        conversationId,
+        (c) => c.copyWith(isMuted: true),
+      );
 
       await supabase
           .from('conversation_participants')
-          .update({'is_muted': newMuted})
+          .update({
+            'is_muted': true,
+          })
           .eq('conversation_id', conversationId)
           .eq('user_id', _userId);
 
       await load();
-      return newMuted;
+      return true;
     } catch (e) {
-      debugPrint('[ConversationsNotifier] Error toggling mute: $e');
+      debugPrint('[ConversationsNotifier] Error muting: $e');
       return false;
     }
+  }
+
+  Future<bool> unmute(String conversationId) async {
+    if (_userId == null) return false;
+    try {
+      _patchConversation(
+        conversationId,
+        (c) => c.copyWith(isMuted: false),
+      );
+      await supabase
+          .from('conversation_participants')
+          .update({'is_muted': false})
+          .eq('conversation_id', conversationId)
+          .eq('user_id', _userId);
+      await load();
+      return true;
+    } catch (e) {
+      debugPrint('[ConversationsNotifier] Error unmuting: $e');
+      return false;
+    }
+  }
+
+  Future<bool> toggleMute(String conversationId) async {
+    final conv =
+        state.valueOrNull?.where((c) => c.id == conversationId).firstOrNull;
+    return conv?.isMutedEffective == true
+        ? unmute(conversationId)
+        : setMute(conversationId, null);
   }
 
   /// Archive conversation (web handleArchiveConversation)
   Future<bool> archive(String conversationId) async {
     if (_userId == null) return false;
     try {
+      _patchConversation(
+        conversationId,
+        (c) => c.copyWith(isArchived: true),
+      );
       await supabase
           .from('conversation_participants')
-          .update({'is_archived': true})
+          .update({
+            'is_archived': true,
+            'archived_at': DateTime.now().toUtc().toIso8601String()
+          })
           .eq('conversation_id', conversationId)
           .eq('user_id', _userId);
 
@@ -164,9 +231,13 @@ class ConversationsNotifier
   Future<bool> unarchive(String conversationId) async {
     if (_userId == null) return false;
     try {
+      _patchConversation(
+        conversationId,
+        (c) => c.copyWith(isArchived: false),
+      );
       await supabase
           .from('conversation_participants')
-          .update({'is_archived': false})
+          .update({'is_archived': false, 'archived_at': null})
           .eq('conversation_id', conversationId)
           .eq('user_id', _userId);
 
@@ -200,7 +271,13 @@ class ConversationsNotifier
   Future<bool> markAsRead(String conversationId) async {
     if (_userId == null) return false;
     try {
+      markReadLocally(conversationId);
       await _repo.markConversationRead(conversationId, _userId);
+      await supabase
+          .from('conversation_participants')
+          .update({'manually_unread': false})
+          .eq('conversation_id', conversationId)
+          .eq('user_id', _userId);
       await load();
       return true;
     } catch (e) {
@@ -209,31 +286,28 @@ class ConversationsNotifier
     }
   }
 
+  void markReadLocally(String conversationId) {
+    _patchConversation(
+      conversationId,
+      (conversation) => conversation.copyWith(
+        unreadCount: 0,
+        mentionCount: 0,
+        manuallyUnread: false,
+      ),
+    );
+  }
+
   /// Mark conversation as unread (web handleMarkUnread)
   Future<bool> markAsUnread(String conversationId) async {
     if (_userId == null) return false;
     try {
-      // Get the most recent message
-      final res = await supabase
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', conversationId)
-          .order('created_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
-
-      if (res == null) return true;
-
-      // Delete read receipt for most recent message
-      await supabase
-          .from('message_reads')
-          .delete()
-          .eq('message_id', res['id'])
-          .eq('user_id', _userId);
-
+      _patchConversation(
+        conversationId,
+        (c) => c.copyWith(manuallyUnread: true),
+      );
       await supabase
           .from('conversation_participants')
-          .update({'last_read_at': null})
+          .update({'manually_unread': true})
           .eq('conversation_id', conversationId)
           .eq('user_id', _userId);
 
@@ -248,34 +322,68 @@ class ConversationsNotifier
   void _subscribe() {
     _channel = supabase.channel('conversations-list-$_userId')
       ..onPostgresChanges(
-        event: PostgresChangeEvent.all,
-        schema: 'public',
-        table: 'messages',
-        callback: (_) => load(),
-      )
-      ..onPostgresChanges(
-        event: PostgresChangeEvent.all,
+        event: PostgresChangeEvent.update,
         schema: 'public',
         table: 'conversations',
-        callback: (_) => load(),
+        callback: (_) => _scheduleReload(),
       )
       ..onPostgresChanges(
         event: PostgresChangeEvent.all,
         schema: 'public',
         table: 'conversation_participants',
-        callback: (_) => load(),
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'user_id',
+          value: _userId,
+        ),
+        callback: (_) => _scheduleReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'message_reads',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'user_id',
+          value: _userId,
+        ),
+        callback: (_) => _scheduleReload(),
       )
       ..onPostgresChanges(
         event: PostgresChangeEvent.all,
         schema: 'public',
-        table: 'message_reads',
-        callback: (_) => load(),
+        table: 'chat_folders',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'user_id',
+          value: _userId,
+        ),
+        callback: (_) {
+          _onFoldersChanged?.call();
+          _scheduleReload();
+        },
       )
       ..subscribe();
   }
 
+  void _patchConversation(
+    String conversationId,
+    Conversation Function(Conversation conversation) update,
+  ) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    final next = current
+        .map((conversation) => conversation.id == conversationId
+            ? update(conversation)
+            : conversation)
+        .toList();
+    state = AsyncValue.data(next);
+    _saveCache(next);
+  }
+
   @override
   void dispose() {
+    _reloadDebounce?.cancel();
     if (_channel != null) supabase.removeChannel(_channel);
     super.dispose();
   }

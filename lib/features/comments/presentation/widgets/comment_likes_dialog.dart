@@ -6,7 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../shared/navigation/app_routes.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
@@ -133,39 +133,41 @@ class _CLDState extends ConsumerState<CommentLikesDialog> {
                       itemCount: _users.length,
                       itemBuilder: (_, i) {
                         final u = _users[i];
-                        return InkWell(
-                          onTap: () { Navigator.of(context).pop(); context.push('${AppRoutes.userProfile}/${u.username ?? u.userId}'); },
-                          borderRadius: BorderRadius.circular(10),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                            child: Row(children: [
-                              UserAvatar(avatarUrl: u.avatarUrl, fallback: (u.displayName ?? u.username ?? 'U')[0].toUpperCase(), size: 38),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                  Row(children: [
-                                    Flexible(child: Text(u.displayName ?? u.username ?? 'User', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
-                                    if (u.isVerified) ...[const SizedBox(width: 4), const VerifiedBadge(size: 12)],
+                        return RepaintBoundary(
+                          child: InkWell(
+                            onTap: () { Navigator.of(context).pop(); context.push('${AppRoutes.userProfile}/${u.username ?? u.userId}'); },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                              child: Row(children: [
+                                StoryAvatarRing(userId: u.userId, avatarUrl: u.avatarUrl, fallback: (u.displayName ?? u.username ?? 'U')[0].toUpperCase(), size: 32, ringPadding: 3),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                    Row(children: [
+                                      Flexible(child: Text(u.displayName ?? u.username ?? 'User', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
+                                      if (u.isVerified) ...[const SizedBox(width: 4), const VerifiedBadge(size: 12)],
+                                    ]),
+                                    if (u.username != null) Text('@${u.username}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: c.mutedForeground)),
                                   ]),
-                                  if (u.username != null) Text('@${u.username}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: c.mutedForeground)),
-                                ]),
-                              ),
-                              if (me != null && me != u.userId)
-                                SizedBox(
-                                  height: 32,
-                                  child: u.isFollowing
-                                      ? OutlinedButton(
-                                          onPressed: _followLoading == u.userId ? null : () => _toggle(u),
-                                          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12), textStyle: const TextStyle(fontSize: 12)),
-                                          child: _followLoading == u.userId ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Following'),
-                                        )
-                                      : FilledButton(
-                                          onPressed: _followLoading == u.userId ? null : () => _toggle(u),
-                                          style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12), textStyle: const TextStyle(fontSize: 12)),
-                                          child: _followLoading == u.userId ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Follow'),
-                                        ),
                                 ),
-                            ]),
+                                if (me != null && me != u.userId)
+                                  SizedBox(
+                                    height: 32,
+                                    child: u.isFollowing
+                                        ? OutlinedButton(
+                                            onPressed: _followLoading == u.userId ? null : () => _toggle(u),
+                                            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12), textStyle: const TextStyle(fontSize: 12)),
+                                            child: _followLoading == u.userId ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Following'),
+                                          )
+                                        : FilledButton(
+                                            onPressed: _followLoading == u.userId ? null : () => _toggle(u),
+                                            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12), textStyle: const TextStyle(fontSize: 12)),
+                                            child: _followLoading == u.userId ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Follow'),
+                                          ),
+                                  ),
+                              ]),
+                            ),
                           ),
                         );
                       },

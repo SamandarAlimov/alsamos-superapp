@@ -18,14 +18,18 @@ import '../../app/theme/app_theme.dart';
 class VoiceMessagePlayer extends StatefulWidget {
   final String url;
   final Duration? duration;
+  final List<int> waveform;
   final bool isMine;
   final String? senderName;
+  final VoidCallback? onPlaybackRequested;
   const VoiceMessagePlayer({
     super.key,
     required this.url,
     this.duration,
+    this.waveform = const [],
     this.isMine = false,
     this.senderName,
+    this.onPlaybackRequested,
   });
 
   @override
@@ -60,12 +64,17 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   @override
   void initState() {
     super.initState();
-    _bars = _generateBars(widget.url);
+    _bars = widget.waveform.isEmpty
+        ? _generateBars(widget.url)
+        : widget.waveform
+            .map((v) => v.toDouble().clamp(15.0, 95.0))
+            .toList(growable: false);
     _duration = widget.duration ?? Duration.zero;
     _VoicePlayerRegistry.register(this);
     _stateSub = _player.playerStateStream.listen((s) {
       if (!mounted) return;
-      final isPlay = s.playing && s.processingState != ProcessingState.completed;
+      final isPlay =
+          s.playing && s.processingState != ProcessingState.completed;
       if (isPlay != _playing) setState(() => _playing = isPlay);
       if (s.processingState == ProcessingState.completed) {
         _player.seek(Duration.zero);
@@ -108,6 +117,10 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
   Future<void> _toggle() async {
     HapticFeedback.selectionClick();
+    if (widget.onPlaybackRequested != null) {
+      widget.onPlaybackRequested!();
+      return;
+    }
     await _ensureLoaded();
     if (!_ready) return;
     if (_playing) {
@@ -132,8 +145,8 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   void _seekFromTap(BuildContext barCtx, Offset local, double width) {
     if (_duration == Duration.zero) return;
     final pct = (local.dx / width).clamp(0.0, 1.0);
-    final target = Duration(
-        milliseconds: (_duration.inMilliseconds * pct).round());
+    final target =
+        Duration(milliseconds: (_duration.inMilliseconds * pct).round());
     _player.seek(target);
     setState(() => _position = target);
   }
@@ -162,9 +175,8 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     final mutedFg = widget.isMine
         ? theme.colorScheme.onPrimary.withValues(alpha: 0.7)
         : c.mutedForeground;
-    final activeBar = widget.isMine
-        ? theme.colorScheme.onPrimary
-        : theme.colorScheme.primary;
+    final activeBar =
+        widget.isMine ? theme.colorScheme.onPrimary : theme.colorScheme.primary;
     final inactiveBar = widget.isMine
         ? theme.colorScheme.onPrimary.withValues(alpha: 0.35)
         : c.mutedForeground.withValues(alpha: 0.4);
@@ -272,9 +284,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                _rate == 1.0
-                    ? '1x'
-                    : (_rate == 1.5 ? '1.5x' : '2x'),
+                _rate == 1.0 ? '1x' : (_rate == 1.5 ? '1.5x' : '2x'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -306,8 +316,12 @@ class _WaveformPainter extends CustomPainter {
     final n = bars.length;
     const gap = 1.5;
     final barW = (size.width - gap * (n - 1)) / n;
-    final activePaint = Paint()..color = activeColor..strokeCap = StrokeCap.round;
-    final inactivePaint = Paint()..color = inactiveColor..strokeCap = StrokeCap.round;
+    final activePaint = Paint()
+      ..color = activeColor
+      ..strokeCap = StrokeCap.round;
+    final inactivePaint = Paint()
+      ..color = inactiveColor
+      ..strokeCap = StrokeCap.round;
     final progressPx = size.width * progress;
     for (int i = 0; i < n; i++) {
       final h = (size.height * (bars[i] / 100)).clamp(2.0, size.height);

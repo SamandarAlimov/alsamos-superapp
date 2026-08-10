@@ -13,6 +13,9 @@ class Channel {
   final int subscriberCount;
   final int postsCount;
   final bool allowComments;
+  final String? inviteCode;
+  final String? linkedGroupId;
+  final Map<String, bool> adminPermissions;
   final DateTime createdAt;
   final bool isMember;
   final String? memberRole;
@@ -31,12 +34,17 @@ class Channel {
     this.subscriberCount = 0,
     this.postsCount = 0,
     this.allowComments = true,
+    this.inviteCode,
+    this.linkedGroupId,
+    this.adminPermissions = const {},
     required this.createdAt,
     this.isMember = false,
     this.memberRole,
   });
 
-  factory Channel.fromMap(Map<String, dynamic> m, {bool isMember = false, String? memberRole}) => Channel(
+  factory Channel.fromMap(Map<String, dynamic> m,
+          {bool isMember = false, String? memberRole}) =>
+      Channel(
         id: m['id'] as String,
         ownerId: (m['owner_id'] as String?) ?? '',
         name: (m['name'] as String?) ?? 'Kanal',
@@ -50,12 +58,31 @@ class Channel {
         subscriberCount: (m['subscriber_count'] as num?)?.toInt() ?? 0,
         postsCount: (m['posts_count'] as num?)?.toInt() ?? 0,
         allowComments: (m['allow_comments'] as bool?) ?? true,
-        createdAt: DateTime.tryParse((m['created_at'] as String?) ?? '')?.toLocal() ?? DateTime.now(),
+        inviteCode: m['invite_code'] as String?,
+        linkedGroupId: m['linked_group_id'] as String?,
+        adminPermissions: (m['admin_permissions'] as Map?)
+                ?.map((k, v) => MapEntry(k.toString(), v == true)) ??
+            const {},
+        createdAt:
+            DateTime.tryParse((m['created_at'] as String?) ?? '')?.toLocal() ??
+                DateTime.now(),
         isMember: isMember,
         memberRole: memberRole,
       );
 
-  Channel copyWith({bool? isMember, String? memberRole, int? subscriberCount}) => Channel(
+  String get publicLink => username?.isNotEmpty == true
+      ? 'https://alsamos.com/$username'
+      : 'https://alsamos.com/join/${inviteCode ?? id}';
+
+  bool get canManage => memberRole == 'owner' || memberRole == 'admin';
+
+  Channel copyWith({
+    bool? isMember,
+    String? memberRole,
+    int? subscriberCount,
+    Map<String, bool>? adminPermissions,
+  }) =>
+      Channel(
         id: id,
         ownerId: ownerId,
         name: name,
@@ -69,6 +96,9 @@ class Channel {
         subscriberCount: subscriberCount ?? this.subscriberCount,
         postsCount: postsCount,
         allowComments: allowComments,
+        inviteCode: inviteCode,
+        linkedGroupId: linkedGroupId,
+        adminPermissions: adminPermissions ?? this.adminPermissions,
         createdAt: createdAt,
         isMember: isMember ?? this.isMember,
         memberRole: memberRole ?? this.memberRole,

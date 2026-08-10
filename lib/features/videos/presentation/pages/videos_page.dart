@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,14 +9,19 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../../app/theme/app_colors.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../home/data/models/post_model.dart';
 import '../../../home/presentation/widgets/post_likes_dialog.dart';
 import '../../../../shared/widgets/video_share_dialog.dart';
 import '../../../../shared/widgets/repost_button.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/music_attachment.dart';
+import '../../../../shared/widgets/poll_display.dart';
+import '../../../../shared/utils/video_controller_lifecycle.dart';
+import '../../../../shared/audio/shared_music_playback_controller.dart';
+import '../../../../shared/video/video.dart';
 import '../providers/videos_provider.dart';
 import '../widgets/video_comments_sheet.dart';
 
@@ -23,12 +31,26 @@ const _shadow = [
 ];
 
 /// Global mute state shared across all reels (web parity).
-final _videoMutedProvider = StateProvider<bool>((_) => true);
+final _videoMutedProvider = StateProvider<bool>((_) => kIsWeb);
 
 String _fmt(int n) {
   if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
   if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
   return '$n';
+}
+
+String _cleanPostContent(String? content) {
+  final raw = content?.trim() ?? '';
+  if (raw.isEmpty) return '';
+  final musicParsed = MusicData.parseFromContent(raw);
+  final pollParsed = PollData.parseFromContent(musicParsed.$2);
+  return pollParsed.$2.trim();
+}
+
+MusicData? _musicFromPostContent(String? content) {
+  final raw = content?.trim() ?? '';
+  if (raw.isEmpty) return null;
+  return MusicData.parseFromContent(raw).$1;
 }
 
 /// Pixel-perfect port of web pages/VideosPage.tsx (Instagram/TikTok-style reels).
@@ -38,11 +60,18 @@ String _fmt(int n) {
 /// - Right rail: Like + count, Comments, Share, Repost, Bookmark, Maximize
 /// - Bottom: StoryAvatar ring + @username + Follow + description + music
 /// - Real Supabase persistence (likes, bookmarks, follows, views)
-class VideosPage extends ConsumerWidget {
+class VideosPage extends ConsumerStatefulWidget {
   const VideosPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<VideosPage> createState() => _VideosPageState();
+}
+
+class _VideosPageState extends ConsumerState<VideosPage> {
+  int _activeIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
     final videos = ref.watch(videosProvider);
     return Scaffold(
       backgroundColor: Colors.black,
@@ -54,12 +83,21 @@ class VideosPage extends ConsumerWidget {
                 style: const TextStyle(color: Colors.white))),
         data: (items) {
           if (items.isEmpty) return const _EmptyVideos();
+          final activeIndex = _activeIndex.clamp(0, items.length - 1);
           return PageView.builder(
             scrollDirection: Axis.vertical,
             itemCount: items.length,
-            itemBuilder: (_, i) => _VideoReel(
-              key: ValueKey('reel-${items[i].id}'),
-              post: items[i],
+            onPageChanged: (index) {
+              if (_activeIndex != index) {
+                setState(() => _activeIndex = index);
+              }
+            },
+            itemBuilder: (_, i) => RepaintBoundary(
+              child: _VideoReel(
+                key: ValueKey('reel-${items[i].id}'),
+                post: items[i],
+                isActive: i == activeIndex,
+              ),
             ),
           );
         },
@@ -95,7 +133,12 @@ class _EmptyVideos extends StatelessWidget {
 
 class _VideoReel extends ConsumerStatefulWidget {
   final Post post;
-  const _VideoReel({super.key, required this.post});
+  final bool isActive;
+  const _VideoReel({
+    super.key,
+    required this.post,
+    required this.isActive,
+  });
   @override
   ConsumerState<_VideoReel> createState() => _VideoReelState();
 }
@@ -112,9 +155,21 @@ class _VideoReelState extends ConsumerState<_VideoReel>
   VideoPlayerController? _controller;
   bool _ready = false;
   bool _viewRecorded = false;
+  SharedMusicPlaybackController? _musicController;
 
   late final AnimationController _musicSpin;
   late final AnimationController _likePop;
+
+  MusicData? get _music => _musicFromPostContent(widget.post.content);
+
+  String get _cleanContent => _cleanPostContent(widget.post.content);
+
+  String get _musicLabel {
+    final music = _music;
+    if (music == null) return '';
+    final artist = music.artist;
+    return '${music.title}${artist == null || artist.isEmpty ? '' : ' · $artist'}';
+  }
 
   bool get _isVideo {
     final t = widget.post.mediaType;
@@ -132,9 +187,49 @@ class _VideoReelState extends ConsumerState<_VideoReel>
     _likePop = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 220), lowerBound: 1.0, upperBound: 1.35);
     _loadInitialState();
+    _initMusicController();
     if (_isVideo && widget.post.mediaUrls.isNotEmpty) {
       _initController();
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoReel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.post.content != widget.post.content) {
+      _disposeMusicController();
+      _initMusicController();
+    }
+    if (oldWidget.isActive != widget.isActive) {
+      _syncVideoPlayback();
+      unawaited(_syncMusicPlayback());
+      if (widget.isActive) unawaited(_recordViewOnce());
+    }
+  }
+
+  void _initMusicController() {
+    final music = _music;
+    final url = music?.audioUrl;
+    if (music == null || url == null || url.isEmpty) return;
+    _musicController = SharedMusicPlaybackController(
+      ownerId: 'reel:${widget.post.id}:music:${identityHashCode(this)}',
+      audioUrl: url,
+      trimStart: music.trimStart,
+      clipDuration: music.clipDuration,
+    )..addListener(_handleMusicStateChanged);
+    unawaited(_syncMusicPlayback());
+  }
+
+  void _handleMusicStateChanged() {
+    if (mounted) _syncVideoPlayback();
+  }
+
+  void _disposeMusicController() {
+    final controller = _musicController;
+    _musicController = null;
+    if (controller == null) return;
+    controller.removeListener(_handleMusicStateChanged);
+    controller.dispose();
   }
 
   Future<void> _loadInitialState() async {
@@ -169,13 +264,14 @@ class _VideoReelState extends ConsumerState<_VideoReel>
     try {
       await ctrl.initialize();
       if (!mounted) return;
-      final muted = ref.read(_videoMutedProvider);
       ctrl
         ..setLooping(true)
-        ..setVolume(muted ? 0 : 1)
-        ..play();
+        ..setVolume(_effectiveVideoVolume);
+      if (widget.isActive && !_paused) await ctrl.play();
       setState(() => _ready = true);
-      _recordViewOnce();
+      _syncVideoPlayback();
+      unawaited(_syncMusicPlayback());
+      if (widget.isActive) unawaited(_recordViewOnce());
     } catch (_) {}
   }
 
@@ -194,10 +290,42 @@ class _VideoReelState extends ConsumerState<_VideoReel>
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _disposeMusicController();
+    disposeVideoControllerSafely(_controller);
     _musicSpin.dispose();
     _likePop.dispose();
     super.dispose();
+  }
+
+  double get _effectiveVideoVolume {
+    final muted = ref.read(_videoMutedProvider);
+    final music = _musicController;
+    final hasUsableMusic = music != null &&
+        music.status != SharedMusicPlaybackStatus.failed;
+    return muted || hasUsableMusic ? 0 : 1;
+  }
+
+  void _syncVideoPlayback() {
+    final controller = _controller;
+    if (controller == null || !_ready) return;
+    unawaited(controller.setVolume(_effectiveVideoVolume));
+    if (widget.isActive && !_paused) {
+      unawaited(controller.play());
+    } else {
+      unawaited(controller.pause());
+    }
+  }
+
+  Future<void> _syncMusicPlayback({bool manual = false}) async {
+    final controller = _musicController;
+    if (controller == null) return;
+    final muted = ref.read(_videoMutedProvider);
+    final shouldPlay = widget.isActive && !_paused && !muted;
+    await controller.setVisible(widget.isActive);
+    await controller.setActive(shouldPlay);
+    if (manual && shouldPlay && !controller.isPlaying) {
+      await controller.play(manual: true);
+    }
   }
 
   void _togglePlay() {
@@ -208,7 +336,8 @@ class _VideoReelState extends ConsumerState<_VideoReel>
       _paused = !_paused;
       _showPlayHint = true;
     });
-    _paused ? ctrl.pause() : ctrl.play();
+    _syncVideoPlayback();
+    unawaited(_syncMusicPlayback());
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) setState(() => _showPlayHint = false);
     });
@@ -218,7 +347,8 @@ class _VideoReelState extends ConsumerState<_VideoReel>
     HapticFeedback.lightImpact();
     final next = !ref.read(_videoMutedProvider);
     ref.read(_videoMutedProvider.notifier).state = next;
-    _controller?.setVolume(next ? 0 : 1);
+    _syncVideoPlayback();
+    unawaited(_syncMusicPlayback(manual: !next));
   }
 
   Future<void> _toggleLike() async {
@@ -306,9 +436,11 @@ class _VideoReelState extends ConsumerState<_VideoReel>
       fit: StackFit.expand,
       children: [
         // Video / poster
-        GestureDetector(
-          onTap: _togglePlay,
-          child: _VideoSurface(controller: _controller, ready: _ready, post: post, isVideo: _isVideo),
+        RepaintBoundary(
+          child: GestureDetector(
+            onTap: _togglePlay,
+            child: _VideoSurface(controller: _controller, ready: _ready, post: post, isVideo: _isVideo),
+          ),
         ),
         // Pause overlay
         if ((_paused || _showPlayHint) && _ready)
@@ -368,9 +500,10 @@ class _VideoReelState extends ConsumerState<_VideoReel>
         Positioned(
           right: 8,
           bottom: bottomPad + 110,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          child: RepaintBoundary(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               // Like + count
               _RailItem(
                 onTap: _toggleLike,
@@ -397,7 +530,7 @@ class _VideoReelState extends ConsumerState<_VideoReel>
               _RailItem(
                 onTap: () => VideoShareDialog.show(context,
                     videoId: post.id,
-                    videoTitle: (post.content ?? '').isNotEmpty ? post.content : null),
+                    videoTitle: _cleanContent.isNotEmpty ? _cleanContent : null),
                 icon: LucideIcons.send,
                 iconColor: Colors.white,
                 label: post.sharesCount > 0 ? _fmt(post.sharesCount) : '',
@@ -413,11 +546,9 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                   darkRail: true,
                   showLabel: false,
                   onRepost: ({String? quote}) async {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(quote != null
-                          ? 'Iqtibos bilan repost qilindi'
-                          : 'Repost qilindi'),
-                    ));
+                    AppToast.success(context, quote != null
+                        ? 'Iqtibos bilan repost qilindi'
+                        : 'Repost qilindi');
                     return true;
                   },
                 ),
@@ -446,6 +577,7 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                 onTap: () {
                   _controller?.pause();
                   setState(() => _paused = true);
+                  unawaited(_syncMusicPlayback());
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => _LargePlayerPage(post: post),
@@ -453,8 +585,9 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                     ),
                   ).then((_) {
                     if (mounted) {
-                      _controller?.play();
                       setState(() => _paused = false);
+                      _syncVideoPlayback();
+                      unawaited(_syncMusicPlayback());
                     }
                   });
                 },
@@ -464,6 +597,7 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                 label: '',
               ),
             ],
+            ),
           ),
         ),
         // Bottom info
@@ -471,26 +605,22 @@ class _VideoReelState extends ConsumerState<_VideoReel>
           left: 16,
           right: 72,
           bottom: bottomPad + 24,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          child: RepaintBoundary(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
               // Avatar + username + follow
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: AppColors.gradientPrimary,
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.all(1.5),
-                      decoration: const BoxDecoration(
-                          shape: BoxShape.circle, color: Colors.black),
-                      child: UserAvatar(
-                        avatarUrl: p?.avatarUrl, fallback: p?.initial ?? 'U', size: 32),
-                    ),
+                  StoryAvatarRing(
+                    userId: post.userId,
+                    avatarUrl: p?.avatarUrl,
+                    fallback: p?.initial ?? 'U',
+                    size: 32,
+                    backgroundColor: Colors.white12,
+                    ringPadding: 2,
+                    inactiveBorderColor: Colors.white24,
                   ),
                   const SizedBox(width: 10),
                   Flexible(
@@ -513,10 +643,10 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                 ],
               ),
               // Description (tap to expand)
-              if (post.content != null && post.content!.isNotEmpty) ...[
+              if (_cleanContent.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 _Description(
-                  text: post.content!,
+                  text: _cleanContent,
                   expanded: _expanded,
                   onToggle: () => setState(() => _expanded = !_expanded),
                 ),
@@ -533,7 +663,9 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      'Original Sound \u00b7 ${p?.displayName ?? p?.username ?? ''}',
+                      _musicLabel.isNotEmpty
+                          ? _musicLabel
+                          : 'Original Sound \u00b7 ${p?.displayName ?? p?.username ?? ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -543,6 +675,7 @@ class _VideoReelState extends ConsumerState<_VideoReel>
                 ],
               ),
             ],
+            ),
           ),
         ),
       ],
@@ -562,14 +695,26 @@ class _VideoSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (ready && controller != null) {
-      return ColoredBox(
-        color: Colors.black,
-        child: Center(
-          child: AspectRatio(
-            aspectRatio: controller!.value.aspectRatio,
-            child: VideoPlayer(controller!),
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          ColoredBox(
+            color: Colors.black,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: controller!.value.aspectRatio,
+                child: VideoPlayer(controller!),
+              ),
+            ),
           ),
-        ),
+          // Thin progress bar at bottom of reel
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _ReelProgressIndicator(controller: controller!),
+          ),
+        ],
       );
     }
     if (post.mediaUrls.isNotEmpty) {
@@ -588,6 +733,46 @@ class _VideoSurface extends StatelessWidget {
       );
     }
     return Container(color: Colors.grey.shade900);
+  }
+}
+
+class _ReelProgressIndicator extends StatefulWidget {
+  final VideoPlayerController controller;
+  const _ReelProgressIndicator({required this.controller});
+  @override
+  State<_ReelProgressIndicator> createState() => _ReelProgressIndicatorState();
+}
+
+class _ReelProgressIndicatorState extends State<_ReelProgressIndicator> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_update);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_update);
+    super.dispose();
+  }
+
+  void _update() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = widget.controller.value;
+    final duration = value.duration.inMilliseconds;
+    if (duration <= 0) return const SizedBox.shrink();
+    final progress = (value.position.inMilliseconds / duration).clamp(0.0, 1.0);
+
+    return LinearProgressIndicator(
+      value: progress,
+      minHeight: 2.5,
+      backgroundColor: Colors.white.withValues(alpha: 0.15),
+      valueColor: const AlwaysStoppedAnimation(Colors.white),
+    );
   }
 }
 
@@ -642,6 +827,8 @@ class _RailItem extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 11,
@@ -650,6 +837,8 @@ class _RailItem extends StatelessWidget {
               ),
             if (sublabel != null)
               Text(sublabel!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 9,
@@ -768,13 +957,13 @@ class _LargePlayerPage extends ConsumerStatefulWidget {
 
 class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
   VideoPlayerController? _ctrl;
+  SharedMusicPlaybackController? _musicController;
   bool _ready = false;
-  bool _muted = false;
-  bool _playing = true;
 
   @override
   void initState() {
     super.initState();
+    _initMusicController();
     final url = widget.post.mediaUrls.firstOrNull ?? '';
     if (url.isEmpty) return;
     _ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
@@ -784,16 +973,39 @@ class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
         ..setLooping(true)
         ..play();
       setState(() => _ready = true);
+      unawaited(_syncMusicPlayback());
     });
+  }
+
+  void _initMusicController() {
+    final music = _musicFromPostContent(widget.post.content);
+    final url = music?.audioUrl;
+    if (music == null || url == null || url.isEmpty) return;
+    _musicController = SharedMusicPlaybackController(
+      ownerId: 'large-reel:${widget.post.id}:music:${identityHashCode(this)}',
+      audioUrl: url,
+      trimStart: music.trimStart,
+      clipDuration: music.clipDuration,
+    );
+    unawaited(_syncMusicPlayback());
   }
 
   @override
   void dispose() {
-    _ctrl?.dispose();
+    _musicController?.dispose();
+    disposeVideoControllerSafely(_ctrl);
     super.dispose();
   }
-  
-  String _fmt(int n) {
+
+  Future<void> _syncMusicPlayback() async {
+    final controller = _musicController;
+    if (controller == null) return;
+    final playing = _ctrl?.value.isPlaying ?? false;
+    await controller.setVisible(true);
+    await controller.setActive(playing);
+  }
+
+  String _fmtCount(int n) {
     if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
     if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
     return n.toString();
@@ -803,91 +1015,31 @@ class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
   Widget build(BuildContext context) {
     final post = widget.post;
     final p = post.profile;
+    final cleanContent = _cleanPostContent(post.content);
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
         child: Column(
           children: [
-            // Video frame (16:9)
+            // Video with unified controls
             Container(
               width: double.infinity,
               color: Colors.black,
               child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (_ready && _ctrl != null)
-                      GestureDetector(
-                        onTap: () {
-                          if (_ctrl!.value.isPlaying) {
-                            _ctrl!.pause();
-                            setState(() => _playing = false);
-                          } else {
-                            _ctrl!.play();
-                            setState(() => _playing = true);
-                          }
-                        },
-                        child: VideoPlayer(_ctrl!),
+                aspectRatio: _ready ? (_ctrl!.value.aspectRatio.clamp(1.0, 2.4)) : 16 / 9,
+                child: _ready && _ctrl != null
+                    ? UnifiedVideoPlayer(
+                        controller: _ctrl!,
+                        mode: VideoDisplayMode.landscape,
+                        title: cleanContent.split('\n').firstOrNull,
+                        subtitle: '@${p?.username ?? 'user'}',
+                        onClose: () => Navigator.of(context).pop(),
                       )
-                    else
-                      const Center(child: CircularProgressIndicator(color: Colors.white)),
-                    
-                    // Close button
-                    Positioned(
-                      top: 12, left: 12,
-                      child: GestureDetector(
-                        onTap: () => Navigator.of(context).pop(),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: const Icon(LucideIcons.x, color: Colors.white, size: 20),
-                        ),
-                      ),
-                    ),
-                    
-                    // Mute button
-                    Positioned(
-                      top: 12, right: 12,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _muted = !_muted);
-                          _ctrl?.setVolume(_muted ? 0 : 1);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: Icon(_muted ? LucideIcons.volumeX : LucideIcons.volume2, color: Colors.white, size: 20),
-                        ),
-                      ),
-                    ),
-                    
-                    // Play indicator
-                    if (!_playing)
-                      Center(
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: const BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(LucideIcons.play, color: Colors.white, size: 32),
-                        ),
-                      ),
-                  ],
-                ),
+                    : const Center(child: CircularProgressIndicator(color: Colors.white)),
               ),
             ),
-            
-            // Scrollable info
+
+            // Scrollable info below video
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
@@ -899,25 +1051,25 @@ class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            (post.content ?? '').split('\n').firstOrNull ?? '@${p?.username ?? 'user'}',
+                            cleanContent.split('\n').firstOrNull ??
+                                '@${p?.username ?? 'user'}',
                             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, height: 1.3),
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '@${p?.username ?? 'user'} · ${_fmt(post.viewsCount)} views',
+                            '@${p?.username ?? 'user'} · ${_fmtCount(post.viewsCount)} ko\'rish',
                             style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         ],
                       ),
                     ),
-                    
+
                     // Action row
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
-                          // Like/Dislike pill
                           Container(
                             height: 36,
                             decoration: BoxDecoration(
@@ -935,7 +1087,7 @@ class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
                                       children: [
                                         Icon(LucideIcons.thumbsUp, size: 16, color: Theme.of(context).colorScheme.onSurface),
                                         const SizedBox(width: 6),
-                                        Text(_fmt(post.likesCount), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                        Text(_fmtCount(post.likesCount), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                                       ],
                                     ),
                                   ),
@@ -953,45 +1105,47 @@ class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          // Share
-                          _ActionPill(icon: LucideIcons.send, label: 'Share', onTap: () {}),
+                          _ActionPill(icon: LucideIcons.send, label: 'Ulashish', onTap: () {}),
                           const SizedBox(width: 8),
-                          // Save
-                          _ActionPill(icon: LucideIcons.bookmark, label: 'Save', onTap: () {}),
+                          _ActionPill(icon: LucideIcons.bookmark, label: 'Saqlash', onTap: () {}),
                           const SizedBox(width: 8),
-                          // Comments
-                          _ActionPill(icon: LucideIcons.messageCircle, label: _fmt(post.commentsCount), onTap: () {}),
+                          _ActionPill(icon: LucideIcons.messageCircle, label: _fmtCount(post.commentsCount), onTap: () {
+                            VideoCommentsSheet.show(context, postId: post.id, commentsCount: post.commentsCount);
+                          }),
                         ],
                       ),
                     ),
-                    
+
                     const SizedBox(height: 12),
                     const Divider(height: 1),
-                    
+
                     // Channel row
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       child: Row(
                         children: [
-                          UserAvatar(avatarUrl: p?.avatarUrl, fallback: p?.initial ?? 'U', size: 36),
+                          StoryAvatarRing(
+                            userId: post.userId,
+                            avatarUrl: p?.avatarUrl,
+                            fallback: p?.initial ?? 'U',
+                            size: 36,
+                            ringPadding: 2,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Row(
                               children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      p?.displayName ?? p?.username ?? 'user',
-                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                                    ),
-                                    if (p?.isVerified == true) ...[
-                                      const SizedBox(width: 4),
-                                      const Icon(LucideIcons.badgeCheck, size: 14, color: Colors.blue),
-                                    ],
-                                  ],
+                                Flexible(
+                                  child: Text(
+                                    p?.displayName ?? p?.username ?? 'user',
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
+                                if (p?.isVerified == true) ...[
+                                  const SizedBox(width: 4),
+                                  const VerifiedBadge(size: 14),
+                                ],
                               ],
                             ),
                           ),
@@ -1007,17 +1161,13 @@ class _LargePlayerPageState extends ConsumerState<_LargePlayerPage> {
                         ],
                       ),
                     ),
-                    
+
                     const Divider(height: 1),
-                    
-                    // Description
-                    if ((post.content ?? '').isNotEmpty)
+
+                    if (cleanContent.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.all(16),
-                        child: Text(
-                          post.content!,
-                          style: const TextStyle(fontSize: 14, height: 1.5),
-                        ),
+                        child: Text(cleanContent, style: const TextStyle(fontSize: 14, height: 1.5)),
                       ),
                   ],
                 ),

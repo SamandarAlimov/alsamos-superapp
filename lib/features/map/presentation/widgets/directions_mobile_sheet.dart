@@ -102,6 +102,16 @@ class _DirectionsMobileSheetState extends ConsumerState<DirectionsMobileSheet> {
       widget.onClearSelectedMapLocation?.call();
       _calcRoute();
     }
+    // Update origin when currentLocation arrives late
+    final dir = ref.read(directionsProvider);
+    if (widget.currentLocation != null && dir.origin == null) {
+      _originCtrl.text = 'Joriy joylashuv';
+      ref.read(directionsProvider.notifier).setOrigin((
+        lat: widget.currentLocation!.lat,
+        lng: widget.currentLocation!.lng,
+        name: 'Joriy joylashuv',
+      ));
+    }
     // clear when closed
     if (!widget.open && old.open) {
       _clear();
@@ -501,7 +511,7 @@ class _DirectionsMobileSheetState extends ConsumerState<DirectionsMobileSheet> {
                 onTap: () => widget.onStepSelected?.call((lat: route.steps[i].location.latitude, lng: route.steps[i].location.longitude)),
                 borderRadius: BorderRadius.circular(10),
                 child: Padding(padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4), child: Row(children: [
-                  Container(width: 32, height: 32, decoration: BoxDecoration(color: primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)), child: Center(child: Text(maneuverEmoji(route.steps[i].maneuverType, route.steps[i].maneuverModifier), style: const TextStyle(fontSize: 14)))),
+                  Container(width: 32, height: 32, decoration: BoxDecoration(color: primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)), child: Center(child: Icon(maneuverIcon(route.steps[i].maneuverType, route.steps[i].maneuverModifier), size: 14))),
                   const SizedBox(width: 10),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(route.steps[i].instruction, style: TextStyle(fontSize: 12, color: c.foreground)),
@@ -528,7 +538,7 @@ class _DirectionsMobileSheetState extends ConsumerState<DirectionsMobileSheet> {
           Container(
             width: 56, height: 56,
             decoration: BoxDecoration(color: primary.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(14)),
-            child: Center(child: Text(maneuverEmoji(step.maneuverType, step.maneuverModifier), style: const TextStyle(fontSize: 26))),
+            child: Center(child: Icon(maneuverIcon(step.maneuverType, step.maneuverModifier), size: 26)),
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -564,7 +574,7 @@ class _DirectionsMobileSheetState extends ConsumerState<DirectionsMobileSheet> {
       ...route.steps.skip(stepIdx + 1).take(3).map((s) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
         child: Row(children: [
-          Container(width: 30, height: 30, decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(7)), child: Center(child: Text(maneuverEmoji(s.maneuverType, s.maneuverModifier), style: const TextStyle(fontSize: 12)))),
+          Container(width: 30, height: 30, decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(7)), child: Center(child: Icon(maneuverIcon(s.maneuverType, s.maneuverModifier), size: 12))),
           const SizedBox(width: 10),
           Expanded(child: Text(s.instruction, style: TextStyle(fontSize: 12, color: c.foreground), maxLines: 1, overflow: TextOverflow.ellipsis)),
           Text(formatDistance(s.distance), style: TextStyle(fontSize: 11, color: c.mutedForeground)),

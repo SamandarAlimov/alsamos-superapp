@@ -7,7 +7,7 @@ import '../../../../app/theme/app_theme.dart';
 import '../../../../shared/widgets/alsamos_refresh_indicator.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../../shared/navigation/app_routes.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../providers/posts_provider.dart';
 import '../../../ads/presentation/providers/ads_provider.dart';
 import '../../../ads/presentation/widgets/feed_ad_card.dart';
@@ -148,7 +148,8 @@ class _CreatePostBar extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            UserAvatar(
+            StoryAvatarRing(
+              userId: profile?.id,
               avatarUrl: profile?.avatarUrl,
               fallback: profile?.initial ?? 'U',
               size: 40,

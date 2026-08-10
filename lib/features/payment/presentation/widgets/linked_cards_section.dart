@@ -65,7 +65,7 @@ class LinkedCardsSection extends StatelessWidget {
             Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: meta.$2, borderRadius: BorderRadius.circular(4)), child: Text(meta.$1, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800))),
           ]),
           Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Text('\u2022\u2022\u2022\u2022 ${c.last4}', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.foreground, fontFeatures: const [FontFeature.tabularFigures()])),
+            Text('\u2022\u2022\u2022\u2022 ${c.last4}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.foreground, fontFeatures: const [FontFeature.tabularFigures()])),
             const SizedBox(height: 2),
             Text('${c.expiryMonth.toString().padLeft(2, '0')}/${c.expiryYear.toString().padLeft(2, '0')}', style: TextStyle(fontSize: 11, color: colors.mutedForeground)),
           ]),

@@ -1,32 +1,22 @@
-// 1:1 port of web `src/components/discovery/ForYouSection.tsx`.
-//
-// Differences vs my first pass (now fixed):
-//   - Video tiles use VideoPlayerController initialized but paused (matches
-//     web `<video preload="metadata">` showing the first frame). For non-video
-//     URLs CachedNetworkImage was failing.
-//   - Non-video clicks open PostViewModal (web behavior) instead of pushing a
-//     route. Modal is the same one used on the home feed.
-//   - Supabase realtime channel mirrors web's `foryou-realtime-counts`:
-//     listens to post_likes, comments, post_views and patches local state.
-//   - Profile/Post are constructed via Post.fromMap / Profile.fromMap so the
-//     modal receives the same shape as the home feed.
+// ForYouSection - Personalized discovery feed using server-side ranking
+// P0.1: Now uses PostCard for consistent rendering of all post types
+// P0.2: Uses get_personalized_feed RPC for real personalization
+// P0.3: Respects blocked/muted/hidden content (server-side filtered)
+// P0.4: Implements infinite scroll with pagination
 
-import 'dart:math' as math;
-
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/poll_display.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../auth/data/models/profile_model.dart';
 import '../../../home/data/models/post_model.dart';
 import '../../../home/presentation/widgets/post_view_modal.dart';
+import 'post_card.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 class ForYouSection extends ConsumerStatefulWidget {
   const ForYouSection({super.key});
@@ -37,47 +27,362 @@ class ForYouSection extends ConsumerStatefulWidget {
 
 class _ForYouSectionState extends ConsumerState<ForYouSection> {
   bool _loading = true;
+  bool _loadingMore = false;
   List<Post> _posts = const [];
   RealtimeChannel? _channel;
+  int _page = 0;
+  bool _hasMore = true;
+  final ScrollController _scrollController = ScrollController();
+  static const int _pageSize = 20;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     _load();
   }
 
   @override
   void dispose() {
+    _scrollController.dispose();
     final ch = _channel;
     if (ch != null) Supabase.instance.client.removeChannel(ch);
     super.dispose();
   }
 
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 200 &&
+        !_loadingMore &&
+        _hasMore) {
+      _loadMore();
+    }
+  }
+
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _page = 0;
+      _hasMore = true;
+    });
+    
+    try {
+      final supa = Supabase.instance.client;
+      final userId = supa.auth.currentUser?.id;
+      
+      if (userId == null) {
+        // Fallback to trending for anonymous users
+        await _loadTrendingFallback();
+        return;
+      }
+
+      // Use personalized feed RPC
+      final rows = await supa.rpc(
+        'get_personalized_feed',
+        params: {
+          'p_user_id': userId,
+          'p_limit': _pageSize,
+          'p_offset': 0,
+        },
+      );
+
+      if (!mounted) return;
+
+      final list = (rows as List)
+          .map((r) => Post.fromMap(r as Map<String, dynamic>))
+          .toList();
+
+      if (list.isNotEmpty) {
+        final hydrated = await _hydratePosts(list, userId: userId);
+        if (!mounted) return;
+
+        setState(() {
+          _posts = hydrated;
+          _loading = false;
+          _hasMore = list.length >= _pageSize;
+        });
+
+        _subscribeRealtime();
+      } else {
+        setState(() {
+          _posts = [];
+          _loading = false;
+          _hasMore = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading personalized feed: $e');
+      // Fallback to trending
+      await _loadTrendingFallback();
+    }
+  }
+
+  Future<void> _loadTrendingFallback() async {
     try {
       final rows = await Supabase.instance.client
           .from('posts')
-          .select(
-              'id, user_id, content, media_urls, media_type, likes_count, comments_count, shares_count, views_count, is_pinned, created_at, '
-              'profile:profiles!posts_user_id_fkey(id, username, avatar_url, display_name, is_verified, bio, location, website, is_admin)')
+          .select('''
+            *, 
+            profile:profiles!posts_user_id_fkey(id, username, avatar_url, display_name, is_verified)
+          ''')
           .eq('visibility', 'public')
+          .eq('moderation_status', 'approved')
           .order('likes_count', ascending: false)
-          .limit(20);
-      final list = (rows as List)
-          .map((r) => Post.fromMap(r as Map<String, dynamic>))
-          .toList()
-        ..shuffle(math.Random());
+          .limit(_pageSize);
+
       if (!mounted) return;
+
+      final posts = (rows as List)
+          .map((r) => Post.fromMap(r as Map<String, dynamic>))
+          .toList();
+      final hydrated = await _hydratePosts(
+        posts,
+        userId: Supabase.instance.client.auth.currentUser?.id,
+      );
+
+      if (!mounted) return;
+
       setState(() {
-        _posts = list.take(8).toList();
+        _posts = hydrated;
         _loading = false;
+        _hasMore = _posts.length >= _pageSize;
       });
+
       _subscribeRealtime();
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _posts = [];
+          _loading = false;
+          _hasMore = false;
+        });
+      }
     }
   }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore) return;
+
+    setState(() => _loadingMore = true);
+
+    try {
+      final supa = Supabase.instance.client;
+      final userId = supa.auth.currentUser?.id;
+      
+      if (userId == null) {
+        setState(() => _loadingMore = false);
+        return;
+      }
+
+      final nextPage = _page + 1;
+      final rows = await supa.rpc(
+        'get_personalized_feed',
+        params: {
+          'p_user_id': userId,
+          'p_limit': _pageSize,
+          'p_offset': nextPage * _pageSize,
+        },
+      );
+
+      if (!mounted) return;
+
+      final newPosts = (rows as List)
+          .map((r) => Post.fromMap(r as Map<String, dynamic>))
+          .toList();
+
+      if (newPosts.isNotEmpty) {
+        final hydrated = await _hydratePosts(newPosts, userId: userId);
+        if (!mounted) return;
+
+        setState(() {
+          _posts.addAll(hydrated);
+          _page = nextPage;
+          _loadingMore = false;
+          _hasMore = newPosts.length >= _pageSize;
+        });
+      } else {
+        setState(() {
+          _loadingMore = false;
+          _hasMore = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading more posts: $e');
+      setState(() => _loadingMore = false);
+    }
+  }
+
+  Future<List<Post>> _hydratePosts(
+    List<Post> posts, {
+    required String? userId,
+  }) async {
+    if (posts.isEmpty) return posts;
+
+    final supa = Supabase.instance.client;
+    final postIds = posts.map((p) => p.id).toSet().toList();
+    final userIds = posts.map((p) => p.userId).toSet().toList();
+
+    Map<String, Profile> profilesByUser = const {};
+    Set<String> likedIds = const {};
+    Set<String> bookmarkedIds = const {};
+
+    try {
+      final profiles = await supa
+          .from('profiles')
+          .select('id, username, avatar_url, display_name, is_verified')
+          .inFilter('id', userIds);
+      profilesByUser = {
+        for (final row in profiles as List)
+          row['id'] as String: Profile.fromMap(row as Map<String, dynamic>),
+      };
+    } catch (e) {
+      debugPrint('Discovery profile hydration failed: $e');
+    }
+
+    if (userId != null) {
+      try {
+        final likes = await supa
+            .from('post_likes')
+            .select('post_id')
+            .eq('user_id', userId)
+            .inFilter('post_id', postIds);
+        likedIds =
+            (likes as List).map((row) => row['post_id'] as String).toSet();
+      } catch (e) {
+        debugPrint('Discovery like hydration failed: $e');
+      }
+
+      try {
+        final bookmarks = await supa
+            .from('bookmarks')
+            .select('post_id')
+            .eq('user_id', userId)
+            .inFilter('post_id', postIds);
+        bookmarkedIds = (bookmarks as List)
+            .map((row) => row['post_id'] as String)
+            .toSet();
+      } catch (e) {
+        debugPrint('Discovery bookmark hydration failed: $e');
+      }
+    }
+
+    final productTagsByPost = await _fetchProductTags(postIds);
+    final collaboratorsByPost = await _fetchCollaborators(postIds);
+
+    return posts
+        .map((post) => _copyPostWith(
+              post,
+              profile: profilesByUser[post.userId] ?? post.profile,
+              isLiked: likedIds.contains(post.id),
+              isBookmarked: bookmarkedIds.contains(post.id),
+              productTags: productTagsByPost[post.id] ?? post.productTags,
+              collaborators: collaboratorsByPost[post.id] ?? post.collaborators,
+            ))
+        .toList(growable: false);
+  }
+
+  Future<Map<String, List<String>>> _fetchProductTags(
+    List<String> postIds,
+  ) async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('post_product_tags')
+          .select('post_id, product_id')
+          .inFilter('post_id', postIds);
+
+      final byPost = <String, List<String>>{};
+      for (final row in rows as List) {
+        final data = row as Map<String, dynamic>;
+        final postId = data['post_id']?.toString();
+        final productId = data['product_id']?.toString();
+        if (postId == null || productId == null || productId.isEmpty) {
+          continue;
+        }
+        byPost.putIfAbsent(postId, () => <String>[]).add(productId);
+      }
+      return byPost;
+    } catch (e) {
+      debugPrint('Discovery product tag hydration failed: $e');
+      return const {};
+    }
+  }
+
+  Future<Map<String, List<PostCollaborator>>> _fetchCollaborators(
+    List<String> postIds,
+  ) async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('post_collaborators')
+          .select('post_id, user_id')
+          .eq('status', 'accepted')
+          .inFilter('post_id', postIds);
+
+      final collaboratorUserIds = <String>{};
+      final userIdsByPost = <String, List<String>>{};
+      for (final row in rows as List) {
+        final data = row as Map<String, dynamic>;
+        final postId = data['post_id']?.toString();
+        final collaboratorId = data['user_id']?.toString();
+        if (postId == null ||
+            collaboratorId == null ||
+            collaboratorId.isEmpty) {
+          continue;
+        }
+        collaboratorUserIds.add(collaboratorId);
+        userIdsByPost.putIfAbsent(postId, () => <String>[]).add(collaboratorId);
+      }
+
+      if (collaboratorUserIds.isEmpty) return const {};
+
+      final profiles = await Supabase.instance.client
+          .from('profiles')
+          .select('id, username, avatar_url, display_name, is_verified')
+          .inFilter('id', collaboratorUserIds.toList());
+      final collaboratorsByUser = {
+        for (final row in profiles as List)
+          row['id'] as String:
+              PostCollaborator.fromMap(row as Map<String, dynamic>),
+      };
+
+      return {
+        for (final entry in userIdsByPost.entries)
+          entry.key: entry.value
+              .map((id) => collaboratorsByUser[id])
+              .whereType<PostCollaborator>()
+              .toList(growable: false),
+      };
+    } catch (e) {
+      debugPrint('Discovery collaborator hydration failed: $e');
+      return const {};
+    }
+  }
+
+  Post _copyPostWith(
+    Post post, {
+    required Profile? profile,
+    required bool isLiked,
+    required bool isBookmarked,
+    required List<String> productTags,
+    required List<PostCollaborator> collaborators,
+  }) =>
+      Post(
+        id: post.id,
+        userId: post.userId,
+        content: post.content,
+        mediaUrls: post.mediaUrls,
+        mediaType: post.mediaType,
+        likesCount: post.likesCount,
+        commentsCount: post.commentsCount,
+        sharesCount: post.sharesCount,
+        viewsCount: post.viewsCount,
+        isPinned: post.isPinned,
+        isLiked: isLiked,
+        isBookmarked: isBookmarked,
+        productTags: productTags,
+        collaborators: collaborators,
+        createdAt: post.createdAt,
+        profile: profile,
+      );
 
   /// Mirrors web's `foryou-realtime-counts` channel:
   /// - post_likes (*) → ±1 to likes_count
@@ -134,48 +439,13 @@ class _ForYouSectionState extends ConsumerState<ForYouSection> {
       _posts = _posts.map((p) {
         if (p.id != postId) return p;
         return p.copyWith(
-          likesCount: kind == 'likes'
-              ? math.max(0, p.likesCount + delta)
-              : null,
-          commentsCount: kind == 'comments'
-              ? math.max(0, p.commentsCount + delta)
-              : null,
+          likesCount: kind == 'likes' ? (p.likesCount + delta).clamp(0, 1 << 30) : null,
+          commentsCount: kind == 'comments' ? (p.commentsCount + delta).clamp(0, 1 << 30) : null,
+          viewsCount: kind == 'views' ? (p.viewsCount + delta).clamp(0, 1 << 30) : null,
         );
       }).toList();
     });
-    // post_views isn't covered by copyWith; rebuild manually for views_count.
-    if (kind == 'views') {
-      setState(() {
-        _posts = _posts.map((p) {
-          if (p.id != postId) return p;
-          return Post(
-            id: p.id,
-            userId: p.userId,
-            content: p.content,
-            mediaUrls: p.mediaUrls,
-            mediaType: p.mediaType,
-            likesCount: p.likesCount,
-            commentsCount: p.commentsCount,
-            sharesCount: p.sharesCount,
-            viewsCount: math.max(0, p.viewsCount + delta),
-            isPinned: p.isPinned,
-            isLiked: p.isLiked,
-            createdAt: p.createdAt,
-            profile: p.profile,
-          );
-        }).toList();
-      });
-    }
   }
-
-  String _fmtCount(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
-  }
-
-  // Web breakpoints: grid-cols-2 (mobile), md:grid-cols-4 (≥ 768px).
-  int _crossAxisCount(double width) => width >= 768 ? 4 : 2;
 
   @override
   Widget build(BuildContext context) {
@@ -183,7 +453,9 @@ class _ForYouSectionState extends ConsumerState<ForYouSection> {
     final primary = Theme.of(context).colorScheme.primary;
 
     if (_loading) return _ForYouSkeleton(c: c, primary: primary);
-    if (_posts.isEmpty) return const SizedBox.shrink();
+    if (_posts.isEmpty) {
+      return _EmptyState(c: c, primary: primary);
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -198,356 +470,328 @@ class _ForYouSectionState extends ConsumerState<ForYouSection> {
                   color: c.foreground)),
         ]),
         const SizedBox(height: 16),
-        LayoutBuilder(builder: (ctx, constraints) {
-          final cols = _crossAxisCount(constraints.maxWidth);
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols,
-              childAspectRatio: 1, // aspect-square
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-            ),
-            itemCount: _posts.length,
-            itemBuilder: (_, i) => _ForYouTile(
-              post: _posts[i],
-              c: c,
-              primary: primary,
-              fmtCount: _fmtCount,
-              onUpdated: (np) {
-                if (!mounted) return;
+        // Use PostCard for all posts
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          controller: _scrollController,
+          itemCount: _posts.length + (_loadingMore ? 1 : 0),
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            if (index == _posts.length) {
+              // Loading indicator at bottom
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            }
+
+            final post = _posts[index];
+            return PostCard(
+              post: post,
+              showEngagementActions: true,
+              onLike: () => _handleLike(post),
+              onBookmark: () => _handleBookmark(post),
+              onComment: () => _handleComment(post),
+              onShare: () => _handleShare(post),
+              onPostUpdated: (updatedPost) {
                 setState(() {
-                  _posts = _posts.map((p) => p.id == np.id ? np : p).toList();
+                  final idx = _posts.indexWhere((p) => p.id == updatedPost.id);
+                  if (idx != -1) {
+                    _posts[idx] = updatedPost;
+                  }
                 });
               },
+            );
+          },
+        ),
+        if (!_hasMore && _posts.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(
+              child: Text(
+                'You\'ve reached the end',
+                style: TextStyle(color: c.mutedForeground, fontSize: 14),
+              ),
             ),
-          );
-        }),
+          ),
       ],
+    );
+  }
+
+  Future<void> _handleLike(Post post) async {
+    HapticFeedback.mediumImpact();
+    final supa = Supabase.instance.client;
+    final userId = supa.auth.currentUser?.id;
+    if (userId == null) return;
+
+    // Optimistic update
+    setState(() {
+      final idx = _posts.indexWhere((p) => p.id == post.id);
+      if (idx != -1) {
+        _posts[idx] = post.copyWith(
+          isLiked: !post.isLiked,
+          likesCount: post.isLiked ? post.likesCount - 1 : post.likesCount + 1,
+        );
+      }
+    });
+
+    try {
+      if (post.isLiked) {
+        await supa
+            .from('post_likes')
+            .delete()
+            .match({'post_id': post.id, 'user_id': userId});
+      } else {
+        await supa
+            .from('post_likes')
+            .insert({'post_id': post.id, 'user_id': userId});
+      }
+    } catch (e) {
+      // Rollback on error
+      setState(() {
+        final idx = _posts.indexWhere((p) => p.id == post.id);
+        if (idx != -1) {
+          _posts[idx] = post;
+        }
+      });
+    }
+  }
+
+  Future<void> _handleBookmark(Post post) async {
+    HapticFeedback.mediumImpact();
+    final supa = Supabase.instance.client;
+    final userId = supa.auth.currentUser?.id;
+    if (userId == null) return;
+
+    // Optimistic update
+    setState(() {
+      final idx = _posts.indexWhere((p) => p.id == post.id);
+      if (idx != -1) {
+        _posts[idx] = post.copyWith(isBookmarked: !post.isBookmarked);
+      }
+    });
+
+    try {
+      if (post.isBookmarked) {
+        await supa
+            .from('bookmarks')
+            .delete()
+            .match({'post_id': post.id, 'user_id': userId});
+      } else {
+        await supa
+            .from('bookmarks')
+            .insert({'post_id': post.id, 'user_id': userId});
+      }
+    } catch (e) {
+      // Rollback on error
+      setState(() {
+        final idx = _posts.indexWhere((p) => p.id == post.id);
+        if (idx != -1) {
+          _posts[idx] = post;
+        }
+      });
+    }
+  }
+
+  void _handleComment(Post post) {
+    HapticFeedback.lightImpact();
+    // Open post view modal focused on comments
+    if (post.profile != null) {
+      PostViewModal.show(context, post: post);
+    } else {
+      context.push('/post/${post.id}');
+    }
+  }
+
+  void _handleShare(Post post) {
+    HapticFeedback.lightImpact();
+    _showShareBottomSheet(context, post);
+  }
+
+  void _showShareBottomSheet(BuildContext context, Post post) {
+    final c = AlsamosColors.of(context);
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => _ShareBottomSheet(post: post, c: c),
     );
   }
 }
 
-class _ForYouTile extends StatefulWidget {
+class _ShareBottomSheet extends StatelessWidget {
   final Post post;
   final AlsamosColors c;
-  final Color primary;
-  final String Function(int) fmtCount;
-  final ValueChanged<Post> onUpdated;
-  const _ForYouTile({
-    required this.post,
-    required this.c,
-    required this.primary,
-    required this.fmtCount,
-    required this.onUpdated,
-  });
-  @override
-  State<_ForYouTile> createState() => _ForYouTileState();
-}
 
-class _ForYouTileState extends State<_ForYouTile> {
-  bool _hover = false;
-  VideoPlayerController? _videoCtrl;
+  const _ShareBottomSheet({required this.post, required this.c});
 
-  @override
-  void initState() {
-    super.initState();
-    _maybeInitVideo();
+  String _generatePostUrl(String postId) {
+    // Generate deep link for post
+    return 'https://alsamos.uz/post/$postId';
   }
 
-  @override
-  void didUpdateWidget(covariant _ForYouTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.post.id != widget.post.id ||
-        oldWidget.post.mediaUrls != widget.post.mediaUrls) {
-      _videoCtrl?.dispose();
-      _videoCtrl = null;
-      _maybeInitVideo();
+  Future<void> _shareToSystem(BuildContext context) async {
+    try {
+      final url = _generatePostUrl(post.id);
+      
+      // Using share_plus package
+      // final text = post.content != null && post.content!.isNotEmpty
+      //     ? '${post.content}\n\n$url'
+      //     : url;
+      // await Share.share(text, subject: 'Check out this post');
+      
+      // For now, copy to clipboard as fallback
+      await Clipboard.setData(ClipboardData(text: url));
+      
+      // Increment shares_count
+      await _incrementShareCount();
+      
+      if (context.mounted) {
+        AppToast.info(context, 'Havola nusxalandi');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        AppToast.error(context, 'Ulashilmadi');
+      }
     }
   }
 
-  void _maybeInitVideo() {
-    final p = widget.post;
-    if (p.mediaType != 'video' || p.mediaUrls.isEmpty) return;
-    final url = p.mediaUrls.first;
-    final ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
-    _videoCtrl = ctrl;
-    ctrl
-        .initialize()
-        .then((_) async {
-          await ctrl.setVolume(0);
-          await ctrl.setLooping(false);
-          // preload="metadata" parity: do NOT call play(); first frame stays.
-          if (mounted) setState(() {});
-        })
-        .catchError((_) {
-          if (mounted) {
-            _videoCtrl?.dispose();
-            _videoCtrl = null;
-            setState(() {});
-          }
-        });
-  }
-
-  @override
-  void dispose() {
-    _videoCtrl?.dispose();
-    super.dispose();
-  }
-
-  void _onTap() {
-    HapticFeedback.lightImpact();
-    final p = widget.post;
-    if (p.mediaType == 'video') {
-      context.push('/videos?v=${p.id}');
-      return;
+  Future<void> _copyLink(BuildContext context) async {
+    try {
+      final url = _generatePostUrl(post.id);
+      await Clipboard.setData(ClipboardData(text: url));
+      
+      if (context.mounted) {
+        AppToast.info(context, 'Havola nusxalandi');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        AppToast.error(context, 'Havolani nusxalab bo\'lmadi');
+      }
     }
-    if (p.profile != null) {
-      PostViewModal.show(
-        context,
-        post: p,
-        onLike: () {
-          widget.onUpdated(p.copyWith(
-            isLiked: !p.isLiked,
-            likesCount:
-                p.isLiked ? math.max(0, p.likesCount - 1) : p.likesCount + 1,
-          ));
-        },
-      );
-    } else {
-      context.push('/post/${p.id}');
+  }
+
+  Future<void> _incrementShareCount() async {
+    try {
+      final supa = Supabase.instance.client;
+      await supa.rpc('increment_post_shares', params: {'post_id': post.id});
+    } catch (e) {
+      print('Error incrementing share count: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.post;
-    final c = widget.c;
-    final primary = widget.primary;
-    final isVideo = p.mediaType == 'video';
-    final hasMedia = p.mediaUrls.isNotEmpty;
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: _onTap,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12), // rounded-xl
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildBase(p, c, primary, hasMedia, isVideo),
-              if (isVideo)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(LucideIcons.play,
-                        color: Colors.white, size: 12),
-                  ),
-                ),
-              // Hover gradient (from-black/60 → transparent)
-              IgnorePointer(
-                child: AnimatedOpacity(
-                  opacity: _hover ? 1 : 0,
-                  duration: const Duration(milliseconds: 150),
-                  child: const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [Color(0x99000000), Colors.transparent],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              // Hover stats (Heart, MessageCircle, Eye), gap-4 = 16
-              IgnorePointer(
-                child: AnimatedOpacity(
-                  opacity: _hover ? 1 : 0,
-                  duration: const Duration(milliseconds: 150),
-                  child: Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _StatPill(
-                            icon: LucideIcons.heart,
-                            text: widget.fmtCount(p.likesCount)),
-                        const SizedBox(width: 16),
-                        _StatPill(
-                            icon: LucideIcons.messageCircle,
-                            text: widget.fmtCount(p.commentsCount)),
-                        const SizedBox(width: 16),
-                        _StatPill(
-                            icon: LucideIcons.eye,
-                            text: widget.fmtCount(p.viewsCount)),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              // Bottom user info (hover only)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  child: AnimatedOpacity(
-                    opacity: _hover ? 1 : 0,
-                    duration: const Duration(milliseconds: 150),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Row(
-                        children: [
-                          UserAvatar(
-                            avatarUrl: p.profile?.avatarUrl,
-                            fallback: ((p.profile?.username?.isNotEmpty ?? false)
-                                    ? p.profile!.username!
-                                    : (p.profile?.displayName ?? 'U'))[0]
-                                .toUpperCase(),
-                            size: 24, // size="xs"
-                            backgroundColor: primary,
-                            userId: p.profile?.id,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '@${p.profile?.username ?? 'user'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBase(Post p, AlsamosColors c, Color primary, bool hasMedia,
-      bool isVideo) {
-    if (hasMedia && isVideo) {
-      final ctrl = _videoCtrl;
-      if (ctrl != null && ctrl.value.isInitialized) {
-        return FittedBox(
-          fit: BoxFit.cover,
-          child: SizedBox(
-            width: ctrl.value.size.width,
-            height: ctrl.value.size.height,
-            child: VideoPlayer(ctrl),
-          ),
-        );
-      }
-      // Video loading or failed — dark placeholder.
-      return Container(
-        color: c.muted,
-        alignment: Alignment.center,
-        child: Icon(LucideIcons.video,
-            color: c.mutedForeground.withValues(alpha: 0.5)),
-      );
-    }
-    if (hasMedia) {
-      return CachedNetworkImage(
-        imageUrl: p.mediaUrls.first,
-        fit: BoxFit.cover,
-        placeholder: (_, __) => Container(color: c.muted),
-        errorWidget: (_, __, ___) => Container(
-          color: c.muted,
-          alignment: Alignment.center,
-          child: Icon(LucideIcons.image,
-              color: c.mutedForeground.withValues(alpha: 0.5)),
-        ),
-      );
-    }
-    // No media — poll or text on gradient background
-    final (poll, cleanContent) = PollData.parseFromContent(p.content ?? '');
-    final bg = LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        primary.withValues(alpha: 0.20),
-        primary.withValues(alpha: 0.05),
-      ],
-    );
-    if (poll != null) {
-      return Container(
-        decoration: BoxDecoration(gradient: bg),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(16),
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(LucideIcons.barChart3, size: 32, color: primary),
-            const SizedBox(height: 8),
-            Text(
-              poll.question,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: c.foreground,
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: c.mutedForeground.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
               ),
+            ),
+            // Share options
+            _ShareOption(
+              icon: LucideIcons.share2,
+              label: 'Share',
+              onTap: () => _shareToSystem(context),
+              c: c,
+            ),
+            _ShareOption(
+              icon: LucideIcons.link,
+              label: 'Copy Link',
+              onTap: () => _copyLink(context),
+              c: c,
             ),
           ],
         ),
-      );
-    }
-    return Container(
-      decoration: BoxDecoration(gradient: bg),
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        cleanContent.isNotEmpty ? cleanContent : (p.content ?? ''),
-        maxLines: 4,
-        overflow: TextOverflow.ellipsis,
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 14, color: c.foreground),
       ),
     );
   }
 }
 
-class _StatPill extends StatelessWidget {
+class _ShareOption extends StatelessWidget {
   final IconData icon;
-  final String text;
-  const _StatPill({required this.icon, required this.text});
+  final String label;
+  final VoidCallback onTap;
+  final AlsamosColors c;
+
+  const _ShareOption({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.c,
+  });
+
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: Colors.white, size: 20),
-        const SizedBox(width: 4),
-        Text(text,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w500)),
-      ],
+    return ListTile(
+      leading: Icon(icon, color: c.foreground),
+      title: Text(label, style: TextStyle(color: c.foreground)),
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap();
+      },
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final AlsamosColors c;
+  final Color primary;
+  const _EmptyState({required this.c, required this.primary});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(48),
+      decoration: BoxDecoration(
+        color: c.muted.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.sparkles,
+              size: 48, color: c.mutedForeground.withValues(alpha: 0.5)),
+          const SizedBox(height: 16),
+          Text('No posts yet',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: c.foreground)),
+          const SizedBox(height: 8),
+          Text('Follow users or select interests to see personalized content',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: c.mutedForeground)),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () => context.go('/search'),
+            icon: const Icon(LucideIcons.search, size: 16),
+            label: const Text('Discover People'),
+            style: FilledButton.styleFrom(
+              backgroundColor: primary,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -571,26 +815,19 @@ class _ForYouSkeleton extends StatelessWidget {
                   color: c.foreground)),
         ]),
         const SizedBox(height: 16),
-        LayoutBuilder(builder: (ctx, constraints) {
-          final cols = constraints.maxWidth >= 768 ? 4 : 2;
-          return GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: cols,
-              childAspectRatio: 1,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 3,
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (_, __) => Container(
+            height: 200,
+            decoration: BoxDecoration(
+              color: c.muted,
+              borderRadius: BorderRadius.circular(12),
             ),
-            itemCount: 4,
-            itemBuilder: (_, __) => Container(
-              decoration: BoxDecoration(
-                color: c.muted,
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          );
-        }),
+          ),
+        ),
       ],
     );
   }

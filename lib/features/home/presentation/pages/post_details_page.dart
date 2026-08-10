@@ -4,9 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/content/widgets/universal_post_preview.dart';
 import '../../data/models/post_model.dart';
 import '../providers/posts_provider.dart';
-import '../widgets/post_card.dart';
 
 final postDetailsProvider =
     FutureProvider.autoDispose.family<Post?, String>((ref, postId) async {
@@ -21,76 +21,52 @@ class PostDetailsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final c = AlsamosColors.of(context);
     final asyncPost = ref.watch(postDetailsProvider(postId));
 
     return asyncPost.when(
-      loading: () => Center(
-        child: CircularProgressIndicator(
-          color: Theme.of(context).colorScheme.primary,
+      loading: () => Scaffold(
+        backgroundColor: AlsamosColors.of(context).background,
+        body: Center(
+          child: CircularProgressIndicator(
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
       ),
-      error: (error, _) => _PostDetailsMessage(
-        title: 'Post ochilmadi',
-        subtitle: error.toString(),
-        actionLabel: 'Bosh sahifaga qaytish',
-        onAction: () => context.go('/home'),
+      error: (error, _) => Scaffold(
+        backgroundColor: AlsamosColors.of(context).background,
+        body: _PostDetailsMessage(
+          title: 'Post ochilmadi',
+          subtitle: error.toString(),
+          actionLabel: 'Bosh sahifaga qaytish',
+          onAction: () => context.go('/home'),
+        ),
       ),
       data: (post) {
         if (post == null) {
-          return _PostDetailsMessage(
-            title: 'Post topilmadi',
-            subtitle: '/post/$postId',
-            actionLabel: 'Bosh sahifaga qaytish',
-            onAction: () => context.go('/home'),
+          return Scaffold(
+            backgroundColor: AlsamosColors.of(context).background,
+            body: _PostDetailsMessage(
+              title: 'Post topilmadi',
+              subtitle: '/post/$postId',
+              actionLabel: 'Bosh sahifaga qaytish',
+              onAction: () => context.go('/home'),
+            ),
           );
         }
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 48),
-          children: [
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 672),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () {
-                        if (context.canPop()) {
-                          context.pop();
-                        } else {
-                          context.go('/home');
-                        }
-                      },
-                      icon: Icon(LucideIcons.arrowLeft, color: c.foreground),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Post',
-                      style: TextStyle(
-                        color: c.foreground,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 672),
-                child: PostCard(
-                  post: post,
-                  onLike: () async {
-                    await ref.read(postsRepositoryProvider).toggleLike(post);
-                    ref.invalidate(postDetailsProvider(postId));
-                    ref.invalidate(postsProvider);
-                  },
-                ),
-              ),
-            ),
-          ],
+        return UniversalPostPreview(
+          post: post,
+          onLike: () async {
+            await ref.read(postsRepositoryProvider).toggleLike(post);
+            ref.invalidate(postDetailsProvider(postId));
+            ref.invalidate(postsProvider);
+          },
+          onDismiss: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
         );
       },
     );

@@ -22,4 +22,27 @@ class ApiConstants {
     'API_BASE_URL',
     defaultValue: 'https://api.alsamos.com',
   );
+
+  static void validate({
+    String url = supabaseUrl,
+    String anonKey = supabaseAnonKey,
+  }) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !uri.hasScheme ||
+        uri.scheme != 'https' ||
+        uri.host.isEmpty ||
+        !uri.host.endsWith('.supabase.co')) {
+      throw StateError(
+        'Invalid SUPABASE_URL. Expected https://<project-ref>.supabase.co',
+      );
+    }
+
+    final jwtParts = anonKey.split('.');
+    if (jwtParts.length != 3 || anonKey.length < 80) {
+      throw StateError(
+        'Invalid SUPABASE_ANON_KEY. Provide the public anon key with --dart-define.',
+      );
+    }
+  }
 }

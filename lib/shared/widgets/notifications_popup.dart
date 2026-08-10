@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../app/theme/app_colors.dart';
+import '../stories/story_avatar_ring.dart';
 
 class NotificationPopupItem {
   const NotificationPopupItem({
@@ -8,6 +9,7 @@ class NotificationPopupItem {
     required this.title,
     required this.subtitle,
     this.avatarUrl,
+    this.userId,
     required this.createdAt,
   });
 
@@ -15,6 +17,7 @@ class NotificationPopupItem {
   final String title;
   final String subtitle;
   final String? avatarUrl;
+  final String? userId;
   final DateTime createdAt;
 }
 
@@ -195,16 +198,14 @@ class _Body extends StatelessWidget {
                     final it = items[i];
                     return ListTile(
                       dense: true,
-                      leading: CircleAvatar(
-                        backgroundColor:
-                            AppColors.alsamosOrange.withValues(alpha: 0.15),
-                        backgroundImage: (it.avatarUrl ?? '').isNotEmpty
-                            ? NetworkImage(it.avatarUrl!)
-                            : null,
-                        child: (it.avatarUrl ?? '').isEmpty
-                            ? const Icon(LucideIcons.bell,
-                                size: 18, color: AppColors.alsamosOrange)
-                            : null,
+                      leading: StoryAvatarRing(
+                        userId: it.userId,
+                        avatarUrl: it.avatarUrl,
+                        fallback: it.title.isNotEmpty
+                            ? it.title[0].toUpperCase()
+                            : '?',
+                        size: 34,
+                        ringPadding: 3,
                       ),
                       title: Text(
                         it.title,

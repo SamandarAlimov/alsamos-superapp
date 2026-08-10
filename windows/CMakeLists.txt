@@ -2,6 +2,9 @@
 cmake_minimum_required(VERSION 3.14)
 project(Alsamos LANGUAGES CXX)
 
+# Suppress deprecation warnings from third-party SDK CMakeLists (e.g. Firebase C++ SDK)
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "Alsamos")

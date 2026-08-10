@@ -8,6 +8,7 @@ class SupabaseService {
   SupabaseService._();
 
   static Future<void> init() async {
+    ApiConstants.validate();
     await Supabase.initialize(
       url: ApiConstants.supabaseUrl,
       // ignore: deprecated_member_use

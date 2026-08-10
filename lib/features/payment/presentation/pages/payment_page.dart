@@ -8,6 +8,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/widgets/state_views.dart';
 import '../../data/payment_models.dart';
 import '../providers/payment_provider.dart';
 import '../widgets/wallet_card.dart';
@@ -21,6 +22,7 @@ import '../widgets/transfer_dialog.dart';
 import '../widgets/my_cards_sheet.dart';
 import '../widgets/cashback_referral_dialogs.dart';
 import '../widgets/qr_scan_dialog.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// Pixel-perfect port of web `PaymentSettingsPage.tsx` (340 lines).
 ///
@@ -45,9 +47,9 @@ class _PaymentPageState extends ConsumerState<PaymentPage>
     with TickerProviderStateMixin {
   late final TabController _outer = TabController(length: 3, vsync: this);
   late final TabController _history = TabController(length: 3, vsync: this);
-  late final AnimationController _refreshSpin =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
-        ..repeat();
+  late final AnimationController _refreshSpin = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 900))
+    ..repeat();
   bool _refreshing = false;
 
   @override
@@ -71,10 +73,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage>
 
   void _soon(String name) {
     HapticFeedback.selectionClick();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('$name tez orada ishga tushadi'),
-      duration: const Duration(seconds: 2),
-    ));
+    AppToast.info(context, '$name tez orada ishga tushadi');
   }
 
   String _fmt(double amount, String currency) {
@@ -92,16 +91,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage>
     if (state.isLoading) {
       return Scaffold(
         backgroundColor: c.background,
-        body: const Center(
-          child: SizedBox(
-            width: 32,
-            height: 32,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.4,
-              valueColor: AlwaysStoppedAnimation(AppColors.alsamosOrange),
-            ),
-          ),
-        ),
+        body: const LoadingView(label: 'Toʻlov maʼlumotlari yuklanmoqda...'),
       );
     }
 
@@ -185,61 +175,66 @@ class _PaymentPageState extends ConsumerState<PaymentPage>
   }
 
   Widget _historyTab(AlsamosColors c, PaymentState state, String currency) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(
-        children: [
-          Container(
-            height: 40,
-            decoration: BoxDecoration(
-              color: c.muted.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: TabBar(
-              controller: _history,
-              indicator: BoxDecoration(
-                color: c.background,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: c.border),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 672),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Column(
+            children: [
+              Container(
+                height: 40,
+                decoration: BoxDecoration(
+                  color: c.muted.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: TabBar(
+                  controller: _history,
+                  indicator: BoxDecoration(
+                    color: c.background,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: c.border),
+                  ),
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicatorPadding: const EdgeInsets.all(3),
+                  dividerColor: Colors.transparent,
+                  labelColor: c.foreground,
+                  unselectedLabelColor: c.mutedForeground,
+                  labelStyle: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600),
+                  tabs: const [
+                    Tab(text: 'Barchasi'),
+                    Tab(text: 'Kirimlar'),
+                    Tab(text: 'Chiqimlar'),
+                  ],
+                ),
               ),
-              indicatorSize: TabBarIndicatorSize.tab,
-              indicatorPadding: const EdgeInsets.all(3),
-              dividerColor: Colors.transparent,
-              labelColor: c.foreground,
-              unselectedLabelColor: c.mutedForeground,
-              labelStyle:
-                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              tabs: const [
-                Tab(text: 'Barchasi'),
-                Tab(text: 'Kirimlar'),
-                Tab(text: 'Chiqimlar'),
-              ],
-            ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: TabBarView(
+                  controller: _history,
+                  children: [
+                    _TransactionList(
+                      transactions: state.transactions,
+                      currency: currency,
+                      fmt: _fmt,
+                    ),
+                    _TransactionList(
+                      transactions: state.incoming,
+                      currency: currency,
+                      fmt: _fmt,
+                    ),
+                    _TransactionList(
+                      transactions: state.outgoing,
+                      currency: currency,
+                      fmt: _fmt,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: TabBarView(
-              controller: _history,
-              children: [
-                _TransactionList(
-                  transactions: state.transactions,
-                  currency: currency,
-                  fmt: _fmt,
-                ),
-                _TransactionList(
-                  transactions: state.incoming,
-                  currency: currency,
-                  fmt: _fmt,
-                ),
-                _TransactionList(
-                  transactions: state.outgoing,
-                  currency: currency,
-                  fmt: _fmt,
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -388,10 +383,13 @@ class _FinanceSection extends StatelessWidget {
           child: Column(
             children: [
               for (int i = 0; i < items.length; i++) ...[
-                _financeRow(c, items[i].$1, items[i].$2,
-                    () => onTap(items[i].$2)),
+                _financeRow(
+                    c, items[i].$1, items[i].$2, () => onTap(items[i].$2)),
                 if (i < items.length - 1)
-                  Divider(height: 1, color: c.border.withValues(alpha: 0.5), indent: 56),
+                  Divider(
+                      height: 1,
+                      color: c.border.withValues(alpha: 0.5),
+                      indent: 56),
               ],
             ],
           ),
@@ -426,8 +424,7 @@ class _FinanceSection extends StatelessWidget {
                       fontSize: 14,
                       fontWeight: FontWeight.w500)),
             ),
-            Icon(LucideIcons.chevronRight,
-                size: 16, color: c.mutedForeground),
+            Icon(LucideIcons.chevronRight, size: 16, color: c.mutedForeground),
           ]),
         ),
       ),
@@ -489,9 +486,8 @@ class _TransactionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final inbound = tx.isIncoming;
-    final amountColor = inbound
-        ? const Color(0xFF22C55E)
-        : const Color(0xFFEF4444);
+    final amountColor =
+        inbound ? const Color(0xFF22C55E) : const Color(0xFFEF4444);
     final statusColor = _statusColor(tx.status, c);
 
     return Material(
@@ -507,7 +503,8 @@ class _TransactionTile extends StatelessWidget {
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
             ),
-            builder: (_) => _TxDetailsSheet(tx: tx, currency: currency, fmt: fmt),
+            builder: (_) =>
+                _TxDetailsSheet(tx: tx, currency: currency, fmt: fmt),
           );
         },
         child: Container(
@@ -533,6 +530,8 @@ class _TransactionTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(tx.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: c.foreground,
                           fontSize: 14,
@@ -541,7 +540,8 @@ class _TransactionTile extends StatelessWidget {
                   Text(
                     tx.description != null && tx.description!.isNotEmpty
                         ? tx.description!
-                        : DateFormat('dd MMM, yyyy • HH:mm').format(tx.createdAt),
+                        : DateFormat('dd MMM, yyyy • HH:mm')
+                            .format(tx.createdAt),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: c.mutedForeground, fontSize: 12),
@@ -550,27 +550,33 @@ class _TransactionTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${inbound ? '+' : '-'}${fmt(tx.amount.abs(), currency)}',
-                  style: TextStyle(
-                      color: amountColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 2),
-                Text(tx.statusLabel,
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${inbound ? '+' : '-'}${fmt(tx.amount.abs(), currency)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
                     style: TextStyle(
-                        color: statusColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500)),
-              ],
+                        color: amountColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(tx.statusLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: statusColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500)),
+                ],
+              ),
             ),
             const SizedBox(width: 6),
-            Icon(LucideIcons.chevronRight,
-                size: 14, color: c.mutedForeground),
+            Icon(LucideIcons.chevronRight, size: 14, color: c.mutedForeground),
           ]),
         ),
       ),
@@ -605,9 +611,8 @@ class _TxDetailsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final inbound = tx.isIncoming;
-    final amountColor = inbound
-        ? const Color(0xFF22C55E)
-        : const Color(0xFFEF4444);
+    final amountColor =
+        inbound ? const Color(0xFF22C55E) : const Color(0xFFEF4444);
     return SafeArea(
       top: false,
       child: Padding(
@@ -630,9 +635,12 @@ class _TxDetailsSheet extends StatelessWidget {
               child: Container(
                 width: 56,
                 height: 56,
-                decoration: BoxDecoration(color: c.muted, shape: BoxShape.circle),
+                decoration:
+                    BoxDecoration(color: c.muted, shape: BoxShape.circle),
                 child: Icon(
-                  inbound ? LucideIcons.arrowDownLeft : LucideIcons.arrowUpRight,
+                  inbound
+                      ? LucideIcons.arrowDownLeft
+                      : LucideIcons.arrowUpRight,
                   size: 26,
                   color: amountColor,
                 ),
@@ -660,7 +668,8 @@ class _TxDetailsSheet extends StatelessWidget {
             _row(c, 'Status', tx.statusLabel),
             if (tx.description != null && tx.description!.isNotEmpty)
               _row(c, 'Izoh', tx.description!),
-            _row(c, 'ID', tx.id.length > 10 ? '${tx.id.substring(0, 10)}…' : tx.id),
+            _row(c, 'ID',
+                tx.id.length > 10 ? '${tx.id.substring(0, 10)}…' : tx.id),
           ],
         ),
       ),
@@ -675,8 +684,7 @@ class _TxDetailsSheet extends StatelessWidget {
             SizedBox(
               width: 72,
               child: Text(k,
-                  style:
-                      TextStyle(color: c.mutedForeground, fontSize: 13)),
+                  style: TextStyle(color: c.mutedForeground, fontSize: 13)),
             ),
             Expanded(
               child: Text(v,

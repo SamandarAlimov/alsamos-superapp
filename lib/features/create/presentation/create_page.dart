@@ -1,35 +1,68 @@
+import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:easy_video_editor/easy_video_editor.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../core/responsive/breakpoints.dart';
 import '../../auth/presentation/providers/auth_provider.dart';
-import '../../../shared/widgets/user_avatar.dart';
-import '../data/create_repository.dart';
+import '../../../shared/content/data/content_post_repository.dart';
+import '../../../shared/content/models/content_item.dart';
+import '../../../shared/content/models/content_media.dart';
+import '../../../shared/services/camera_capability.dart';
+import '../../../shared/stories/story_avatar_ring.dart';
+import '../../../shared/stories/story_presence_controller.dart';
+import '../data/create_collaboration_repository.dart';
+import '../data/create_product_tag_repository.dart';
+import '../data/models/create_collaborator.dart';
+import '../data/models/create_product_tag.dart';
+import '../data/upload/create_media_upload_manifest.dart';
+import '../data/upload/create_media_upload_progress.dart';
+import '../data/upload/create_media_upload_service.dart';
 import 'widgets/schedule_post_dialog.dart';
 import 'widgets/poll_creator.dart';
 import 'widgets/music_picker.dart';
-import 'pages/live_stream_page.dart';
+import 'widgets/create_location_picker_sheet.dart';
+import 'widgets/create_collaborator_picker.dart';
+import 'widgets/create_media_preview_stage.dart';
+import 'widgets/create_product_tag_picker.dart';
+import 'widgets/publish_progress_banner.dart';
+import 'widgets/create_video_edit_sheet.dart';
+import 'widgets/create_live_tab.dart';
+import 'widgets/create_post_tab.dart';
+import 'widgets/create_reel_tab.dart';
+import 'widgets/create_story_tab.dart';
+import '../../../shared/widgets/app_toast.dart';
+import '../../../shared/widgets/error_mapper.dart';
+import '../../map/presentation/providers/location_provider.dart';
+import '../../live/presentation/widgets/live_stream_broadcast.dart';
+import '../../stories/presentation/providers/stories_provider.dart';
 
-final createRepositoryProvider = Provider((ref) => const CreateRepository());
+final contentPostRepositoryProvider =
+    Provider((ref) => ContentPostRepository());
+final createCollaborationRepositoryProvider =
+    Provider((ref) => const CreateCollaborationRepository());
+final createProductTagRepositoryProvider =
+    Provider((ref) => const CreateProductTagRepository());
+final createMediaUploadServiceProvider =
+    Provider((ref) => CreateMediaUploadService());
 
 enum _Tab { post, story, reel, live }
 
-class _AspectPreset {
-  final String id;
-  final String label;
-  final double? ratio;
-  final IconData icon;
-
-  const _AspectPreset(this.id, this.label, this.ratio, this.icon);
+class _CreatePublishCancelled implements Exception {
+  const _CreatePublishCancelled();
 }
 
 // File attachment model for all file types
@@ -157,62 +190,119 @@ class _FileAttachment {
 
 /// Professional Instagram/YouTube style Create Page
 class CreatePage extends ConsumerStatefulWidget {
-  const CreatePage({super.key});
+  const CreatePage({super.key, this.editPostId, this.editData});
+
+  final String? editPostId;
+  final Map<String, dynamic>? editData;
+
+  bool get isEditing => editPostId != null;
+
   @override
   ConsumerState<CreatePage> createState() => _CreatePageState();
 }
 
 class _CreatePageState extends ConsumerState<CreatePage> {
   final _content = TextEditingController();
+  final _contentFocusNode = FocusNode();
   final _location = TextEditingController();
   final _tagInput = TextEditingController();
+  final _storyMentionSearch = TextEditingController();
   _Tab _tab = _Tab.post;
   String _visibility = 'public';
   final List<String> _tags = [];
+  final List<CreateCollaborator> _collaborators = [];
+  final List<CreateProductTag> _productTags = [];
+  ContentLocation? _selectedLocation;
   final List<_FileAttachment> _files = [];
   final List<XFile> _mediaFiles = []; // For quick image/video picker
   int _currentMediaIndex = 0;
   String _aspectPresetId = 'original';
   bool _submitting = false;
+  int _publishUploadDone = 0;
+  int _publishUploadTotal = 0;
+  String? _publishUploadStatus;
+  bool _publishUploadFailed = false;
+  CreateMediaUploadManifest? _mediaUploadManifest;
+  String? _mediaUploadManifestKey;
+  CreateMediaUploadCancelToken? _mediaUploadCancelToken;
+  bool _locatingForPost = false;
+  bool _videoExporting = false;
+  double _videoExportProgress = 0;
   DateTime? _scheduledAt;
   Map<String, dynamic>? _poll;
-  String? _musicTrack;
+  MusicTrack? _musicTrack;
   bool _liveChatEnabled = true;
   bool _liveReactionsEnabled = true;
   bool _liveRecordingEnabled = false;
   // Story-only state
   Color _storyBg = const Color(0xFFF97316);
-  static const _storyPalette = [
-    Color(0xFFF97316),
-    Color(0xFFEF4444),
-    Color(0xFFEC4899),
-    Color(0xFF8B5CF6),
-    Color(0xFF3B82F6),
-    Color(0xFF06B6D4),
-    Color(0xFF22C55E),
-    Color(0xFFEAB308),
-    Color(0xFF111827),
-  ];
+  double _storyTextSize = 28;
+  String _storyFont = 'bold';
+  TextAlign _storyTextAlign = TextAlign.center;
+  Offset _storyTextPosition = const Offset(0.5, 0.52);
+  final List<String> _storyMentions = [];
+  bool get _usesDesktopPickers =>
+      CameraCapability.shouldUseFilePickerForGallery;
 
-  static const _aspectPresets = <_AspectPreset>[
-    _AspectPreset('original', 'Original', null, LucideIcons.maximize2),
-    _AspectPreset('1:1', '1:1', 1, LucideIcons.square),
-    _AspectPreset('4:5', '4:5', 4 / 5, LucideIcons.rectangleVertical),
-    _AspectPreset('3:4', '3:4', 3 / 4, LucideIcons.rectangleVertical),
-    _AspectPreset('16:9', '16:9', 16 / 9, LucideIcons.rectangleHorizontal),
-    _AspectPreset('9:16', '9:16', 9 / 16, LucideIcons.smartphone),
-  ];
+  bool get _isEditing => widget.isEditing;
 
-  _AspectPreset get _selectedAspect => _aspectPresets.firstWhere(
-        (p) => p.id == _aspectPresetId,
-        orElse: () => _aspectPresets.first,
-      );
+  @override
+  void initState() {
+    super.initState();
+    if (_isEditing) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadEditData());
+    }
+  }
+
+  Future<void> _loadEditData() async {
+    final data = widget.editData;
+    if (data != null) {
+      _populateFromEditData(data);
+      return;
+    }
+    final postId = widget.editPostId;
+    if (postId == null) return;
+    try {
+      final post =
+          await ref.read(contentPostRepositoryProvider).fetchPostById(postId);
+      if (post == null || !mounted) return;
+      _populateFromEditData(post.toEditMap());
+    } catch (e) {
+      if (mounted) AppToast.error(context, friendlyError(e));
+    }
+  }
+
+  void _populateFromEditData(Map<String, dynamic> data) {
+    setState(() {
+      _content.text = (data['content'] as String?) ?? '';
+      final tags = data['hashtags'] ?? data['tags'];
+      if (tags is List) {
+        _tags
+          ..clear()
+          ..addAll(tags.map((t) => t.toString()));
+      }
+      _visibility = (data['visibility'] as String?) ?? 'public';
+      final locationName = data['location_name'] as String?;
+      if (locationName != null && locationName.isNotEmpty) {
+        _location.text = locationName;
+        _selectedLocation = ContentLocation(
+          latitude: (data['location_lat'] as num?)?.toDouble() ?? 0,
+          longitude: (data['location_lng'] as num?)?.toDouble() ?? 0,
+          name: locationName,
+          address: data['location_address'] as String?,
+          geohash: data['location_geohash'] as String?,
+        );
+      }
+    });
+  }
 
   @override
   void dispose() {
     _content.dispose();
+    _contentFocusNode.dispose();
     _location.dispose();
     _tagInput.dispose();
+    _storyMentionSearch.dispose();
     super.dispose();
   }
 
@@ -250,30 +340,119 @@ class _CreatePageState extends ConsumerState<CreatePage> {
 
   // Pick image/video (quick picker for media)
   Future<void> _pickMedia({bool video = false}) async {
-    final picker = ImagePicker();
-    if (video) {
-      final v = await picker.pickVideo(source: ImageSource.gallery);
-      if (v != null) {
-        setState(() {
-          if (_tab != _Tab.post) _mediaFiles.clear();
-          if (_mediaFiles.length < 10) {
-            _mediaFiles.add(v);
-            _currentMediaIndex = _mediaFiles.length - 1;
+    try {
+      if (_usesDesktopPickers) {
+        final result = await FilePicker.pickFiles(
+          type: FileType.custom,
+          allowMultiple: _tab == _Tab.post && !video,
+          withData: false,
+          allowedExtensions: video
+              ? const ['mp4', 'mov', 'webm', 'm4v', 'avi', 'mkv']
+              : const ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+        );
+        if (result == null || result.files.isEmpty) return;
+        final picked = result.files
+            .where((f) => f.path != null && f.path!.isNotEmpty)
+            .map((f) => XFile(f.path!, name: f.name))
+            .toList();
+        if (picked.isEmpty) {
+          if (mounted) {
+            AppToast.error(context, 'Faylni o‘qib bo‘lmadi');
           }
-        });
-      }
-    } else {
-      final imgs = await picker.pickMultiImage(imageQuality: 85);
-      if (imgs.isNotEmpty) {
+          return;
+        }
         setState(() {
-          if (_tab != _Tab.post) _mediaFiles.clear();
-          for (final img in imgs) {
-            if (_mediaFiles.length < 10) {
-              _mediaFiles.add(img);
-              _currentMediaIndex = _mediaFiles.length - 1;
+          if (_tab != _Tab.post) {
+            _mediaFiles
+              ..clear()
+              ..add(picked.first);
+            _currentMediaIndex = 0;
+          } else {
+            for (final media in picked) {
+              if (_mediaFiles.length < 10) {
+                _mediaFiles.add(media);
+                _currentMediaIndex = _mediaFiles.length - 1;
+              }
             }
           }
         });
+        return;
+      }
+
+      final picker = ImagePicker();
+      if (video) {
+        final v = await picker.pickVideo(source: ImageSource.gallery);
+        if (v != null) {
+          setState(() {
+            if (_tab != _Tab.post) {
+              _mediaFiles
+                ..clear()
+                ..add(v);
+              _currentMediaIndex = 0;
+            } else if (_mediaFiles.length < 10) {
+              _mediaFiles.add(v);
+              _currentMediaIndex = _mediaFiles.length - 1;
+            }
+          });
+        }
+      } else {
+        final imgs = await picker.pickMultiImage(imageQuality: 85);
+        if (imgs.isEmpty) return;
+        setState(() {
+          if (_tab != _Tab.post) {
+            _mediaFiles
+              ..clear()
+              ..add(imgs.first);
+            _currentMediaIndex = 0;
+          } else {
+            for (final img in imgs) {
+              if (_mediaFiles.length < 10) {
+                _mediaFiles.add(img);
+                _currentMediaIndex = _mediaFiles.length - 1;
+              }
+            }
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        AppToast.error(context, 'Media tanlab bo‘lmadi', error: e);
+      }
+    }
+  }
+
+  Future<void> _pickStoryCamera({bool video = false}) async {
+    if (_usesDesktopPickers) {
+      AppToast.warning(
+        context,
+        CameraCapability.unsupportedCaptureMessage,
+      );
+      await _pickMedia(video: video);
+      return;
+    }
+    final picker = ImagePicker();
+    try {
+      final XFile? picked = video
+          ? await picker.pickVideo(
+              source: ImageSource.camera,
+              maxDuration: const Duration(seconds: 60),
+            )
+          : await picker.pickImage(
+              source: ImageSource.camera,
+              imageQuality: 88,
+              preferredCameraDevice: CameraDevice.rear,
+            );
+      if (picked == null) return;
+      setState(() {
+        _mediaFiles
+          ..clear()
+          ..add(picked);
+        _currentMediaIndex = 0;
+        _aspectPresetId = '9:16';
+      });
+    } catch (e) {
+      if (mounted) {
+        AppToast.error(context, 'Kamerani ochib bo‘lmadi', error: e);
       }
     }
   }
@@ -286,6 +465,148 @@ class _CreatePageState extends ConsumerState<CreatePage> {
         }
       });
   void _removeFile(int i) => setState(() => _files.removeAt(i));
+
+  bool get _supportsNativeImageEditor =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  bool get _supportsNativeVideoEditor =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  Future<void> _editCurrentMedia() async {
+    if (_mediaFiles.isEmpty) return;
+    final index = _currentMediaIndex.clamp(0, _mediaFiles.length - 1).toInt();
+    final file = _mediaFiles[index];
+    if (_isVideoPath(file.path)) {
+      await _editCurrentVideo(index, file);
+      return;
+    }
+    if (!_isImagePath(file.path)) {
+      AppToast.warning(context, 'Bu fayl turini tahrirlab bo\'lmaydi');
+      return;
+    }
+    if (!_supportsNativeImageEditor) {
+      AppToast.warning(
+        context,
+        'Desktopda rasm tahriri uchun hozir aspect tugmalaridan foydalaning',
+      );
+      return;
+    }
+    try {
+      final primary = Theme.of(context).colorScheme.primary;
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: file.path,
+        compressQuality: 92,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Media editor',
+            toolbarColor: primary,
+            toolbarWidgetColor: Colors.white,
+            activeControlsWidgetColor: primary,
+            lockAspectRatio: false,
+          ),
+          IOSUiSettings(
+            title: 'Media editor',
+            aspectRatioLockEnabled: false,
+          ),
+          WebUiSettings(
+            context: context,
+            presentStyle: WebPresentStyle.dialog,
+            size: const CropperSize(width: 900, height: 620),
+          ),
+        ],
+      );
+      if (cropped == null || !mounted) return;
+      setState(() {
+        _mediaFiles[index] = XFile(cropped.path, name: file.name);
+        _currentMediaIndex = index;
+      });
+      AppToast.success(context, 'Rasm tahrirlandi');
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(context, 'Rasmni tahrirlab bo\'lmadi', error: error);
+      }
+    }
+  }
+
+  Future<void> _editCurrentVideo(int index, XFile file) async {
+    if (!_supportsNativeVideoEditor) {
+      AppToast.warning(
+        context,
+        'Video editor Android/iOS qurilmalarda real export qiladi',
+      );
+      return;
+    }
+    if (_videoExporting) return;
+
+    final result = await showModalBottomSheet<VideoEditResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CreateVideoEditSheet(path: file.path),
+    );
+    if (result == null || !mounted) return;
+
+    try {
+      setState(() {
+        _videoExporting = true;
+        _videoExportProgress = 0;
+      });
+
+      final editor = VideoEditorBuilder(videoPath: file.path);
+      if (result.trimChanged) {
+        editor.trim(
+          startTimeMs: result.start.inMilliseconds,
+          endTimeMs: result.end.inMilliseconds,
+        );
+      }
+      if (result.aspectRatio != null) {
+        editor.crop(aspectRatio: result.aspectRatio!);
+      }
+      if (result.speed != 1) {
+        editor.speed(speed: result.speed);
+      }
+      if (result.mute) {
+        editor.removeAudio();
+      }
+      if (result.compress) {
+        editor.compress(resolution: VideoResolution.p720);
+      }
+
+      final outputPath = await editor.export(
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() => _videoExportProgress = progress);
+          }
+        },
+      );
+      if (!mounted) return;
+      if (outputPath == null || outputPath.isEmpty) {
+        AppToast.error(context, 'Videoni tahrirlab bo\'lmadi');
+        return;
+      }
+      setState(() {
+        _mediaFiles[index] = XFile(outputPath, name: file.name);
+        _currentMediaIndex = index;
+      });
+      AppToast.success(context, 'Video tahrirlandi');
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(context, 'Videoni tahrirlab bo\'lmadi', error: error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _videoExporting = false;
+          _videoExportProgress = 0;
+        });
+      }
+    }
+  }
 
   void _selectTab(_Tab tab) {
     setState(() {
@@ -318,38 +639,228 @@ class _CreatePageState extends ConsumerState<CreatePage> {
     }
   }
 
-  Future<List<String>> _uploadMedia(String userId) async {
-    final supabase = Supabase.instance.client;
-    final storage = supabase.storage.from('message-attachments');
-    final urls = <String>[];
-    for (final xf in _mediaFiles) {
-      final file = File(xf.path);
-      final ext = xf.path.split('.').last;
-      final path =
-          '$userId/post-${DateTime.now().millisecondsSinceEpoch}-${urls.length}.$ext';
-      if (await file.exists()) {
-        await storage.upload(path, file);
-      } else {
-        await storage.uploadBinary(path, await xf.readAsBytes());
-      }
-      urls.add(storage.getPublicUrl(path));
+  void _beginPublishProgress(int total, {int done = 0}) {
+    if (!mounted) return;
+    setState(() {
+      _publishUploadDone = done;
+      _publishUploadTotal = total;
+      _publishUploadStatus = total > 0
+          ? done > 0
+              ? 'Yuklash davom ettirilmoqda...'
+              : 'Fayllar tayyorlanmoqda...'
+          : 'Post tayyorlanmoqda...';
+      _publishUploadFailed = false;
+    });
+  }
+
+  void _setPublishProgress({
+    required String status,
+    int? done,
+    int? total,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      if (done != null) _publishUploadDone = done;
+      if (total != null) _publishUploadTotal = total;
+      _publishUploadStatus = status;
+      _publishUploadFailed = false;
+    });
+  }
+
+  void _markPublishFailed() {
+    if (!mounted) return;
+    setState(() {
+      _publishUploadFailed = true;
+      _publishUploadStatus = 'Yuklash yakunlanmadi. Qayta urinib ko\'ring.';
+    });
+  }
+
+  void _markPublishCancelled() {
+    if (!mounted) return;
+    setState(() {
+      _publishUploadFailed = true;
+      _publishUploadStatus = 'Yuklash to\'xtatildi. Tayyor fayllar saqlandi.';
+    });
+  }
+
+  void _clearPublishProgress() {
+    if (!mounted) return;
+    setState(() {
+      _publishUploadDone = 0;
+      _publishUploadTotal = 0;
+      _publishUploadStatus = null;
+      _publishUploadFailed = false;
+    });
+  }
+
+  void _cancelPublish() {
+    final token = _mediaUploadCancelToken;
+    if (token == null || token.isCancelled) return;
+    token.cancel();
+    _setPublishProgress(
+      status: 'Joriy fayl tugagach yuklash to\'xtaydi...',
+    );
+  }
+
+  String _buildUploadManifestKey() {
+    final mediaLimit = _tab == _Tab.story ? 1 : _mediaFiles.length;
+    final media = _mediaFiles.take(mediaLimit).map((file) => {
+          'path': file.path,
+          'name': file.name,
+        });
+    final files = _files.map((file) => {
+          'path': file.path,
+          'name': file.name,
+          'size': file.sizeBytes,
+          'bytes': file.bytes == null ? null : identityHashCode(file.bytes),
+        });
+    final music = _musicTrack;
+    return jsonEncode({
+      'media': media.toList(growable: false),
+      'files': files.toList(growable: false),
+      if (music?.isLocal ?? false)
+        'music': {
+          'id': music!.id,
+          'path': music.localPath,
+          'name': music.fileName,
+          'size': music.sizeBytes,
+          'bytes': music.localBytes == null
+              ? null
+              : identityHashCode(music.localBytes),
+        },
+    });
+  }
+
+  CreateMediaUploadManifest _prepareUploadManifest(String userId) {
+    final key = _buildUploadManifestKey();
+    final existing = _mediaUploadManifest;
+    if (_mediaUploadManifestKey == key &&
+        existing != null &&
+        existing.userId == userId) {
+      return existing;
     }
-    // Also upload all other files
-    for (final fa in _files) {
-      final file = fa.path == null ? null : File(fa.path!);
-      final ext = fa.extension.isEmpty ? 'bin' : fa.extension;
-      final path =
-          '$userId/post-${DateTime.now().millisecondsSinceEpoch}-${urls.length}.$ext';
-      if (file != null && await file.exists()) {
-        await storage.upload(path, file);
-      } else if (fa.bytes != null) {
-        await storage.uploadBinary(path, fa.bytes!);
-      } else {
-        continue;
-      }
-      urls.add(storage.getPublicUrl(path));
+
+    final items = <CreateMediaUploadItem>[];
+    final mediaLimit = _tab == _Tab.story ? 1 : _mediaFiles.length;
+    final media = _mediaFiles.take(mediaLimit).toList(growable: false);
+    for (var index = 0; index < media.length; index++) {
+      items.add(CreateMediaUploadItem.fromXFile(
+        media[index],
+        id: 'media-$index',
+      ));
     }
-    return urls;
+    for (var index = 0; index < _files.length; index++) {
+      final attachment = _files[index];
+      if (attachment.path != null) {
+        items.add(CreateMediaUploadItem.fromFilePath(
+          attachment.path!,
+          id: 'file-$index',
+          name: attachment.name,
+          extension: attachment.extension,
+        ));
+      } else if (attachment.bytes != null) {
+        items.add(CreateMediaUploadItem.fromBytes(
+          attachment.bytes!,
+          id: 'file-$index',
+          name: attachment.name,
+          extension: attachment.extension,
+        ));
+      }
+    }
+
+    final music = _musicTrack;
+    if (music?.isLocal ?? false) {
+      final extension =
+          music!.extension?.isNotEmpty == true ? music.extension! : 'mp3';
+      final name = music.fileName?.isNotEmpty == true
+          ? music.fileName!
+          : '${music.title}.$extension';
+      if (music.localPath != null) {
+        items.add(CreateMediaUploadItem.fromFilePath(
+          music.localPath!,
+          id: 'music',
+          name: name,
+          extension: extension,
+          storagePrefix: 'music',
+        ));
+      } else if (music.localBytes != null) {
+        items.add(CreateMediaUploadItem.fromBytes(
+          music.localBytes!,
+          id: 'music',
+          name: name,
+          extension: extension,
+          storagePrefix: 'music',
+        ));
+      } else {
+        throw StateError('Tanlangan musiqa faylini o\'qib bo\'lmadi');
+      }
+    }
+
+    final manifest = CreateMediaUploadManifest(userId: userId, items: items);
+    _mediaUploadManifest = manifest;
+    _mediaUploadManifestKey = key;
+    return manifest;
+  }
+
+  Future<CreateMediaUploadManifest> _uploadPublishAssets(
+    CreateMediaUploadManifest manifest,
+  ) async {
+    final cancelToken = CreateMediaUploadCancelToken();
+    _mediaUploadCancelToken = cancelToken;
+    late final CreateMediaUploadManifest result;
+    try {
+      result = await ref.read(createMediaUploadServiceProvider).uploadManifest(
+            manifest,
+            cancelToken: cancelToken,
+            onProgress: _handleUploadProgress,
+          );
+    } finally {
+      _mediaUploadCancelToken = null;
+    }
+    _mediaUploadManifest = result;
+    if (cancelToken.isCancelled && !result.isComplete) {
+      throw const _CreatePublishCancelled();
+    }
+    if (result.hasFailures || !result.isComplete) {
+      throw StateError('Bir yoki bir nechta fayl yuklanmadi');
+    }
+    return result;
+  }
+
+  void _handleUploadProgress(CreateMediaUploadProgress progress) {
+    final label = progress.itemId == 'music'
+        ? 'Musiqa'
+        : progress.itemId.startsWith('file-')
+            ? 'Fayl'
+            : 'Media';
+    final status = switch (progress.status) {
+      CreateMediaUploadProgressStatus.started => '$label yuklanmoqda...',
+      CreateMediaUploadProgressStatus.completed => '$label yuklandi',
+      CreateMediaUploadProgressStatus.failed => '$label yuklanmadi',
+      CreateMediaUploadProgressStatus.skipped => 'Tayyor fayllar saqlandi',
+      CreateMediaUploadProgressStatus.cancelled => 'Yuklash to\'xtatildi',
+    };
+    _setPublishProgress(
+      status: status,
+      done: progress.done,
+      total: progress.total,
+    );
+  }
+
+  List<String> _uploadedMediaUrls(CreateMediaUploadManifest manifest) {
+    return manifest.items
+        .where((item) =>
+            item.id.startsWith('media-') || item.id.startsWith('file-'))
+        .map((item) => item.publicUrl)
+        .whereType<String>()
+        .toList(growable: false);
+  }
+
+  String? _uploadedMusicUrl(CreateMediaUploadManifest manifest) {
+    for (final item in manifest.items) {
+      if (item.id == 'music') return item.publicUrl;
+    }
+    return _musicTrack?.audioUrl;
   }
 
   bool _isVideoPath(String path) =>
@@ -365,9 +876,6 @@ class _CreatePageState extends ConsumerState<CreatePage> {
           .hasMatch(path);
 
   String? _mediaTypeForPublish() {
-    if (_poll != null) {
-      return 'poll';
-    }
     if (_tab == _Tab.reel) {
       return 'video';
     }
@@ -399,13 +907,15 @@ class _CreatePageState extends ConsumerState<CreatePage> {
     return null;
   }
 
-  String _finalContent() {
+  String _finalContent({String? uploadedMusicUrl}) {
     var content = _content.text.trim();
     if (_poll != null) {
-      content = '[POLL]$_poll[/POLL]\n$content'.trim();
+      content = '[POLL]${jsonEncode(_poll)}[/POLL]\n$content'.trim();
     }
     if (_musicTrack != null) {
-      content = '[MUSIC:$_musicTrack]\n$content'.trim();
+      content =
+          '[MUSIC]${jsonEncode(_musicTrack!.toJson(uploadedUrl: uploadedMusicUrl))}[/MUSIC]\n$content'
+              .trim();
     }
     if (_aspectPresetId != 'original') {
       content = '[ASPECT:$_aspectPresetId]\n$content'.trim();
@@ -419,93 +929,409 @@ class _CreatePageState extends ConsumerState<CreatePage> {
     return content.trim();
   }
 
+  String _finalStoryCaption({String? uploadedMusicUrl}) {
+    final caption = _content.text.trim();
+    final meta = <String, dynamic>{
+      'textSize': _storyTextSize.round(),
+      'font': _storyFont,
+      'align': _storyTextAlign.name,
+      'background': _storyBg.toARGB32(),
+      'textX': double.parse(_storyTextPosition.dx.toStringAsFixed(3)),
+      'textY': double.parse(_storyTextPosition.dy.toStringAsFixed(3)),
+      if (_storyMentions.isNotEmpty) 'mentions': _storyMentions,
+      if (_musicTrack != null)
+        'music': _musicTrack!.toJson(uploadedUrl: uploadedMusicUrl),
+    };
+    return '[STORY_META]${jsonEncode(meta)}[/STORY_META]\n$caption'.trim();
+  }
+
+  ContentType _contentTypeForPublish(
+      String? mediaType, List<String> mediaUrls) {
+    if (_tab == _Tab.reel) {
+      return ContentType.reel;
+    }
+    if (mediaUrls.length > 1) {
+      return ContentType.album;
+    }
+    return switch (mediaType) {
+      'video' => ContentType.video,
+      'image' || 'image_music' => ContentType.image,
+      _ => ContentType.text,
+    };
+  }
+
+  ContentMediaType _contentMediaTypeForUrl(String url, String? mediaType) {
+    if (mediaType == 'video' || _isVideoPath(url)) {
+      return ContentMediaType.video;
+    }
+    if (mediaType == 'audio' || _isAudioPath(url)) {
+      return ContentMediaType.audio;
+    }
+    if (mediaType == 'image' ||
+        mediaType == 'image_music' ||
+        _isImagePath(url)) {
+      return ContentMediaType.image;
+    }
+    return ContentMediaType.document;
+  }
+
+  ContentItem _buildContentDraft({
+    required String userId,
+    required String content,
+    required List<String> mediaUrls,
+    required String? mediaType,
+  }) {
+    final now = DateTime.now().toUtc();
+    final location = _effectiveLocation();
+    return ContentItem(
+      id: '',
+      authorId: userId,
+      type: _contentTypeForPublish(mediaType, mediaUrls),
+      text: content,
+      mediaUrl: mediaUrls.isEmpty ? null : mediaUrls.first,
+      media: [
+        for (var i = 0; i < mediaUrls.length; i++)
+          ContentMedia(
+            id: 'media-$i',
+            type: _contentMediaTypeForUrl(mediaUrls[i], mediaType),
+            url: mediaUrls[i],
+          ),
+      ],
+      hashtags: List<String>.unmodifiable(_tags),
+      productTags:
+          List<String>.unmodifiable(_productTags.map((product) => product.id)),
+      location: location,
+      visibility: _visibility,
+      createdAt: now,
+      raw: {
+        'media_urls': mediaUrls,
+        'media_type': mediaType,
+        if (_poll != null) 'poll_data': Map<String, dynamic>.from(_poll!),
+        if (location != null) ...location.toPostMap(),
+      },
+    );
+  }
+
+  ContentLocation? _effectiveLocation() {
+    final selected = _selectedLocation;
+    if (selected == null) return null;
+    final name = _location.text.trim();
+    return ContentLocation(
+      latitude: selected.latitude,
+      longitude: selected.longitude,
+      name: name.isEmpty ? selected.name : name,
+      address: selected.address,
+      geohash: selected.geohash,
+    );
+  }
+
+  Future<void> _useCurrentLocation() async {
+    if (_locatingForPost) return;
+    setState(() => _locatingForPost = true);
+    try {
+      final position =
+          await ref.read(locationProvider.notifier).acquireForButton();
+      if (!mounted) return;
+      if (position == null) {
+        AppToast.warning(context, 'Joylashuv aniqlanmadi');
+        return;
+      }
+      final coordinates =
+          '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
+      setState(() {
+        _selectedLocation = ContentLocation(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          name: _location.text.trim().isEmpty
+              ? 'Current location'
+              : _location.text.trim(),
+          address: coordinates,
+        );
+        if (_location.text.trim().isEmpty) {
+          _location.text = 'Current location';
+        }
+      });
+      AppToast.success(context, 'Joylashuv postga qo\'shildi');
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(
+          context,
+          'Joylashuvni olishda xatolik',
+          error: error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _locatingForPost = false);
+    }
+  }
+
+  Future<void> _pickLocationFromMap() async {
+    final current = ref.read(locationProvider).currentPosition;
+    final initial = _selectedLocation != null
+        ? LatLng(_selectedLocation!.latitude, _selectedLocation!.longitude)
+        : current != null
+            ? LatLng(current.latitude, current.longitude)
+            : const LatLng(41.2995, 69.2401);
+    final picked = await showModalBottomSheet<ContentLocation>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CreateLocationPickerSheet(
+        initial: initial,
+        initialName: _location.text.trim(),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _selectedLocation = picked;
+      _location.text = picked.name?.trim().isNotEmpty == true
+          ? picked.name!
+          : picked.address ?? 'Selected location';
+    });
+  }
+
+  void _clearSelectedLocation() {
+    setState(() {
+      _selectedLocation = null;
+      _location.clear();
+    });
+  }
+
+  Future<void> _showCollaboratorPicker() async {
+    final userId = ref.read(authProvider).user?.id;
+    if (userId == null) {
+      AppToast.error(context, 'Avval tizimga kiring');
+      return;
+    }
+    final selected = await showCreateCollaboratorPicker(
+      context: context,
+      onSearch: (query) =>
+          ref.read(createCollaborationRepositoryProvider).searchProfiles(
+                query: query,
+                selectedIds: _collaborators.map((user) => user.id),
+              ),
+      onError: (error) {
+        if (mounted) {
+          AppToast.error(context, 'Hamkorlarni izlab bo\'lmadi', error: error);
+        }
+      },
+    );
+    if (selected == null || !mounted) return;
+    if (_collaborators.any((user) => user.id == selected.id)) return;
+    setState(() => _collaborators.add(selected));
+  }
+
+  Future<void> _sendCollaborationInvites({required String postId}) async {
+    if (_collaborators.isEmpty) return;
+    try {
+      await ref
+          .read(createCollaborationRepositoryProvider)
+          .upsertPendingInvites(
+            postId: postId,
+            collaborators: _collaborators,
+          );
+    } catch (error) {
+      if (mounted) {
+        AppToast.warning(
+          context,
+          'Post joylandi, lekin hamkorlik so\'rovlari yuborilmadi',
+          error: error,
+        );
+      }
+    }
+  }
+
+  Future<void> _showProductTagPicker() async {
+    final selected = await showCreateProductTagPicker(
+      context: context,
+      onSearch: (query) =>
+          ref.read(createProductTagRepositoryProvider).searchProducts(
+                query: query,
+                selectedIds: _productTags.map((product) => product.id),
+              ),
+      onError: (error) {
+        if (mounted) {
+          AppToast.error(
+            context,
+            'Mahsulotlarni izlab bo\'lmadi',
+            error: error,
+          );
+        }
+      },
+    );
+    if (selected == null || !mounted) return;
+    if (_productTags.any((product) => product.id == selected.id)) return;
+    setState(() => _productTags.add(selected));
+  }
+
   Future<void> _submit() async {
     final userId = ref.read(authProvider).user?.id;
     if (userId == null) return;
 
     if (_tab == _Tab.live) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const LiveStreamPage()),
-      );
+      await _openLiveBroadcast();
       return;
     }
 
     if (_tab == _Tab.reel &&
         (_mediaFiles.isEmpty || !_isVideoPath(_mediaFiles.first.path))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Reel uchun video tanlang')),
-      );
+      AppToast.error(context, 'Reel uchun video tanlang');
       return;
     }
 
     if (_tab == _Tab.story &&
         _content.text.trim().isEmpty &&
-        _mediaFiles.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Story uchun rasm, video yoki matn qo\'shing')),
-      );
+        _mediaFiles.isEmpty &&
+        _musicTrack == null) {
+      AppToast.error(context, 'Story uchun rasm, video yoki matn qo\'shing');
       return;
     }
 
-    if (_tab == _Tab.post &&
-        _content.text.trim().isEmpty &&
-        _mediaFiles.isEmpty &&
-        _files.isEmpty &&
-        _poll == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Iltimos, matn yoki fayl qo\'shing')));
+    if (_tab == _Tab.post && !_hasPostPublishPayload) {
+      AppToast.error(context, 'Iltimos, matn yoki fayl qo\'shing');
       return;
     }
     setState(() => _submitting = true);
     try {
-      final content = _finalContent();
-
-      final mediaUrls = (_mediaFiles.isNotEmpty || _files.isNotEmpty)
-          ? await _uploadMedia(userId)
-          : <String>[];
+      final pendingManifest = _prepareUploadManifest(userId);
+      final uploadTotal = pendingManifest.items.length;
+      _beginPublishProgress(
+        uploadTotal,
+        done: pendingManifest.completedCount,
+      );
+      final uploadedManifest = await _uploadPublishAssets(pendingManifest);
+      final mediaUrls = _uploadedMediaUrls(uploadedManifest);
+      final uploadedMusicUrl = _uploadedMusicUrl(uploadedManifest);
+      final content = _finalContent(uploadedMusicUrl: uploadedMusicUrl);
+      _setPublishProgress(
+        status: _tab == _Tab.story
+            ? 'Story saqlanmoqda...'
+            : _tab == _Tab.reel
+                ? 'Reel saqlanmoqda...'
+                : 'Post saqlanmoqda...',
+        done: math.max(uploadTotal, 1),
+        total: math.max(uploadTotal, 1),
+      );
 
       if (_tab == _Tab.story) {
-        await Supabase.instance.client.from('stories').insert({
-          'user_id': userId,
-          'media_url': mediaUrls.isEmpty ? null : mediaUrls.first,
-          'media_type': mediaUrls.isEmpty
-              ? 'text'
-              : (_mediaFiles.isNotEmpty && _isVideoPath(_mediaFiles.first.path)
-                  ? 'video'
-                  : 'image'),
-          'caption': content.isEmpty ? null : content,
-        });
+        final storyCaption =
+            _finalStoryCaption(uploadedMusicUrl: uploadedMusicUrl);
+        await ref.read(storiesRepositoryProvider).createStory(
+              userId: userId,
+              mediaUrl: mediaUrls.isEmpty ? '' : mediaUrls.first,
+              mediaType: mediaUrls.isEmpty
+                  ? 'text'
+                  : (_mediaFiles.isNotEmpty &&
+                          _isVideoPath(_mediaFiles.first.path)
+                      ? 'video'
+                      : 'image'),
+              caption: storyCaption.isEmpty ? null : storyCaption,
+            );
+        ref.invalidate(storiesProvider);
+        ref
+            .read(storyPresenceControllerProvider.notifier)
+            .invalidateUser(userId);
+        ref.invalidate(storyAvatarRingProvider(userId));
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Story joylandi!')),
-          );
+          _mediaUploadManifest = null;
+          _mediaUploadManifestKey = null;
+          _clearPublishProgress();
+          AppToast.success(context, 'Story joylandi!');
           context.go('/home');
         }
         return;
       }
 
-      await ref.read(createRepositoryProvider).createPost(
-            userId: userId,
-            content: content,
-            visibility: _visibility,
-            mediaUrls: mediaUrls,
-            mediaType: _mediaTypeForPublish(),
-          );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:
-                Text(_tab == _Tab.reel ? 'Reel joylandi!' : 'Post joylandi!')));
-        context.go(_tab == _Tab.reel ? '/videos' : '/home');
+      final mediaType = _mediaTypeForPublish();
+
+      if (_isEditing) {
+        await ref.read(contentPostRepositoryProvider).updatePost(
+              widget.editPostId!,
+              text: content,
+              hashtags: _tags.isNotEmpty ? _tags : null,
+              productTags:
+                  _productTags.isNotEmpty
+                      ? _productTags.map((p) => p.id).toList()
+                      : null,
+              location: _selectedLocation,
+            );
+        if (mounted) {
+          _mediaUploadManifest = null;
+          _mediaUploadManifestKey = null;
+          _clearPublishProgress();
+          AppToast.success(context, 'Post yangilandi!');
+          context.pop();
+        }
+      } else {
+        final created =
+            await ref.read(contentPostRepositoryProvider).createPost(
+                  _buildContentDraft(
+                    userId: userId,
+                    content: content,
+                    mediaUrls: mediaUrls,
+                    mediaType: mediaType,
+                  ),
+                );
+        await _sendCollaborationInvites(postId: created.id);
+        if (mounted) {
+          _mediaUploadManifest = null;
+          _mediaUploadManifestKey = null;
+          _clearPublishProgress();
+          AppToast.success(
+              context,
+              _tab == _Tab.reel ? 'Reel joylandi!' : 'Post joylandi!');
+          context.go(_tab == _Tab.reel ? '/videos' : '/home');
+        }
       }
+    } on _CreatePublishCancelled {
+      _markPublishCancelled();
     } catch (e) {
+      _markPublishFailed();
+      _logSubmitError(e);
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Xatolik: $e')));
+        AppToast.error(context, friendlyError(e), error: e);
       }
     } finally {
+      _mediaUploadCancelToken = null;
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  bool get _hasPostPublishPayload =>
+      _content.text.trim().isNotEmpty ||
+      _mediaFiles.isNotEmpty ||
+      _files.isNotEmpty ||
+      _poll != null ||
+      _musicTrack != null ||
+      _tags.isNotEmpty ||
+      _productTags.isNotEmpty ||
+      _selectedLocation != null;
+
+  void _logSubmitError(Object error) {
+    developer.log(
+      '[CreatePage.submit] failed tab=${_tab.name} visibility=$_visibility mediaFiles=${_mediaFiles.length} files=${_files.length} tags=${_tags.length} products=${_productTags.length} collaborators=${_collaborators.length} hasLocation=${_selectedLocation != null} error=$error',
+      name: 'create',
+      error: error,
+      level: 1000,
+    );
+    if (error is PostgrestException) {
+      developer.log(
+        '[CreatePage.submit] PostgrestException code=${error.code} message=${error.message} details=${error.details} hint=${error.hint}',
+        name: 'create',
+        error: error,
+        level: 1000,
+      );
+    }
+  }
+
+  Future<void> _openLiveBroadcast() {
+    final title = _content.text.trim();
+    return Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            LiveStreamBroadcast(initialTitle: title.isEmpty ? null : title),
+      ),
+    );
   }
 
   @override
@@ -513,7 +1339,7 @@ class _CreatePageState extends ConsumerState<CreatePage> {
     final c = AlsamosColors.of(context);
     final primary = Theme.of(context).colorScheme.primary;
     final profile = ref.watch(authProvider).profile;
-    final isMobile = MediaQuery.sizeOf(context).width < 768;
+    final isMobile = context.responsive.isMobile;
 
     return Scaffold(
       backgroundColor: c.background,
@@ -544,21 +1370,23 @@ class _CreatePageState extends ConsumerState<CreatePage> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          _tab == _Tab.post
-                              ? 'New post'
-                              : _tab == _Tab.story
-                                  ? 'New story'
-                                  : _tab == _Tab.reel
-                                      ? 'New reel'
-                                      : 'Go live',
+                          _isEditing
+                              ? 'Tahrirlash'
+                              : _tab == _Tab.post
+                                  ? 'Yangi post'
+                                  : _tab == _Tab.story
+                                      ? 'Yangi story'
+                                      : _tab == _Tab.reel
+                                          ? 'Yangi reel'
+                                          : 'Jonli efir',
                           style: const TextStyle(
                               fontFamily: 'SpaceGrotesk',
                               fontWeight: FontWeight.bold,
                               fontSize: 18),
                         ),
                       ),
-                      // Schedule button (only for post tab)
-                      if (_tab == _Tab.post)
+                      // Schedule button (only for post tab, not edit mode)
+                      if (_tab == _Tab.post && !_isEditing)
                         IconButton(
                           onPressed: _submitting
                               ? null
@@ -611,21 +1439,54 @@ class _CreatePageState extends ConsumerState<CreatePage> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 20, vertical: 10)),
                               child: Text(
-                                _scheduledAt != null
-                                    ? 'Schedule'
-                                    : _tab == _Tab.post
-                                        ? 'Post'
-                                        : _tab == _Tab.story
-                                            ? 'Share'
-                                            : _tab == _Tab.reel
-                                                ? 'Post Reel'
-                                                : 'Start Live',
+                                _isEditing
+                                    ? 'Saqlash'
+                                    : _scheduledAt != null
+                                        ? 'Schedule'
+                                        : _tab == _Tab.post
+                                            ? 'Post'
+                                            : _tab == _Tab.story
+                                                ? 'Share'
+                                                : _tab == _Tab.reel
+                                                    ? 'Post Reel'
+                                                    : 'Start Live',
                               ),
                             ),
                       const SizedBox(width: 8),
                     ],
                   ),
                 ),
+              ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: _publishUploadStatus == null
+                    ? const SizedBox.shrink()
+                    : Padding(
+                        key: const ValueKey('create-publish-progress'),
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 720),
+                            child: PublishProgressBanner(
+                              status: _publishUploadStatus!,
+                              progress: _publishUploadTotal <= 0
+                                  ? null
+                                  : (_publishUploadDone /
+                                          math.max(_publishUploadTotal, 1))
+                                      .clamp(0.0, 1.0)
+                                      .toDouble(),
+                              failed: _publishUploadFailed,
+                              onRetry: _publishUploadFailed && !_submitting
+                                  ? _submit
+                                  : null,
+                              onCancel: _mediaUploadCancelToken != null &&
+                                      !_mediaUploadCancelToken!.isCancelled
+                                  ? _cancelPublish
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
               ),
               // Content area - extends under bottom tabs
               Expanded(
@@ -634,94 +1495,107 @@ class _CreatePageState extends ConsumerState<CreatePage> {
             ],
           ),
           // Bottom tabs - Floating above content (Instagram style)
+          if (!_isEditing)
           Positioned(
-            left: 8,
-            right: 8,
+            left: 0,
+            right: 0,
             bottom: 12, // Instagram style: floating higher from bottom
             child: SafeArea(
               top: false,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                  child: Container(
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: c.card.withValues(alpha: 0.8),
+              minimum: const EdgeInsets.symmetric(horizontal: 12),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    clipBehavior: Clip.none,
+                    child: ClipRRect(
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: c.border.withValues(alpha: 0.4),
-                        width: 1,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 10,
-                          spreadRadius: 0,
-                          offset: const Offset(0, 4),
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.06),
-                          blurRadius: 6,
-                          spreadRadius: 0,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          (_Tab.post, LucideIcons.fileText, 'Post'),
-                          (_Tab.story, LucideIcons.userCircle, 'Story'),
-                          (_Tab.reel, LucideIcons.film, 'Reel'),
-                          (_Tab.live, LucideIcons.radio, 'Live'),
-                        ].map((entry) {
-                          final active = _tab == entry.$1;
-                          final color = active ? primary : c.mutedForeground;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: Material(
-                              color: Colors.transparent,
-                              borderRadius: BorderRadius.circular(12),
-                              child: InkWell(
-                                onTap: () => _selectTab(entry.$1),
-                                borderRadius: BorderRadius.circular(12),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  curve: Curves.easeOutCubic,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        active ? c.muted : Colors.transparent,
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                        child: Container(
+                          height: 60,
+                          decoration: BoxDecoration(
+                            color: c.card.withValues(alpha: 0.8),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: c.border.withValues(alpha: 0.4),
+                              width: 1,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 10,
+                                spreadRadius: 0,
+                                offset: const Offset(0, 4),
+                              ),
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.06),
+                                blurRadius: 6,
+                                spreadRadius: 0,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 6),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              (_Tab.post, LucideIcons.fileText, 'Post'),
+                              (_Tab.story, LucideIcons.userCircle, 'Story'),
+                              (_Tab.reel, LucideIcons.film, 'Reel'),
+                              (_Tab.live, LucideIcons.radio, 'Live'),
+                            ].map((entry) {
+                              final active = _tab == entry.$1;
+                              final color =
+                                  active ? primary : c.mutedForeground;
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 3),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: InkWell(
+                                    onTap: () => _selectTab(entry.$1),
                                     borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(entry.$2, size: 18, color: color),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        entry.$3,
-                                        style: TextStyle(
-                                          color: color,
-                                          fontSize: 14,
-                                          fontWeight: active
-                                              ? FontWeight.w600
-                                              : FontWeight.w500,
-                                        ),
+                                    child: AnimatedContainer(
+                                      duration:
+                                          const Duration(milliseconds: 200),
+                                      curve: Curves.easeOutCubic,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        color: active
+                                            ? c.muted
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
-                                    ],
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(entry.$2,
+                                              size: 18, color: color),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            entry.$3,
+                                            style: TextStyle(
+                                              color: color,
+                                              fontSize: 14,
+                                              fontWeight: active
+                                                  ? FontWeight.w600
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
+                              );
+                            }).toList(),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -752,106 +1626,24 @@ class _CreatePageState extends ConsumerState<CreatePage> {
       {required String emptyTitle,
       required String emptySubtitle,
       required bool reelOnly}) {
-    final selectedIndex = _mediaFiles.isEmpty
-        ? 0
-        : _currentMediaIndex.clamp(0, _mediaFiles.length - 1).toInt();
-    final selected = _mediaFiles.isEmpty ? null : _mediaFiles[selectedIndex];
-    final aspect = _selectedAspect.ratio;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          decoration: BoxDecoration(
-            color: Colors.black,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: c.border),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 28,
-                offset: const Offset(0, 16),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: selected == null
-              ? _EmptyMediaStage(
-                  title: emptyTitle,
-                  subtitle: emptySubtitle,
-                  primary: primary,
-                  onImage: reelOnly ? null : () => _pickMedia(),
-                  onVideo: () => _pickMedia(video: true),
-                  onFile: reelOnly ? null : _pickAnyFile,
-                )
-              : _LocalMediaFrame(
-                  file: selected,
-                  aspectRatio: aspect,
-                  forceReel: reelOnly,
-                  onRemove: () => _removeMedia(_currentMediaIndex),
-                ),
-        ),
-        const SizedBox(height: 14),
-        _buildAspectSelector(c, primary, reelOnly: reelOnly),
-        if (_mediaFiles.length > 1) ...[
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 78,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _mediaFiles.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (_, i) => _MediaThumb(
-                file: _mediaFiles[i],
-                selected: i == _currentMediaIndex,
-                onTap: () => setState(() => _currentMediaIndex = i),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildAspectSelector(AlsamosColors c, Color primary,
-      {required bool reelOnly}) {
-    final presets = reelOnly
-        ? _aspectPresets
-            .where((p) => p.id == '9:16' || p.id == 'original')
-            .toList()
-        : _aspectPresets;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: presets.map((preset) {
-          final selected = preset.id == _aspectPresetId;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              selected: selected,
-              showCheckmark: false,
-              avatar: Icon(
-                preset.icon,
-                size: 15,
-                color: selected ? Colors.white : c.mutedForeground,
-              ),
-              label: Text(preset.label),
-              onSelected: (_) => setState(() => _aspectPresetId = preset.id),
-              selectedColor: primary,
-              backgroundColor: c.card,
-              side: BorderSide(color: selected ? primary : c.border),
-              labelStyle: TextStyle(
-                color: selected ? Colors.white : c.foreground,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-            ),
-          );
-        }).toList(),
-      ),
+    return CreateMediaPreviewStage(
+      colors: c,
+      primary: primary,
+      mediaFiles: _mediaFiles,
+      currentMediaIndex: _currentMediaIndex,
+      aspectPresetId: _aspectPresetId,
+      emptyTitle: emptyTitle,
+      emptySubtitle: emptySubtitle,
+      reelOnly: reelOnly,
+      videoExporting: _videoExporting,
+      videoExportProgress: _videoExportProgress,
+      onPickImage: () => _pickMedia(),
+      onPickVideo: () => _pickMedia(video: true),
+      onPickFile: _pickAnyFile,
+      onEditSelected: _editCurrentMedia,
+      onRemoveSelected: () => _removeMedia(_currentMediaIndex),
+      onMediaSelected: (index) => setState(() => _currentMediaIndex = index),
+      onAspectChanged: (id) => setState(() => _aspectPresetId = id),
     );
   }
 
@@ -859,7 +1651,8 @@ class _CreatePageState extends ConsumerState<CreatePage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        UserAvatar(
+        StoryAvatarRing(
+          userId: profile?.id,
           avatarUrl: profile?.avatarUrl,
           fallback: profile?.initial ?? 'U',
           size: 48,
@@ -875,35 +1668,27 @@ class _CreatePageState extends ConsumerState<CreatePage> {
                     const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
               ),
               const SizedBox(height: 6),
-              GestureDetector(
-                onTap: () => _showVisibilityPicker(context, c),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: c.muted,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: c.border),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _IdentityPill(
+                    icon: _visIcon(_visibility),
+                    label: _visLabel(_visibility),
+                    colors: c,
+                    onTap: () => _showVisibilityPicker(context, c),
+                    trailing: LucideIcons.chevronDown,
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(_visIcon(_visibility),
-                          size: 13, color: c.mutedForeground),
-                      const SizedBox(width: 6),
-                      Text(
-                        _visLabel(_visibility),
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: c.mutedForeground,
-                            fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(LucideIcons.chevronDown,
-                          size: 12, color: c.mutedForeground),
-                    ],
+                  _IdentityPill(
+                    icon: LucideIcons.users,
+                    label: _collaborators.isEmpty
+                        ? 'Hamkor qo\'shish'
+                        : '${_collaborators.length} hamkor',
+                    colors: c,
+                    selected: _collaborators.isNotEmpty,
+                    onTap: _showCollaboratorPicker,
                   ),
-                ),
+                ],
               ),
             ],
           ),
@@ -916,6 +1701,7 @@ class _CreatePageState extends ConsumerState<CreatePage> {
       {required String hint, int maxLength = 2200}) {
     return TextField(
       controller: _content,
+      focusNode: _contentFocusNode,
       minLines: 5,
       maxLines: 12,
       maxLength: maxLength,
@@ -947,21 +1733,102 @@ class _CreatePageState extends ConsumerState<CreatePage> {
   }
 
   Widget _buildMetaInputs(AlsamosColors c) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final hasGeo = _selectedLocation != null;
     return Column(
       children: [
-        TextField(
-          controller: _location,
-          decoration: InputDecoration(
-            hintText: 'Joylashuvni qo\'shish...',
-            prefixIcon:
-                Icon(LucideIcons.mapPin, size: 18, color: c.mutedForeground),
-            filled: true,
-            fillColor: c.muted,
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none),
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: c.muted,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: hasGeo ? primary.withValues(alpha: 0.35) : c.border,
+            ),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    hasGeo ? LucideIcons.mapPinned : LucideIcons.mapPin,
+                    size: 18,
+                    color: hasGeo ? primary : c.mutedForeground,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _location,
+                      decoration: const InputDecoration(
+                        hintText: 'Joy nomi yoki manzil...',
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      onChanged: (_) {
+                        if (_selectedLocation != null) setState(() {});
+                      },
+                    ),
+                  ),
+                  if (hasGeo)
+                    IconButton(
+                      tooltip: 'Joylashuvni olib tashlash',
+                      onPressed: _clearSelectedLocation,
+                      icon: const Icon(LucideIcons.x, size: 16),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _locatingForPost ? null : _useCurrentLocation,
+                      icon: _locatingForPost
+                          ? SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: primary,
+                              ),
+                            )
+                          : const Icon(LucideIcons.locateFixed, size: 15),
+                      label: const Text('Hozirgi joy'),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      onPressed: _pickLocationFromMap,
+                      icon: const Icon(LucideIcons.map, size: 15),
+                      label: const Text('Xaritadan'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (hasGeo) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '${_selectedLocation!.latitude.toStringAsFixed(5)}, '
+                    '${_selectedLocation!.longitude.toStringAsFixed(5)}',
+                    style: TextStyle(
+                      color: c.mutedForeground,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
         const SizedBox(height: 10),
@@ -1015,70 +1882,19 @@ class _CreatePageState extends ConsumerState<CreatePage> {
             ),
           ),
         ],
+        const SizedBox(height: 10),
+        CreateCollaboratorsSection(
+          collaborators: _collaborators,
+          onAdd: _showCollaboratorPicker,
+          onRemove: (user) => setState(() => _collaborators.remove(user)),
+        ),
+        const SizedBox(height: 10),
+        CreateSelectedProductTagsSection(
+          products: _productTags,
+          onAdd: _showProductTagPicker,
+          onRemove: (product) => setState(() => _productTags.remove(product)),
+        ),
       ],
-    );
-  }
-
-  Widget _buildToolTray(AlsamosColors c) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.card,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: c.border),
-      ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          _MediaChip(
-            icon: LucideIcons.image,
-            label: 'Rasm',
-            color: const Color(0xFF22C55E),
-            onTap: () => _pickMedia(),
-          ),
-          _MediaChip(
-            icon: LucideIcons.video,
-            label: 'Video',
-            color: const Color(0xFF3B82F6),
-            onTap: () => _pickMedia(video: true),
-          ),
-          _MediaChip(
-            icon: LucideIcons.fileArchive,
-            label: 'Fayl',
-            color: const Color(0xFF8B5CF6),
-            onTap: _pickAnyFile,
-          ),
-          _MediaChip(
-            icon: LucideIcons.barChart3,
-            label: 'So\'rovnoma',
-            color: const Color(0xFFEC4899),
-            onTap: () async {
-              final poll = await PollCreator.show(context);
-              if (poll != null) {
-                setState(() => _poll = {
-                      'question': poll.question,
-                      'options': poll.options,
-                      'duration': poll.duration.name,
-                      'allowMultiple': poll.allowMultiple,
-                    });
-              }
-            },
-          ),
-          _MediaChip(
-            icon: LucideIcons.music,
-            label: 'Musiqa',
-            color: const Color(0xFFEAB308),
-            onTap: () async {
-              final track = await MusicPicker.show(context);
-              if (track != null) {
-                setState(() => _musicTrack =
-                    '${track.title}${track.artist != null ? ' - ${track.artist}' : ''}');
-              }
-            },
-          ),
-        ],
-      ),
     );
   }
 
@@ -1097,904 +1913,345 @@ class _CreatePageState extends ConsumerState<CreatePage> {
     );
   }
 
+  Future<void> _createPoll() async {
+    final userId = ref.read(authProvider).user?.id;
+    if (userId == null) {
+      AppToast.error(context, 'Avval tizimga kiring');
+      return;
+    }
+    final poll = await PollCreator.show(context, userId: userId);
+    if (poll == null || !mounted) return;
+    setState(() => _poll = {
+          'question': poll.question,
+          'options': [
+            for (var i = 0; i < poll.options.length; i++)
+              poll.options[i].toJson(i),
+          ],
+          'duration': poll.durationCode,
+          'allowMultiple': poll.allowMultiple,
+          'isAnonymous': poll.isAnonymous,
+          'isQuiz': poll.isQuiz,
+          'resultsMode': poll.resultsMode.name,
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+          'expiresAt': poll.closesAt.toIso8601String(),
+        });
+  }
+
+  Future<void> _pickMusic() async {
+    final track = await MusicPicker.show(context);
+    if (track == null || !mounted) return;
+    setState(() => _musicTrack = track);
+  }
+
   // POST TAB - Support for all file types
   Widget _buildPostTab(AlsamosColors c, Color primary, dynamic profile) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 980;
-        final details = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildIdentityRow(c, primary, profile),
-            const SizedBox(height: 16),
-            _buildComposerTextField(c, hint: 'Nima haqida o\'ylayapsiz?'),
-            if (_scheduledAt != null) _buildScheduleBanner(c, primary),
-            if (_poll != null) _buildPollBanner(c),
-            if (_musicTrack != null) _buildMusicBanner(c),
-            const SizedBox(height: 12),
-            _buildMetaInputs(c),
-            const SizedBox(height: 14),
-            _buildFileList(c),
-            const SizedBox(height: 14),
-            _buildToolTray(c),
-          ],
-        );
-
-        final preview = _buildPreviewStage(
-          c,
-          primary,
-          emptyTitle: 'Media, hujjat yoki fayl qo\'shing',
-          emptySubtitle:
-              'Rasm, video, musiqa, doc, pptx, apk, exe, zip va boshqa fayllar qo\'llanadi.',
-          reelOnly: false,
-        );
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 110),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1120),
-              child: wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 6, child: preview),
-                        const SizedBox(width: 28),
-                        Expanded(flex: 5, child: details),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        preview,
-                        const SizedBox(height: 24),
-                        details,
-                      ],
-                    ),
-            ),
-          ),
-        );
-      },
+    return CreatePostTab(
+      colors: c,
+      primary: primary,
+      preview: _buildPreviewStage(
+        c,
+        primary,
+        emptyTitle: 'Media, hujjat yoki fayl qo\'shing',
+        emptySubtitle:
+            'Rasm, video, musiqa, doc, pptx, apk, exe, zip va boshqa fayllar qo\'llanadi.',
+        reelOnly: false,
+      ),
+      identityRow: _buildIdentityRow(c, primary, profile),
+      composerField:
+          _buildComposerTextField(c, hint: 'Nima haqida o\'ylayapsiz?'),
+      metaInputs: _buildMetaInputs(c),
+      fileList: _buildFileList(c),
+      scheduleLabel: _scheduledAt == null ? null : _fmtSchedule(_scheduledAt!),
+      poll: _poll,
+      musicTrack: _musicTrack,
+      onClearSchedule: () => setState(() => _scheduledAt = null),
+      onClearPoll: () => setState(() => _poll = null),
+      onClearMusic: () => setState(() => _musicTrack = null),
+      onPickImage: () => _pickMedia(),
+      onPickVideo: () => _pickMedia(video: true),
+      onPickFile: _pickAnyFile,
+      onCreatePoll: _createPoll,
+      onPickMusic: _pickMusic,
     );
   }
 
   // STORY TAB - Instagram-style story creator
   Widget _buildStoryTab(AlsamosColors c, Color primary, dynamic profile) {
-    final selected = _mediaFiles.isEmpty ? null : _mediaFiles.first;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 110),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 980),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 820;
-              final preview = Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 360),
-                  child: AspectRatio(
-                    aspectRatio: 9 / 16,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(28),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: selected == null ? _storyBg : Colors.black,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.2),
-                              blurRadius: 30,
-                              offset: const Offset(0, 18),
-                            ),
-                          ],
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            if (selected != null)
-                              _LocalMediaFrame(
-                                file: selected,
-                                aspectRatio: 9 / 16,
-                                forceReel: true,
-                                onRemove: () => _removeMedia(0),
-                              )
-                            else
-                              Container(
-                                padding: const EdgeInsets.all(28),
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: [
-                                      _storyBg,
-                                      Color.lerp(_storyBg, Colors.black, 0.28)!,
-                                    ],
-                                  ),
-                                ),
-                                child: Text(
-                                  _content.text.trim().isEmpty
-                                      ? 'Story matni shu yerda ko\'rinadi'
-                                      : _content.text.trim(),
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w800,
-                                    height: 1.25,
-                                    shadows: [
-                                      Shadow(
-                                          color: Colors.black54,
-                                          blurRadius: 10,
-                                          offset: Offset(0, 3)),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            Positioned(
-                              left: 14,
-                              right: 14,
-                              top: 14,
-                              child: Row(
-                                children: [
-                                  UserAvatar(
-                                    avatarUrl: profile?.avatarUrl,
-                                    fallback: profile?.initial ?? 'U',
-                                    size: 34,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    profile?.displayName ?? 'User',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800),
-                                  ),
-                                  const Spacer(),
-                                  const Icon(LucideIcons.moreHorizontal,
-                                      color: Colors.white),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-
-              final controls = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildComposerTextField(c,
-                      hint: 'Story caption yoki text story yozing...',
-                      maxLength: 500),
-                  const SizedBox(height: 14),
-                  Text('Fon rangi',
-                      style: TextStyle(
-                          color: c.mutedForeground,
-                          fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 44,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _storyPalette.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 10),
-                      itemBuilder: (_, i) {
-                        final color = _storyPalette[i];
-                        final active = color.toARGB32() == _storyBg.toARGB32();
-                        return GestureDetector(
-                          onTap: () => setState(() => _storyBg = color),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 180),
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: active ? Colors.white : c.border,
-                                  width: active ? 3 : 1),
-                              boxShadow: active
-                                  ? [
-                                      BoxShadow(
-                                          color: color.withValues(alpha: 0.45),
-                                          blurRadius: 16,
-                                          offset: const Offset(0, 6))
-                                    ]
-                                  : null,
-                            ),
-                            child: active
-                                ? const Icon(LucideIcons.check,
-                                    color: Colors.white, size: 20)
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: c.border),
-                    ),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _MediaChip(
-                            icon: LucideIcons.image,
-                            label: 'Photo',
-                            color: const Color(0xFF22C55E),
-                            onTap: () => _pickMedia()),
-                        _MediaChip(
-                            icon: LucideIcons.video,
-                            label: 'Video',
-                            color: const Color(0xFF3B82F6),
-                            onTap: () => _pickMedia(video: true)),
-                        _MediaChip(
-                          icon: LucideIcons.music,
-                          label: 'Music',
-                          color: const Color(0xFFEC4899),
-                          onTap: () async {
-                            final track = await MusicPicker.show(context);
-                            if (track != null) {
-                              setState(() => _musicTrack =
-                                  '${track.title}${track.artist != null ? ' - ${track.artist}' : ''}');
-                            }
-                          },
-                        ),
-                        _MediaChip(
-                            icon: LucideIcons.type,
-                            label: 'Text',
-                            color: const Color(0xFFF97316),
-                            onTap: () => setState(() => _mediaFiles.clear())),
-                      ],
-                    ),
-                  ),
-                  if (_musicTrack != null) ...[
-                    const SizedBox(height: 12),
-                    _buildMusicBanner(c),
-                  ],
-                ],
-              );
-
-              return wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: preview),
-                        const SizedBox(width: 32),
-                        Expanded(child: controls),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        preview,
-                        const SizedBox(height: 24),
-                        controls,
-                      ],
-                    );
-            },
-          ),
-        ),
+    return CreateStoryTab(
+      colors: c,
+      primary: primary,
+      selectedMedia: _mediaFiles.isEmpty ? null : _mediaFiles.first,
+      contentController: _content,
+      composerField: _buildComposerTextField(
+        c,
+        hint: 'Story caption yoki text story yozing...',
+        maxLength: 500,
       ),
+      backgroundColor: _storyBg,
+      textSize: _storyTextSize,
+      font: _storyFont,
+      textAlign: _storyTextAlign,
+      textPosition: _storyTextPosition,
+      mentions: _storyMentions,
+      musicTrack: _musicTrack,
+      profileUserId: profile?.id,
+      profileAvatarUrl: profile?.avatarUrl,
+      profileFallback: profile?.initial ?? 'U',
+      profileDisplayName: profile?.displayName ?? 'User',
+      onEditMedia: _editCurrentMedia,
+      onRemoveMedia: () => _removeMedia(0),
+      onTextPositionChanged: (value) =>
+          setState(() => _storyTextPosition = value),
+      onTextAlignChanged: (value) => setState(() => _storyTextAlign = value),
+      onFontChanged: (value) => setState(() => _storyFont = value),
+      onTextSizeChanged: (value) => setState(() => _storyTextSize = value),
+      onResetTextPosition: () =>
+          setState(() => _storyTextPosition = const Offset(0.5, 0.52)),
+      onBackgroundColorChanged: (value) => setState(() => _storyBg = value),
+      onOpenCamera: _pickStoryCamera,
+      onRecordVideo: () => _pickStoryCamera(video: true),
+      onPickPhoto: _pickMedia,
+      onPickVideo: () => _pickMedia(video: true),
+      onPickMusic: () async {
+        final track = await MusicPicker.show(context);
+        if (track != null && mounted) {
+          setState(() => _musicTrack = track);
+        }
+      },
+      onUseTextMode: () => setState(_mediaFiles.clear),
+      onAddMention: _showStoryMentionPicker,
+      onRemoveMention: (mention) =>
+          setState(() => _storyMentions.remove(mention)),
+      onClearMusic: () => setState(() => _musicTrack = null),
     );
   }
 
   // REEL TAB - TikTok/Instagram Reels style (vertical video creator)
   Widget _buildReelTab(AlsamosColors c, Color primary, dynamic profile) {
-    final selected = _mediaFiles.isEmpty ? null : _mediaFiles.first;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 110),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1020),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 860;
-              final preview = Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 360),
-                  child: AspectRatio(
-                    aspectRatio: 9 / 16,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: c.border),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.25),
-                            blurRadius: 34,
-                            offset: const Offset(0, 18),
-                          ),
-                        ],
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: selected == null
-                          ? _EmptyMediaStage(
-                              title: 'Reel video tanlang',
-                              subtitle:
-                                  'Instagramdek 9:16 qisqa video. Keyin brend nomini shu oqimga bog\'laymiz.',
-                              primary: primary,
-                              onVideo: () => _pickMedia(video: true),
-                            )
-                          : Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                _LocalMediaFrame(
-                                  file: selected,
-                                  aspectRatio: 9 / 16,
-                                  forceReel: true,
-                                  onRemove: () => _removeMedia(0),
-                                ),
-                                Positioned(
-                                  left: 14,
-                                  right: 72,
-                                  bottom: 18,
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          UserAvatar(
-                                            avatarUrl: profile?.avatarUrl,
-                                            fallback: profile?.initial ?? 'U',
-                                            size: 34,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Flexible(
-                                            child: Text(
-                                              '@${profile?.username ?? 'user'}',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w800,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 5,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                              border: Border.all(
-                                                color: Colors.white70,
-                                              ),
-                                            ),
-                                            child: const Text(
-                                              'Follow',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w800,
-                                                fontSize: 11,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        _content.text.trim().isEmpty
-                                            ? 'Reel tavsifi shu yerda ko\'rinadi'
-                                            : _content.text.trim(),
-                                        maxLines: 3,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                          height: 1.25,
-                                          shadows: [
-                                            Shadow(
-                                              color: Colors.black54,
-                                              blurRadius: 8,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      if (_musicTrack != null) ...[
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          children: [
-                                            const Icon(
-                                              LucideIcons.music,
-                                              color: Colors.white,
-                                              size: 14,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Expanded(
-                                              child: Text(
-                                                _musicTrack!,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                Positioned(
-                                  right: 12,
-                                  bottom: 24,
-                                  child: Column(
-                                    children: const [
-                                      _ReelActionIcon(icon: LucideIcons.heart),
-                                      _ReelActionIcon(
-                                          icon: LucideIcons.messageCircle),
-                                      _ReelActionIcon(icon: LucideIcons.send),
-                                      _ReelActionIcon(
-                                          icon: LucideIcons.repeat2),
-                                      _ReelActionIcon(
-                                          icon: LucideIcons.bookmark),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                    ),
-                  ),
-                ),
-              );
-
-              final controls = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildIdentityRow(c, primary, profile),
-                  const SizedBox(height: 16),
-                  _buildComposerTextField(
-                    c,
-                    hint: 'Reel tavsifini yozing...',
-                    maxLength: 300,
-                  ),
-                  if (_musicTrack != null) _buildMusicBanner(c),
-                  const SizedBox(height: 10),
-                  _buildMetaInputs(c),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: c.border),
-                    ),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _MediaChip(
-                          icon: LucideIcons.upload,
-                          label: selected == null
-                              ? 'Video yuklash'
-                              : 'Video almashtirish',
-                          color: const Color(0xFF3B82F6),
-                          onTap: () => _pickMedia(video: true),
-                        ),
-                        _MediaChip(
-                          icon: LucideIcons.music,
-                          label: 'Musiqa',
-                          color: const Color(0xFFEC4899),
-                          onTap: () async {
-                            final track = await MusicPicker.show(context);
-                            if (track != null) {
-                              setState(() => _musicTrack =
-                                  '${track.title}${track.artist != null ? ' - ${track.artist}' : ''}');
-                            }
-                          },
-                        ),
-                        _MediaChip(
-                          icon: LucideIcons.captions,
-                          label: 'Caption',
-                          color: const Color(0xFFF97316),
-                          onTap: () {},
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-
-              return wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: preview),
-                        const SizedBox(width: 34),
-                        Expanded(child: controls),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        preview,
-                        const SizedBox(height: 24),
-                        controls,
-                      ],
-                    );
-            },
-          ),
-        ),
+    return CreateReelTab(
+      colors: c,
+      primary: primary,
+      selectedMedia: _mediaFiles.isEmpty ? null : _mediaFiles.first,
+      contentController: _content,
+      identityRow: _buildIdentityRow(c, primary, profile),
+      composerField: _buildComposerTextField(
+        c,
+        hint: 'Reel tavsifini yozing...',
+        maxLength: 300,
       ),
+      metaInputs: _buildMetaInputs(c),
+      musicTrack: _musicTrack,
+      profileUserId: profile?.id,
+      profileAvatarUrl: profile?.avatarUrl,
+      profileFallback: profile?.initial ?? 'U',
+      profileUsername: profile?.username ?? 'user',
+      onEditMedia: _editCurrentMedia,
+      onRemoveMedia: () => _removeMedia(0),
+      onPickVideo: () => _pickMedia(video: true),
+      onPickMusic: () async {
+        final track = await MusicPicker.show(context);
+        if (track != null) {
+          setState(() => _musicTrack = track);
+        }
+      },
+      onClearMusic: () => setState(() => _musicTrack = null),
+      onFocusCaption: _contentFocusNode.requestFocus,
     );
   }
 
   // LIVE TAB - Professional live streaming interface
   Widget _buildLiveTab(AlsamosColors c, Color primary, dynamic profile) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 110),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1040),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 880;
-              final preview = Container(
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: c.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.22),
-                      blurRadius: 32,
-                      offset: const Offset(0, 18),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: Stack(
-                    fit: StackFit.expand,
+    return CreateLiveTab(
+      colors: c,
+      primary: primary,
+      identityRow: _buildIdentityRow(c, primary, profile),
+      topicController: _content,
+      previewText: _content.text,
+      chatEnabled: _liveChatEnabled,
+      reactionsEnabled: _liveReactionsEnabled,
+      recordingEnabled: _liveRecordingEnabled,
+      onTopicChanged: (_) => setState(() {}),
+      onChatChanged: (v) => setState(() => _liveChatEnabled = v),
+      onReactionsChanged: (v) => setState(() => _liveReactionsEnabled = v),
+      onRecordingChanged: (v) => setState(() => _liveRecordingEnabled = v),
+      onStart: _openLiveBroadcast,
+    );
+  }
+
+  Future<void> _showStoryMentionPicker() async {
+    _storyMentionSearch.clear();
+    var loading = false;
+    var results = <Map<String, dynamic>>[];
+    Future<void> search(
+        String query, void Function(void Function()) setSheet) async {
+      final q = query.trim().replaceFirst(RegExp(r'^@'), '');
+      if (q.length < 2) {
+        setSheet(() => results = []);
+        return;
+      }
+      setSheet(() => loading = true);
+      try {
+        final rows = await Supabase.instance.client
+            .from('profiles')
+            .select('id, username, display_name, avatar_url')
+            .or('username.ilike.%$q%,display_name.ilike.%$q%')
+            .limit(15);
+        setSheet(() {
+          results = (rows as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          loading = false;
+        });
+      } catch (_) {
+        setSheet(() => loading = false);
+      }
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final c = AlsamosColors.of(ctx);
+        return StatefulBuilder(
+          builder: (ctx, setSheet) => SafeArea(
+            child: Container(
+              margin: const EdgeInsets.all(12),
+              padding: EdgeInsets.only(
+                left: 14,
+                right: 14,
+                top: 14,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 14,
+              ),
+              decoration: BoxDecoration(
+                color: c.background,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: c.border),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
                     children: [
-                      Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xFF111827),
-                              Color(0xFF020617),
-                              Color(0xFF1C0F06),
-                            ],
-                          ),
-                        ),
+                      Icon(LucideIcons.atSign,
+                          color: Theme.of(ctx).colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('Mention qo\'shish',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: c.foreground,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800)),
                       ),
-                      Positioned.fill(
-                        child: CustomPaint(painter: _LiveGridPainter()),
-                      ),
-                      Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 76,
-                              height: 76,
-                              decoration: BoxDecoration(
-                                color: primary.withValues(alpha: 0.16),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: primary.withValues(alpha: 0.45),
-                                  width: 2,
-                                ),
-                              ),
-                              child: Icon(LucideIcons.radioTower,
-                                  color: primary, size: 34),
-                            ),
-                            const SizedBox(height: 14),
-                            const Text(
-                              'Live preview',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 24,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              _content.text.trim().isEmpty
-                                  ? 'Mavzu kiritilganda shu yerda ko\'rinadi'
-                                  : _content.text.trim(),
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Positioned(
-                        left: 16,
-                        top: 16,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEF4444),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(LucideIcons.radio,
-                                  color: Colors.white, size: 14),
-                              SizedBox(width: 6),
-                              Text(
-                                'LIVE',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        right: 16,
-                        top: 16,
-                        child: Row(
-                          children: [
-                            _LivePill(
-                              icon: LucideIcons.users,
-                              label: '0',
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 8),
-                            _LivePill(
-                              icon: LucideIcons.messageCircle,
-                              label: _liveChatEnabled ? 'Chat' : 'Off',
-                              color: Colors.white,
-                            ),
-                          ],
-                        ),
-                      ),
+                      IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: const Icon(LucideIcons.x)),
                     ],
                   ),
-                ),
-              );
-
-              final controls = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildIdentityRow(c, primary, profile),
-                  const SizedBox(height: 16),
                   TextField(
-                    controller: _content,
-                    maxLength: 150,
-                    onChanged: (_) => setState(() {}),
+                    controller: _storyMentionSearch,
+                    autofocus: true,
                     decoration: InputDecoration(
-                      hintText: 'Live efir mavzusini kiriting...',
+                      prefixIcon: const Icon(LucideIcons.search, size: 16),
+                      hintText: 'Username yoki ism...',
                       filled: true,
                       fillColor: c.muted,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(color: c.border),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(color: c.border),
-                      ),
-                      counterStyle:
-                          TextStyle(color: c.mutedForeground, fontSize: 11),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: c.border),
-                    ),
-                    child: Column(
-                      children: [
-                        _LiveSwitchTile(
-                          icon: LucideIcons.messageCircle,
-                          title: 'Jonli chat',
-                          subtitle: 'Tomoshabinlar yozishi mumkin',
-                          value: _liveChatEnabled,
-                          onChanged: (v) =>
-                              setState(() => _liveChatEnabled = v),
-                          colors: c,
-                        ),
-                        Divider(height: 1, color: c.border),
-                        _LiveSwitchTile(
-                          icon: LucideIcons.heart,
-                          title: 'Reaksiyalar',
-                          subtitle: 'Like va real-time reaksiyalar',
-                          value: _liveReactionsEnabled,
-                          onChanged: (v) =>
-                              setState(() => _liveReactionsEnabled = v),
-                          colors: c,
-                        ),
-                        Divider(height: 1, color: c.border),
-                        _LiveSwitchTile(
-                          icon: LucideIcons.clapperboard,
-                          title: 'Yozib olish',
-                          subtitle: 'Live tugagach replay saqlanadi',
-                          value: _liveRecordingEnabled,
-                          onChanged: (v) =>
-                              setState(() => _liveRecordingEnabled = v),
-                          colors: c,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: c.border),
-                    ),
-                    child: Column(
-                      children: [
-                        _LiveFeatureItem(
-                          icon: LucideIcons.shieldCheck,
-                          title: 'Xavfsiz efir',
-                          subtitle: 'Moderatorlar va report oqimi tayyor',
-                          c: c,
-                        ),
-                        const SizedBox(height: 14),
-                        _LiveFeatureItem(
-                          icon: LucideIcons.radioTower,
-                          title: 'Past kechikish',
-                          subtitle: 'Tomoshabinlar bilan tez muloqot',
-                          c: c,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: FilledButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const LiveStreamPage()),
-                      ),
-                      icon: const Icon(LucideIcons.radio, size: 22),
-                      label: const Text(
-                        'Efirni boshlash',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
                       ),
                     ),
+                    onChanged: (v) => search(v, setSheet),
+                    onSubmitted: (v) {
+                      final raw = v.trim().replaceFirst(RegExp(r'^@'), '');
+                      if (raw.isEmpty) return;
+                      final mention = '@$raw';
+                      if (!_storyMentions.contains(mention)) {
+                        setState(() => _storyMentions.add(mention));
+                      }
+                      Navigator.pop(ctx);
+                    },
                   ),
-                ],
-              );
-
-              return wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 6, child: preview),
-                        const SizedBox(width: 34),
-                        Expanded(flex: 5, child: controls),
-                      ],
+                  const SizedBox(height: 10),
+                  if (loading)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: CircularProgressIndicator(),
                     )
-                  : Column(
-                      children: [
-                        preview,
-                        const SizedBox(height: 24),
-                        controls,
-                      ],
-                    );
-            },
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: results.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: c.border),
+                        itemBuilder: (_, i) {
+                          final p = results[i];
+                          final username = p['username']?.toString() ?? '';
+                          final display =
+                              p['display_name']?.toString() ?? username;
+                          return Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () {
+                                if (username.isEmpty) return;
+                                final mention = '@$username';
+                                if (!_storyMentions.contains(mention)) {
+                                  setState(() => _storyMentions.add(mention));
+                                }
+                                Navigator.pop(ctx);
+                              },
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                child: Row(
+                                  children: [
+                                    StoryAvatarRing(
+                                      userId: p['id']?.toString(),
+                                      avatarUrl: p['avatar_url']?.toString(),
+                                      fallback: display.isEmpty
+                                          ? 'U'
+                                          : display[0].toUpperCase(),
+                                      size: 36,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(display,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  color: c.foreground,
+                                                  fontWeight: FontWeight.w700)),
+                                          Text('@$username',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  color: c.mutedForeground,
+                                                  fontSize: 12)),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  // Helper methods and banners
-  Widget _buildScheduleBanner(AlsamosColors c, Color primary) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: primary.withValues(alpha: 0.25)),
-      ),
-      child: Row(children: [
-        Icon(LucideIcons.calendar, size: 16, color: primary),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text(
-          'Rejalashtirilgan: ${_fmtSchedule(_scheduledAt!)}',
-          style: TextStyle(
-              fontSize: 13, color: primary, fontWeight: FontWeight.w600),
-        )),
-        GestureDetector(
-          onTap: () => setState(() => _scheduledAt = null),
-          child: Icon(LucideIcons.x, size: 16, color: primary),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildPollBanner(AlsamosColors c) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF8B5CF6).withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: const Color(0xFF8B5CF6).withValues(alpha: 0.25)),
-      ),
-      child: Row(children: [
-        const Icon(LucideIcons.barChart3, size: 16, color: Color(0xFF8B5CF6)),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text(
-          'So\'rovnoma: ${_poll!['question'] ?? ''} (${(_poll!['options'] as List?)?.length ?? 0} variant)',
-          style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFF8B5CF6),
-              fontWeight: FontWeight.w600),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        )),
-        GestureDetector(
-          onTap: () => setState(() => _poll = null),
-          child: const Icon(LucideIcons.x, size: 16, color: Color(0xFF8B5CF6)),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildMusicBanner(AlsamosColors c) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEC4899).withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: const Color(0xFFEC4899).withValues(alpha: 0.25)),
-      ),
-      child: Row(children: [
-        const Icon(LucideIcons.music, size: 16, color: Color(0xFFEC4899)),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text(
-          'Musiqa: $_musicTrack',
-          style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFFEC4899),
-              fontWeight: FontWeight.w600),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        )),
-        GestureDetector(
-          onTap: () => setState(() => _musicTrack = null),
-          child: const Icon(LucideIcons.x, size: 16, color: Color(0xFFEC4899)),
-        ),
-      ]),
+        );
+      },
     );
   }
 
@@ -2018,17 +2275,20 @@ class _CreatePageState extends ConsumerState<CreatePage> {
                       color: c.border, borderRadius: BorderRadius.circular(2))),
               const SizedBox(height: 8),
               for (final v in ['public', 'followers', 'private'])
-                ListTile(
-                  leading: Icon(_visIcon(v)),
-                  title: Text(_visLabel(v)),
-                  trailing: _visibility == v
-                      ? Icon(LucideIcons.check,
-                          color: Theme.of(context).colorScheme.primary)
-                      : null,
-                  onTap: () {
-                    setState(() => _visibility = v);
-                    Navigator.pop(context);
-                  },
+                Material(
+                  color: Colors.transparent,
+                  child: ListTile(
+                    leading: Icon(_visIcon(v)),
+                    title: Text(_visLabel(v)),
+                    trailing: _visibility == v
+                        ? Icon(LucideIcons.check,
+                            color: Theme.of(context).colorScheme.primary)
+                        : null,
+                    onTap: () {
+                      setState(() => _visibility = v);
+                      Navigator.pop(context);
+                    },
+                  ),
                 ),
               const SizedBox(height: 8),
             ],
@@ -2075,505 +2335,66 @@ class _CreatePageState extends ConsumerState<CreatePage> {
   }
 }
 
-// Media chip button widget
-class _MediaChip extends StatelessWidget {
+class _IdentityPill extends StatelessWidget {
   final IconData icon;
   final String label;
-  final Color color;
+  final AlsamosColors colors;
   final VoidCallback onTap;
-  const _MediaChip({
+  final IconData? trailing;
+  final bool selected;
+
+  const _IdentityPill({
     required this.icon,
     required this.label,
-    required this.color,
+    required this.colors,
     required this.onTap,
+    this.trailing,
+    this.selected = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final c = AlsamosColors.of(context);
+    final primary = Theme.of(context).colorScheme.primary;
+    final accent = selected ? primary : colors.mutedForeground;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(999),
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.10),
+            color: selected ? primary.withValues(alpha: 0.10) : colors.muted,
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: color.withValues(alpha: 0.25)),
+            border: Border.all(
+              color: selected ? primary.withValues(alpha: 0.35) : colors.border,
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: color),
+              Icon(icon, size: 13, color: accent),
               const SizedBox(width: 6),
-              Text(label,
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 12,
-                      color: c.foreground,
-                      fontWeight: FontWeight.w600)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyMediaStage extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final Color primary;
-  final VoidCallback? onImage;
-  final VoidCallback? onVideo;
-  final VoidCallback? onFile;
-
-  const _EmptyMediaStage({
-    required this.title,
-    required this.subtitle,
-    required this.primary,
-    this.onImage,
-    this.onVideo,
-    this.onFile,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AlsamosColors.of(context);
-    return Container(
-      constraints: const BoxConstraints(minHeight: 420),
-      padding: const EdgeInsets.all(24),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0F172A), Color(0xFF020617)],
-        ),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: primary.withValues(alpha: 0.14),
-                shape: BoxShape.circle,
-                border: Border.all(color: primary.withValues(alpha: 0.35)),
-              ),
-              child: Icon(LucideIcons.uploadCloud, color: primary, size: 36),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 8),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 380),
-              child: Text(
-                subtitle,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  height: 1.35,
-                  fontWeight: FontWeight.w500,
+                    fontSize: 12,
+                    color: selected ? primary : colors.mutedForeground,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                if (onImage != null)
-                  _MediaChip(
-                    icon: LucideIcons.image,
-                    label: 'Rasm',
-                    color: const Color(0xFF22C55E),
-                    onTap: onImage!,
-                  ),
-                if (onVideo != null)
-                  _MediaChip(
-                    icon: LucideIcons.video,
-                    label: 'Video',
-                    color: const Color(0xFF3B82F6),
-                    onTap: onVideo!,
-                  ),
-                if (onFile != null)
-                  _MediaChip(
-                    icon: LucideIcons.file,
-                    label: 'Fayl',
-                    color: const Color(0xFF8B5CF6),
-                    onTap: onFile!,
-                  ),
+              if (trailing != null) ...[
+                const SizedBox(width: 4),
+                Icon(trailing, size: 12, color: colors.mutedForeground),
               ],
-            ),
-            const SizedBox(height: 14),
-            Text(
-              'Drag/drop keyin ulanadi. Hozir gallery va file picker tayyor.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: c.mutedForeground,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LocalMediaFrame extends StatefulWidget {
-  final XFile file;
-  final double? aspectRatio;
-  final bool forceReel;
-  final VoidCallback onRemove;
-
-  const _LocalMediaFrame({
-    required this.file,
-    required this.aspectRatio,
-    required this.forceReel,
-    required this.onRemove,
-  });
-
-  @override
-  State<_LocalMediaFrame> createState() => _LocalMediaFrameState();
-}
-
-class _LocalMediaFrameState extends State<_LocalMediaFrame> {
-  double? _imageAspect;
-
-  bool get _isVideo => RegExp(
-        r'\.(mp4|mov|webm|m4v|avi|mkv|flv|wmv)$',
-        caseSensitive: false,
-      ).hasMatch(widget.file.path);
-
-  bool get _isImage => RegExp(
-        r'\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)$',
-        caseSensitive: false,
-      ).hasMatch(widget.file.path);
-
-  @override
-  void initState() {
-    super.initState();
-    _resolveImageAspect();
-  }
-
-  @override
-  void didUpdateWidget(covariant _LocalMediaFrame oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.file.path != widget.file.path) {
-      _imageAspect = null;
-      _resolveImageAspect();
-    }
-  }
-
-  void _resolveImageAspect() {
-    if (!_isImage || widget.aspectRatio != null) return;
-    final provider = FileImage(File(widget.file.path));
-    final stream = provider.resolve(const ImageConfiguration());
-    late ImageStreamListener listener;
-    listener = ImageStreamListener(
-      (info, _) {
-        final width = info.image.width;
-        final height = info.image.height;
-        if (height > 0 && mounted) {
-          setState(() => _imageAspect = width / height);
-        }
-        stream.removeListener(listener);
-      },
-      onError: (_, __) => stream.removeListener(listener),
-    );
-    stream.addListener(listener);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AlsamosColors.of(context);
-    final rawRatio =
-        widget.aspectRatio ?? _imageAspect ?? (_isVideo ? 16 / 9 : 1);
-    final ratio =
-        widget.forceReel ? 9 / 16 : rawRatio.clamp(0.52, 2.2).toDouble();
-    final fit = widget.aspectRatio == null && !widget.forceReel
-        ? BoxFit.contain
-        : BoxFit.cover;
-
-    return AspectRatio(
-      aspectRatio: ratio,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          DecoratedBox(
-            decoration: const BoxDecoration(color: Colors.black),
-            child: _isVideo
-                ? _LocalVideoPreview(path: widget.file.path, fit: fit)
-                : _isImage
-                    ? Image.file(File(widget.file.path), fit: fit)
-                    : _UnsupportedLocalPreview(path: widget.file.path),
-          ),
-          Positioned(
-            top: 10,
-            right: 10,
-            child: Material(
-              color: Colors.black.withValues(alpha: 0.62),
-              shape: const CircleBorder(),
-              child: IconButton(
-                onPressed: widget.onRemove,
-                icon: const Icon(LucideIcons.x, color: Colors.white, size: 18),
-                tooltip: 'Olib tashlash',
-              ),
-            ),
-          ),
-          if (widget.aspectRatio == null && !widget.forceReel)
-            Positioned(
-              left: 10,
-              bottom: 10,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.62),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _isVideo ? LucideIcons.video : LucideIcons.maximize2,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Original',
-                      style: TextStyle(
-                        color: c.foreground.computeLuminance() > 0.5
-                            ? Colors.white
-                            : Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LocalVideoPreview extends StatefulWidget {
-  final String path;
-  final BoxFit fit;
-
-  const _LocalVideoPreview({required this.path, required this.fit});
-
-  @override
-  State<_LocalVideoPreview> createState() => _LocalVideoPreviewState();
-}
-
-class _LocalVideoPreviewState extends State<_LocalVideoPreview> {
-  VideoPlayerController? _controller;
-  Object? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  @override
-  void didUpdateWidget(covariant _LocalVideoPreview oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.path != widget.path) {
-      _controller?.dispose();
-      _controller = null;
-      _error = null;
-      _init();
-    }
-  }
-
-  Future<void> _init() async {
-    try {
-      final controller = VideoPlayerController.file(File(widget.path));
-      _controller = controller;
-      await controller.initialize();
-      await controller.setLooping(true);
-      await controller.setVolume(0);
-      if (mounted) setState(() {});
-    } catch (e) {
-      if (mounted) setState(() => _error = e);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = _controller;
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(LucideIcons.videoOff, color: Colors.white70, size: 42),
-              SizedBox(height: 10),
-              Text(
-                'Video preview ochilmadi',
-                textAlign: TextAlign.center,
-                style:
-                    TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
-              ),
             ],
           ),
-        ),
-      );
-    }
-    if (controller == null || !controller.value.isInitialized) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          controller.value.isPlaying ? controller.pause() : controller.play();
-        });
-      },
-      child: Stack(
-        fit: StackFit.expand,
-        alignment: Alignment.center,
-        children: [
-          FittedBox(
-            fit: widget.fit,
-            child: SizedBox(
-              width: controller.value.size.width,
-              height: controller.value.size.height,
-              child: VideoPlayer(controller),
-            ),
-          ),
-          if (!controller.value.isPlaying)
-            Container(
-              width: 62,
-              height: 62,
-              decoration: const BoxDecoration(
-                color: Colors.black54,
-                shape: BoxShape.circle,
-              ),
-              child:
-                  const Icon(LucideIcons.play, color: Colors.white, size: 28),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _UnsupportedLocalPreview extends StatelessWidget {
-  final String path;
-
-  const _UnsupportedLocalPreview({required this.path});
-
-  @override
-  Widget build(BuildContext context) {
-    final name = path.split(RegExp(r'[/\\]')).last;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(LucideIcons.file, color: Colors.white70, size: 46),
-            const SizedBox(height: 12),
-            Text(
-              name,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MediaThumb extends StatelessWidget {
-  final XFile file;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _MediaThumb({
-    required this.file,
-    required this.selected,
-    required this.onTap,
-  });
-
-  bool get _isVideo => RegExp(
-        r'\.(mp4|mov|webm|m4v|avi|mkv|flv|wmv)$',
-        caseSensitive: false,
-      ).hasMatch(file.path);
-
-  bool get _isImage => RegExp(
-        r'\.(jpg|jpeg|png|gif|webp|bmp|heic|heif)$',
-        caseSensitive: false,
-      ).hasMatch(file.path);
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        width: 74,
-        height: 74,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected ? primary : Colors.white24,
-            width: selected ? 2 : 1,
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (_isImage)
-              Image.file(File(file.path), fit: BoxFit.cover)
-            else
-              const Center(
-                child: Icon(LucideIcons.video, color: Colors.white70),
-              ),
-            if (_isVideo)
-              const Center(
-                child:
-                    Icon(LucideIcons.playCircle, color: Colors.white, size: 26),
-              ),
-          ],
         ),
       ),
     );
@@ -2642,169 +2463,6 @@ class _FileAttachmentTile extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ReelActionIcon extends StatelessWidget {
-  final IconData icon;
-
-  const _ReelActionIcon({required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: Icon(icon, color: Colors.white, size: 28),
-    );
-  }
-}
-
-class _LiveSwitchTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final AlsamosColors colors;
-
-  const _LiveSwitchTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.onChanged,
-    required this.colors,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SwitchListTile(
-      value: value,
-      onChanged: onChanged,
-      activeThumbColor: Theme.of(context).colorScheme.primary,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      secondary: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: colors.muted,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(icon, color: colors.mutedForeground, size: 20),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(color: colors.mutedForeground, fontSize: 12),
-      ),
-    );
-  }
-}
-
-class _LivePill extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  const _LivePill({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 14),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LiveGridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.05)
-      ..strokeWidth = 1;
-    const gap = 42.0;
-    for (double x = 0; x < size.width; x += gap) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-    for (double y = 0; y < size.height; y += gap) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// Live feature item widget
-class _LiveFeatureItem extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final AlsamosColors c;
-
-  const _LiveFeatureItem({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.c,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: c.muted,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, size: 22, color: c.mutedForeground),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 14)),
-              const SizedBox(height: 2),
-              Text(subtitle,
-                  style: TextStyle(color: c.mutedForeground, fontSize: 12)),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

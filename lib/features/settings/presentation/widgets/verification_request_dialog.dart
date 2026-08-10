@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 /// Flutter port of web `components/profile/VerificationRequestDialog.tsx`.
 /// Submits a row to Supabase `verification_requests` (user_id, full_name,
@@ -68,16 +70,10 @@ class _VerificationRequestDialogState extends ConsumerState<VerificationRequestD
       });
       if (!mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text("Tasdiqlash so'rovi yuborildi"),
-        backgroundColor: Color(0xFF22C55E),
-      ));
+      AppToast.success(context, "Tasdiqlash so'rovi yuborildi");
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Xatolik: $e'),
-        backgroundColor: const Color(0xFFEF4444),
-      ));
+      AppToast.error(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

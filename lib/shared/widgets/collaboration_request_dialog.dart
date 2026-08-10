@@ -3,7 +3,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_colors.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 import 'verified_badge.dart';
 
 /// 1:1 port of web `CollaborationRequestDialog.tsx` (275L).
@@ -221,13 +221,14 @@ class _CollabState extends State<_Collab> with SingleTickerProviderStateMixin {
           children: [
             Row(
               children: [
-                UserAvatar(
+                StoryAvatarRing(
+                  userId: it.otherUserId,
                   avatarUrl: it.otherAvatarUrl,
                   fallback: it.otherDisplayName.isNotEmpty
                       ? it.otherDisplayName[0].toUpperCase()
                       : '?',
-                  size: 36,
-                  userId: it.otherUserId,
+                  size: 30,
+                  ringPadding: 3,
                 ),
                 const SizedBox(width: 10),
                 Expanded(

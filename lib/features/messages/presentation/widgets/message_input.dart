@@ -1,19 +1,28 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import 'emoji_picker.dart';
+import '../../../../core/media_kit/domain/entities/media_attachment.dart';
+import '../../../../core/media_kit/domain/entities/media_composer_config.dart';
+import '../../../../core/media_kit/presentation/controllers/media_composer_controller.dart';
+import '../../../../core/media_kit/presentation/widgets/expression_panel.dart';
+import '../../../../core/media_kit/presentation/widgets/video_note_recorder.dart';
+import '../../../../shared/communication/voice/voice_recorder_manager.dart';
 import 'gif_picker.dart';
 import 'mention_autocomplete.dart';
 import 'hashtag_autocomplete.dart';
 import 'schedule_message_dialog.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
+import '../../../../shared/services/camera_capability.dart';
 
 // Telegram-style message composer — matches web messages/MessageInput.tsx behavior.
-class MessageInput extends StatefulWidget {
+class MessageInput extends ConsumerStatefulWidget {
   final String conversationId;
   final Future<void> Function(String text, {List<String>? mediaUrls, String? mediaType, DateTime? scheduledFor}) onSend;
   final void Function(bool)? onTyping;
@@ -22,13 +31,14 @@ class MessageInput extends StatefulWidget {
   final String? editingMessageId;
   final String? editingInitial;
   final VoidCallback? onCancelEdit;
-  const MessageInput({super.key, required this.conversationId, required this.onSend, this.onTyping, this.replyingTo, this.onCancelReply, this.editingMessageId, this.editingInitial, this.onCancelEdit});
+  final void Function(MediaAttachment)? onMediaSend;
+  const MessageInput({super.key, required this.conversationId, required this.onSend, this.onTyping, this.replyingTo, this.onCancelReply, this.editingMessageId, this.editingInitial, this.onCancelEdit, this.onMediaSend});
 
   @override
-  State<MessageInput> createState() => _MessageInputState();
+  ConsumerState<MessageInput> createState() => _MessageInputState();
 }
 
-class _MessageInputState extends State<MessageInput> {
+class _MessageInputState extends ConsumerState<MessageInput> {
   final _ctrl = TextEditingController();
   final _focus = FocusNode();
   Timer? _typingTimer;
@@ -36,12 +46,23 @@ class _MessageInputState extends State<MessageInput> {
   bool _showMentionPopover = false;
   bool _showHashtagPopover = false;
   String _queryFragment = '';
+  bool _showExpressionPanel = false;
+  ExpressionPanelTab _expressionTab = ExpressionPanelTab.emoji;
+  bool _isRecordingVoice = false;
+  double _voiceSlideX = 0;
 
   @override
   void initState() {
     super.initState();
     if (widget.editingInitial != null) _ctrl.text = widget.editingInitial!;
     _ctrl.addListener(_onChanged);
+    _focus.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    if (_focus.hasFocus && _showExpressionPanel) {
+      setState(() => _showExpressionPanel = false);
+    }
   }
 
   @override
@@ -58,6 +79,7 @@ class _MessageInputState extends State<MessageInput> {
   void dispose() {
     _typingTimer?.cancel();
     _ctrl.removeListener(_onChanged);
+    _focus.removeListener(_onFocusChanged);
     _ctrl.dispose();
     _focus.dispose();
     super.dispose();
@@ -117,8 +139,14 @@ class _MessageInputState extends State<MessageInput> {
   }
 
   Future<void> _pickAndUpload(ImageSource source, {bool video = false}) async {
+    var effectiveSource = source;
+    if (source == ImageSource.camera &&
+        !CameraCapability.supportsImagePickerCapture) {
+      AppToast.warning(context, CameraCapability.unsupportedCaptureMessage);
+      effectiveSource = ImageSource.gallery;
+    }
     final picker = ImagePicker();
-    final file = video ? await picker.pickVideo(source: source) : await picker.pickImage(source: source, imageQuality: 85);
+    final file = video ? await picker.pickVideo(source: effectiveSource) : await picker.pickImage(source: effectiveSource, imageQuality: 85);
     if (file == null) return;
     if (mounted) setState(() => _isUploading = true);
     try {
@@ -131,10 +159,88 @@ class _MessageInputState extends State<MessageInput> {
       await widget.onSend(_ctrl.text.trim(), mediaUrls: [url], mediaType: video ? 'video' : 'image');
       _ctrl.clear();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Yuklashda xatolik: $e')));
+      if (mounted) AppToast.error(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
+  }
+
+  void _toggleExpressionPanel() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (_showExpressionPanel) {
+        _showExpressionPanel = false;
+        _focus.requestFocus();
+      } else {
+        _showExpressionPanel = true;
+        _focus.unfocus();
+      }
+    });
+  }
+
+  void _onExpressionEmojiSelected(String emoji) {
+    _insertAtCursor(emoji);
+  }
+
+  void _onStickerSelected(MediaAttachment sticker) {
+    setState(() => _showExpressionPanel = false);
+    widget.onMediaSend?.call(sticker);
+  }
+
+  void _onGifSelected(MediaAttachment gif) {
+    setState(() => _showExpressionPanel = false);
+    if (gif.remoteUrl != null) {
+      widget.onSend('', mediaUrls: [gif.remoteUrl!], mediaType: 'gif');
+    }
+  }
+
+  Future<void> _recordVideoNote() async {
+    final result = await VideoNoteRecorder.show(context);
+    if (result != null) {
+      widget.onMediaSend?.call(result);
+    }
+  }
+
+  Future<void> _onVoiceLongPressStart(LongPressStartDetails _) async {
+    HapticFeedback.heavyImpact();
+    final recorder = ref.read(voiceRecorderManagerProvider.notifier);
+    final started = await recorder.start();
+    if (!started) return;
+    setState(() {
+      _isRecordingVoice = true;
+      _voiceSlideX = 0;
+    });
+  }
+
+  void _onVoiceLongPressMoveUpdate(LongPressMoveUpdateDetails d) {
+    if (!_isRecordingVoice) return;
+    setState(() => _voiceSlideX = d.offsetFromOrigin.dx.clamp(-200.0, 0.0));
+    if (_voiceSlideX < -100) {
+      _cancelVoiceRecording();
+    }
+  }
+
+  Future<void> _onVoiceLongPressEnd(LongPressEndDetails _) async {
+    if (!_isRecordingVoice) return;
+    final recorder = ref.read(voiceRecorderManagerProvider.notifier);
+    final result = await recorder.stop();
+    setState(() => _isRecordingVoice = false);
+    if (result != null) {
+      final attachment = MediaAttachment(
+        type: MediaAttachmentType.voiceNote,
+        localPath: result.path,
+        mimeType: result.mimeType,
+        durationMs: result.duration.inMilliseconds,
+        waveform: result.waveform,
+      );
+      widget.onMediaSend?.call(attachment);
+    }
+  }
+
+  Future<void> _cancelVoiceRecording() async {
+    final recorder = ref.read(voiceRecorderManagerProvider.notifier);
+    await recorder.cancel();
+    setState(() => _isRecordingVoice = false);
   }
 
   void _showAttachSheet() {
@@ -148,6 +254,7 @@ class _MessageInputState extends State<MessageInput> {
         ListTile(leading: const Icon(LucideIcons.camera, color: Color(0xFFEAB308)), title: const Text('Camera'), onTap: () { Navigator.pop(sheetCtx); _pickAndUpload(ImageSource.camera); }),
         ListTile(leading: const Icon(LucideIcons.video, color: Color(0xFF3B82F6)), title: const Text('Video'), onTap: () { Navigator.pop(sheetCtx); _pickAndUpload(ImageSource.gallery, video: true); }),
         ListTile(leading: const Icon(LucideIcons.gift, color: Color(0xFFEC4899)), title: const Text('GIF'), onTap: () { Navigator.pop(sheetCtx); GifPickerSheet.show(context, (url) => widget.onSend('', mediaUrls: [url], mediaType: 'gif')); }),
+        ListTile(leading: const Icon(LucideIcons.circle, color: Color(0xFF06B6D4)), title: const Text('Video xabar'), onTap: () { Navigator.pop(sheetCtx); _recordVideoNote(); }),
         ListTile(leading: const Icon(LucideIcons.clock, color: Color(0xFF8B5CF6)), title: const Text('Schedule message'), onTap: () { Navigator.pop(sheetCtx); ScheduleMessageDialog.show(context, messagePreview: _ctrl.text, onSchedule: (when) => _send(scheduledFor: when)); }),
       ])),
     );
@@ -325,7 +432,6 @@ class _MessageInputState extends State<MessageInput> {
                     ),
                   ),
                 ),
-                // Web: absolute right-3 top-1/2 EmojiPicker h-8 w-8
                 SizedBox(
                   width: 32,
                   height: 32,
@@ -334,10 +440,10 @@ class _MessageInputState extends State<MessageInput> {
                     padding: EdgeInsets.zero,
                     constraints:
                         const BoxConstraints(minWidth: 32, minHeight: 32),
-                    icon: Icon(LucideIcons.smile,
-                        size: 18, color: colors.mutedForeground),
-                    onPressed: () => EmojiPickerSheet.show(
-                        context, (e) => _insertAtCursor(e)),
+                    icon: Icon(
+                        _showExpressionPanel ? LucideIcons.keyboard : LucideIcons.smile,
+                        size: 18, color: _showExpressionPanel ? primary : colors.mutedForeground),
+                    onPressed: _toggleExpressionPanel,
                   ),
                 ),
               ]),
@@ -372,23 +478,42 @@ class _MessageInputState extends State<MessageInput> {
               ),
             )
           else
-            _VoiceMicButton(
-              mutedColor: colors.muted,
-              iconColor: colors.mutedForeground,
-              primary: primary,
-              onTapShowHint: () {
+            GestureDetector(
+              onLongPressStart: _onVoiceLongPressStart,
+              onLongPressMoveUpdate: _onVoiceLongPressMoveUpdate,
+              onLongPressEnd: _onVoiceLongPressEnd,
+              onTap: () {
                 HapticFeedback.lightImpact();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content:
-                        Text('Press and hold to record voice')));
+                AppToast.info(context, "Ovoz yozish uchun bosib turing");
               },
-              onLongPressStart: () => HapticFeedback.mediumImpact(),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _isRecordingVoice ? Colors.red.withValues(alpha: 0.1) : colors.muted,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  LucideIcons.mic,
+                  size: 20,
+                  color: _isRecordingVoice ? Colors.red : colors.mutedForeground,
+                ),
+              ),
             ),
         ]),
         if (_isUploading)
           const Padding(
               padding: EdgeInsets.only(top: 6),
               child: LinearProgressIndicator(minHeight: 2)),
+        if (_showExpressionPanel)
+          ExpressionPanel(
+            config: MediaComposerConfig.chat,
+            activeTab: _expressionTab,
+            onTabChanged: (tab) => setState(() => _expressionTab = tab),
+            onEmojiSelected: _onExpressionEmojiSelected,
+            onStickerSelected: _onStickerSelected,
+            onGifSelected: _onGifSelected,
+          ),
       ]),
     );
   }

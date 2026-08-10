@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math' as math;
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -15,15 +19,25 @@ class AuthState {
   final User? user;
   final Profile? profile;
   final bool isLoading;
+  final bool mfaRequired;
+  final String? mfaFactorId;
 
-  const AuthState({this.user, this.profile, this.isLoading = true});
+  const AuthState({
+    this.user,
+    this.profile,
+    this.isLoading = true,
+    this.mfaRequired = false,
+    this.mfaFactorId,
+  });
 
-  bool get isAuthenticated => user != null;
+  bool get isAuthenticated => user != null && !mfaRequired;
 
   AuthState copyWith({
     Object? user = _unset,
     Object? profile = _unset,
     bool? isLoading,
+    bool? mfaRequired,
+    Object? mfaFactorId = _unset,
     bool clearUser = false,
   }) =>
       AuthState(
@@ -34,10 +48,20 @@ class AuthState {
             ? null
             : (identical(profile, _unset) ? this.profile : profile as Profile?),
         isLoading: isLoading ?? this.isLoading,
+        mfaRequired: clearUser ? false : (mfaRequired ?? this.mfaRequired),
+        mfaFactorId: clearUser
+            ? null
+            : (identical(mfaFactorId, _unset)
+                ? this.mfaFactorId
+                : mfaFactorId as String?),
       );
 }
 
 const Object _unset = Object();
+
+class MfaRequiredException implements Exception {
+  const MfaRequiredException();
+}
 
 class StoredAccount {
   final String id;
@@ -77,11 +101,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   StreamSubscription<dynamic>? _authSubscription;
+  Future<void>? _pendingSession;
 
   void _init() {
     final session = supabase.auth.currentSession;
     if (session != null) {
-      _onSession(session.user);
+      _pendingSession = _onSession(session.user);
     } else {
       state = state.copyWith(isLoading: false);
     }
@@ -89,14 +114,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _authSubscription = supabase.auth.onAuthStateChange.listen((data) {
       final user = data.session?.user;
       if (user != null) {
-        _onSession(user);
+        _pendingSession = _pendingSession?.then((_) => _onSession(user)) ??
+            _onSession(user);
       } else {
+        _pendingSession = null;
         state = state.copyWith(clearUser: true, isLoading: false);
       }
     });
   }
 
   Future<void> _onSession(User user) async {
+    final factorId = await _requiredMfaFactorId();
+    if (factorId != null) {
+      state = state.copyWith(
+        user: user,
+        profile: null,
+        isLoading: false,
+        mfaRequired: true,
+        mfaFactorId: factorId,
+      );
+      return;
+    }
     state = state.copyWith(user: user, profile: null, isLoading: true);
     await loadProfile(user.id);
     // Update online status (best-effort)
@@ -106,8 +144,134 @@ class AuthNotifier extends StateNotifier<AuthState> {
         'last_seen': DateTime.now().toUtc().toIso8601String(),
       }).eq('id', user.id);
     } catch (_) {}
+    await _registerCurrentSession(user);
     await _persistAccount(user);
     state = state.copyWith(isLoading: false);
+  }
+
+  Future<void> _registerCurrentSession(User user) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      var sessionId = prefs.getString('alsamos_device_session_id');
+      if (sessionId == null || sessionId.isEmpty) {
+        sessionId = _randomUuid();
+        await prefs.setString('alsamos_device_session_id', sessionId);
+      }
+
+      final info = await _deviceSnapshot();
+      final package = await PackageInfo.fromPlatform();
+      await supabase.from('user_sessions').upsert({
+        'id': sessionId,
+        'user_id': user.id,
+        'device_name': info.deviceName,
+        'device_type': info.deviceType,
+        'platform': info.platform,
+        'os_name': info.osName,
+        'os_version': info.osVersion,
+        'app_name': package.appName.isEmpty ? 'Alsamos' : package.appName,
+        'app_version': package.version,
+        'is_current': true,
+        'last_active_at': DateTime.now().toUtc().toIso8601String(),
+        'accept_secret_chats': true,
+        'accept_incoming_calls': true,
+      }, onConflict: 'id');
+      await supabase
+          .from('user_sessions')
+          .update({'is_current': false})
+          .eq('user_id', user.id)
+          .neq('id', sessionId);
+    } catch (_) {}
+  }
+
+  String _randomUuid() {
+    final r = math.Random.secure();
+    int next(int max) => r.nextInt(max);
+    String hex(int value, int width) =>
+        value.toRadixString(16).padLeft(width, '0');
+    return '${hex(next(0x100000000), 8)}-'
+        '${hex(next(0x10000), 4)}-'
+        '4${hex(next(0x1000), 3)}-'
+        '${hex(0x8000 | next(0x4000), 4)}-'
+        '${hex(next(0x1000000), 6)}${hex(next(0x1000000), 6)}';
+  }
+
+  Future<_DeviceSnapshot> _deviceSnapshot() async {
+    final plugin = DeviceInfoPlugin();
+    if (kIsWeb) {
+      final info = await plugin.webBrowserInfo;
+      return _DeviceSnapshot(
+        deviceName: info.browserName.name,
+        deviceType: 'web',
+        platform: 'web',
+        osName: info.platform ?? 'Web',
+        osVersion: info.userAgent,
+      );
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        final info = await plugin.androidInfo;
+        return _DeviceSnapshot(
+          deviceName: '${info.manufacturer} ${info.model}'.trim(),
+          deviceType: 'mobile',
+          platform: 'android',
+          osName: 'Android',
+          osVersion: info.version.release,
+        );
+      case TargetPlatform.iOS:
+        final info = await plugin.iosInfo;
+        return _DeviceSnapshot(
+          deviceName: info.utsname.machine,
+          deviceType: 'mobile',
+          platform: 'ios',
+          osName: 'iOS',
+          osVersion: info.systemVersion,
+        );
+      case TargetPlatform.macOS:
+        final info = await plugin.macOsInfo;
+        return _DeviceSnapshot(
+          deviceName: info.computerName,
+          deviceType: 'desktop',
+          platform: 'macos',
+          osName: 'macOS',
+          osVersion: info.osRelease,
+        );
+      case TargetPlatform.windows:
+        final info = await plugin.windowsInfo;
+        return _DeviceSnapshot(
+          deviceName: info.computerName,
+          deviceType: 'desktop',
+          platform: 'windows',
+          osName: 'Windows',
+          osVersion: info.displayVersion,
+        );
+      case TargetPlatform.linux:
+        final info = await plugin.linuxInfo;
+        return _DeviceSnapshot(
+          deviceName: info.prettyName,
+          deviceType: 'desktop',
+          platform: 'linux',
+          osName: 'Linux',
+          osVersion: info.version ?? info.versionCodename,
+        );
+      default:
+        return const _DeviceSnapshot(
+          deviceName: 'Alsamos device',
+          deviceType: 'unknown',
+          platform: 'unknown',
+          osName: 'Unknown',
+          osVersion: null,
+        );
+    }
+  }
+
+  Future<String?> _requiredMfaFactorId() async {
+    final level = supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (level.nextLevel != AuthenticatorAssuranceLevels.aal2 ||
+        level.currentLevel == AuthenticatorAssuranceLevels.aal2) {
+      return null;
+    }
+    final factors = await supabase.auth.mfa.listFactors();
+    return factors.totp.isEmpty ? null : factors.totp.first.id;
   }
 
   Future<void> loadProfile(String userId) async {
@@ -134,9 +298,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (trimmed.isEmpty) return null;
     if (trimmed.contains('@')) return trimmed.toLowerCase();
     try {
-      final res = await supabase
-          .rpc('get_email_for_identifier', params: {'_identifier': trimmed})
-          .timeout(const Duration(seconds: 10));
+      final res = await supabase.rpc('get_email_for_identifier', params: {
+        '_identifier': trimmed
+      }).timeout(const Duration(seconds: 10));
       if (res is String && res.isNotEmpty) return res;
       return null;
     } catch (_) {
@@ -157,6 +321,34 @@ class AuthNotifier extends StateNotifier<AuthState> {
       await supabase.auth
           .signInWithPassword(email: email, password: password)
           .timeout(const Duration(seconds: 18));
+      final factorId = await _requiredMfaFactorId();
+      if (factorId != null) {
+        state = state.copyWith(
+          isLoading: false,
+          mfaRequired: true,
+          mfaFactorId: factorId,
+        );
+        throw const MfaRequiredException();
+      }
+    } finally {
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<void> verifyMfaCode(String code) async {
+    final factorId = state.mfaFactorId;
+    if (factorId == null) throw const AuthException('2FA factor topilmadi');
+    state = state.copyWith(isLoading: true);
+    try {
+      await supabase.auth.mfa.challengeAndVerify(
+        factorId: factorId,
+        code: code.trim(),
+      );
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        state = state.copyWith(mfaRequired: false, mfaFactorId: null);
+        await _onSession(user);
+      }
     } finally {
       state = state.copyWith(isLoading: false);
     }
@@ -182,13 +374,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
           'username': finalUsername,
         },
       ).timeout(const Duration(seconds: 18));
-      // If email confirmation required, attempt immediate sign-in.
-      if (res.session == null) {
-        try {
-          await supabase.auth
-              .signInWithPassword(email: email, password: password)
-              .timeout(const Duration(seconds: 18));
-        } catch (_) {/* email confirm required */}
+      if (res.session == null && res.user != null) {
+        await supabase.auth
+            .signInWithPassword(email: email, password: password)
+            .timeout(const Duration(seconds: 18));
       }
     } finally {
       state = state.copyWith(isLoading: false);
@@ -268,14 +457,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// Switch to a stored account. Since Supabase only allows one session per
   /// client, this signs the current user out and reports `needsReauth` so the
   /// UI can prompt for the password (or pre-fill the email on the auth page).
-  Future<({bool needsReauth, String? email, String? error})> switchToStoredAccount(
-      String accountId) async {
+  Future<({bool needsReauth, String? email, String? error})>
+      switchToStoredAccount(String accountId) async {
     if (state.user?.id == accountId) {
       return (needsReauth: false, email: state.user?.email, error: null);
     }
     try {
       final accounts = await listStoredAccounts();
-      final target = accounts.where((a) => a.id == accountId).cast<StoredAccount?>().firstWhere(
+      final target = accounts
+          .where((a) => a.id == accountId)
+          .cast<StoredAccount?>()
+          .firstWhere(
             (_) => true,
             orElse: () => null,
           );
@@ -311,6 +503,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _authSubscription?.cancel();
     super.dispose();
   }
+}
+
+class _DeviceSnapshot {
+  final String deviceName;
+  final String deviceType;
+  final String platform;
+  final String osName;
+  final String? osVersion;
+
+  const _DeviceSnapshot({
+    required this.deviceName,
+    required this.deviceType,
+    required this.platform,
+    required this.osName,
+    required this.osVersion,
+  });
 }
 
 final authProvider =

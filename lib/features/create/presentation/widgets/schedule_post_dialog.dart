@@ -42,19 +42,19 @@ class _SchedulePostDialogState extends State<SchedulePostDialog> {
         Row(children: [
           Container(width: 36, height: 36, decoration: BoxDecoration(color: primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)), child: Icon(LucideIcons.clock, color: primary, size: 18)),
           const SizedBox(width: 10),
-          Text('Rejalashtirish', style: TextStyle(color: colors.foreground, fontSize: 16, fontWeight: FontWeight.w700)),
+          Flexible(child: Text('Rejalashtirish', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: colors.foreground, fontSize: 16, fontWeight: FontWeight.w700))),
         ]),
         const SizedBox(height: 16),
         InkWell(onTap: _pickDate, child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: colors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: colors.border)),
-          child: Row(children: [Icon(LucideIcons.calendar, color: colors.mutedForeground, size: 16), const SizedBox(width: 8), Text(dateFmt, style: TextStyle(color: colors.foreground, fontWeight: FontWeight.w600)), const Spacer(), Icon(LucideIcons.chevronRight, color: colors.mutedForeground, size: 16)]),
+          child: Row(children: [Icon(LucideIcons.calendar, color: colors.mutedForeground, size: 16), const SizedBox(width: 8), Expanded(child: Text(dateFmt, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: colors.foreground, fontWeight: FontWeight.w600))), const SizedBox(width: 8), Icon(LucideIcons.chevronRight, color: colors.mutedForeground, size: 16)]),
         )),
         const SizedBox(height: 10),
         InkWell(onTap: _pickTime, child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: colors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: colors.border)),
-          child: Row(children: [Icon(LucideIcons.clock, color: colors.mutedForeground, size: 16), const SizedBox(width: 8), Text(timeFmt, style: TextStyle(color: colors.foreground, fontWeight: FontWeight.w600, fontFeatures: const [FontFeature.tabularFigures()])), const Spacer(), Icon(LucideIcons.chevronRight, color: colors.mutedForeground, size: 16)]),
+          child: Row(children: [Icon(LucideIcons.clock, color: colors.mutedForeground, size: 16), const SizedBox(width: 8), Expanded(child: Text(timeFmt, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: colors.foreground, fontWeight: FontWeight.w600, fontFeatures: const [FontFeature.tabularFigures()]))), const SizedBox(width: 8), Icon(LucideIcons.chevronRight, color: colors.mutedForeground, size: 16)]),
         )),
         const SizedBox(height: 18),
         Row(children: [

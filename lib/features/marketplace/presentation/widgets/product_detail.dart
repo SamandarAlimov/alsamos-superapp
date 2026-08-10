@@ -3,9 +3,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/services/chat_service.dart';
+import '../../../../core/supabase/supabase_client.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../../data/models/product_model.dart';
 import '../providers/marketplace_provider.dart';
 import 'seller_storefront_sheet.dart';
@@ -32,6 +36,7 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
   int _quantity = 1;
   bool _liked = false;
   bool _expanded = false;
+  bool _messagingSeller = false;
   late final PageController _pager = PageController();
 
   @override
@@ -49,22 +54,67 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
   Future<void> _toggleLike() async {
     final next = !_liked;
     setState(() => _liked = next);
-    final ok = await ref.read(marketplaceRepoProvider).toggleLike(widget.product.id, !next);
+    final ok = await ref
+        .read(marketplaceRepoProvider)
+        .toggleLike(widget.product.id, !next);
     if (!ok && mounted) setState(() => _liked = !next);
   }
 
   Future<void> _addToCart() async {
-    final ok = await ref.read(cartProvider.notifier).add(widget.product.id, quantity: _quantity);
+    final ok = await ref
+        .read(cartProvider.notifier)
+        .add(widget.product.id, quantity: _quantity);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok ? 'Savatga qoʼshildi' : 'Savatga qoʼshib boʼlmadi'),
-    ));
+    if (ok) {
+      AppToast.success(context, 'Savatga qoʼshildi');
+    } else {
+      AppToast.error(context, 'Savatga qoʼshib boʼlmadi');
+    }
   }
 
   Future<void> _buyNow() async {
-    await ref.read(cartProvider.notifier).add(widget.product.id, quantity: _quantity);
+    await ref
+        .read(cartProvider.notifier)
+        .add(widget.product.id, quantity: _quantity);
     if (!mounted) return;
     Navigator.of(context).pop();
+  }
+
+  Future<void> _messageSeller() async {
+    final seller = widget.product.seller;
+    if (seller == null) {
+      if (mounted) {
+        AppToast.error(context, 'Sotuvchi topilmadi');
+      }
+      return;
+    }
+
+    setState(() => _messagingSeller = true);
+
+    try {
+      // Create or find existing conversation with seller
+      final chatService = ChatService(supabase);
+      final conversationId = await chatService.getOrCreateProductConversation(
+        sellerId: seller.userId,
+        productId: widget.product.id,
+        productTitle: widget.product.title,
+      );
+
+      if (!mounted) return;
+      setState(() => _messagingSeller = false);
+
+      if (conversationId != null) {
+        Navigator.of(context).pop(); // Close product detail
+        context.push('/messages/$conversationId');
+      } else {
+        AppToast.error(context, 'Xatolik yuz berdi');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _messagingSeller = false);
+        AppToast.error(context, 'Xatolik yuz berdi');
+      }
+    }
   }
 
   @override
@@ -72,7 +122,9 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
     final c = AlsamosColors.of(context);
     final brand = Theme.of(context).colorScheme.primary;
     final p = widget.product;
-    final images = p.images.isEmpty ? ['https://placehold.co/600x600?text=No+Image'] : p.images;
+    final images = p.images.isEmpty
+        ? ['https://placehold.co/600x600?text=No+Image']
+        : p.images;
     final mq = MediaQuery.of(context);
     return DraggableScrollableSheet(
       initialChildSize: 0.95,
@@ -91,7 +143,7 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: c.border, borderRadius: BorderRadius.circular(8)),
+                  color: c.border, borderRadius: BorderRadius.circular(8)),
             ),
             Expanded(
               child: ListView(
@@ -109,14 +161,16 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                         itemBuilder: (_, i) => CachedNetworkImage(
                           imageUrl: images[i],
                           fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) => Container(color: c.muted),
+                          errorWidget: (_, __, ___) =>
+                              Container(color: c.muted),
                         ),
                       ),
                     ),
                     Positioned(
                       top: mq.padding.top,
                       left: 12,
-                      child: _circleBtn(c, LucideIcons.x, () => Navigator.of(context).pop()),
+                      child: _circleBtn(
+                          c, LucideIcons.x, () => Navigator.of(context).pop()),
                     ),
                     Positioned(
                       top: mq.padding.top,
@@ -140,15 +194,20 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                         right: 0,
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(images.length, (i) => Container(
-                                margin: const EdgeInsets.symmetric(horizontal: 3),
-                                width: i == _imageIndex ? 18 : 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: i == _imageIndex ? Colors.white : Colors.white.withValues(alpha: 0.5),
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                              )),
+                          children: List.generate(
+                              images.length,
+                              (i) => Container(
+                                    margin: const EdgeInsets.symmetric(
+                                        horizontal: 3),
+                                    width: i == _imageIndex ? 18 : 6,
+                                    height: 6,
+                                    decoration: BoxDecoration(
+                                      color: i == _imageIndex
+                                          ? Colors.white
+                                          : Colors.white.withValues(alpha: 0.5),
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  )),
                         ),
                       ),
                   ]),
@@ -158,21 +217,30 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(children: [
-                          Text('\$${_money(p.price)}',
-                              style: TextStyle(
-                                  color: brand,
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.w800)),
+                          Flexible(
+                            child: Text('\$${_money(p.price)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: brand,
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w800)),
+                          ),
                           if (p.hasDiscount) ...[
                             const SizedBox(width: 10),
-                            Text('\$${_money(p.compareAtPrice!)}',
-                                style: TextStyle(
-                                    color: c.mutedForeground,
-                                    fontSize: 16,
-                                    decoration: TextDecoration.lineThrough)),
+                            Flexible(
+                              child: Text('\$${_money(p.compareAtPrice!)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: c.mutedForeground,
+                                      fontSize: 16,
+                                      decoration: TextDecoration.lineThrough)),
+                            ),
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
                                 color: const Color(0xFFEF4444),
                                 borderRadius: BorderRadius.circular(8),
@@ -194,17 +262,32 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                         const SizedBox(height: 10),
                         Row(children: [
                           if ((p.seller?.rating ?? 0) > 0) ...[
-                            const Icon(LucideIcons.star, size: 14, color: Color(0xFFFBBF24)),
+                            const Icon(LucideIcons.star,
+                                size: 14, color: Color(0xFFFBBF24)),
                             const SizedBox(width: 4),
                             Text(p.seller!.rating.toStringAsFixed(1),
-                                style: TextStyle(color: c.foreground, fontSize: 13, fontWeight: FontWeight.w600)),
-                            Text(' (${p.seller!.totalSales}) · ',
-                                style: TextStyle(color: c.mutedForeground, fontSize: 12)),
+                                style: TextStyle(
+                                    color: c.foreground,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                            Flexible(
+                              child: Text(' (${p.seller!.totalSales}) · ',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: c.mutedForeground, fontSize: 12)),
+                            ),
                           ],
-                          Icon(LucideIcons.eye, size: 12, color: c.mutedForeground),
+                          Icon(LucideIcons.eye,
+                              size: 12, color: c.mutedForeground),
                           const SizedBox(width: 3),
-                          Text('${p.viewsCount} koʼrildi',
-                              style: TextStyle(color: c.mutedForeground, fontSize: 12)),
+                          Flexible(
+                            child: Text('${p.viewsCount} koʼrildi',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: c.mutedForeground, fontSize: 12)),
+                          ),
                         ]),
                       ],
                     ),
@@ -220,11 +303,18 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                       crossAxisSpacing: 8,
                       childAspectRatio: 3.5,
                       children: [
-                        _badge(c, LucideIcons.shieldCheck, 'Xavfsiz toʼlov', brand),
-                        _badge(c, LucideIcons.rotateCcw, '14 kun qaytarish', const Color(0xFF22C55E)),
-                        _badge(c, LucideIcons.award, 'Asl mahsulot', const Color(0xFF3B82F6)),
-                        _badge(c, LucideIcons.truck,
-                            p.shippingAvailable ? 'Bepul yetkazish' : 'Olib ketish',
+                        _badge(c, LucideIcons.shieldCheck, 'Xavfsiz toʼlov',
+                            brand),
+                        _badge(c, LucideIcons.rotateCcw, '14 kun qaytarish',
+                            const Color(0xFF22C55E)),
+                        _badge(c, LucideIcons.award, 'Asl mahsulot',
+                            const Color(0xFF3B82F6)),
+                        _badge(
+                            c,
+                            LucideIcons.truck,
+                            p.shippingAvailable
+                                ? 'Bepul yetkazish'
+                                : 'Olib ketish',
                             const Color(0xFFF59E0B)),
                       ],
                     ),
@@ -233,68 +323,109 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                   if (p.seller != null)
                     Padding(
                       padding: const EdgeInsets.all(16),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () {
-                          SellerStorefrontSheet.show(context, p.seller!.id);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: c.card,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: c.border.withValues(alpha: 0.4)),
-                          ),
-                          child: Row(children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                    colors: [brand, brand.withValues(alpha: 0.6)]),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                p.seller!.businessName.isNotEmpty
-                                    ? p.seller!.businessName[0].toUpperCase()
-                                    : '?',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(children: [
-                                    Flexible(
-                                      child: Text(p.seller!.businessName,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: c.card,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                              color: c.border.withValues(alpha: 0.4)),
+                        ),
+                        child: Column(
+                          children: [
+                            InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: () {
+                                SellerStorefrontSheet.show(
+                                    context, p.seller!.id);
+                              },
+                              child: Row(children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(colors: [
+                                      brand,
+                                      brand.withValues(alpha: 0.6)
+                                    ]),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    p.seller!.businessName.isNotEmpty
+                                        ? p.seller!.businessName[0]
+                                            .toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(children: [
+                                        Flexible(
+                                          child: Text(p.seller!.businessName,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  color: c.foreground,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w700)),
+                                        ),
+                                        if (p.seller!.isVerified) ...[
+                                          const SizedBox(width: 4),
+                                          Icon(LucideIcons.shieldCheck,
+                                              size: 14, color: brand),
+                                        ],
+                                      ]),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                          '${p.seller!.totalSales} sotuv · ${p.seller!.rating.toStringAsFixed(1)} ★',
                                           style: TextStyle(
-                                              color: c.foreground,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w700)),
-                                    ),
-                                    if (p.seller!.isVerified) ...[
-                                      const SizedBox(width: 4),
-                                      Icon(LucideIcons.shieldCheck,
-                                          size: 14, color: brand),
+                                              color: c.mutedForeground,
+                                              fontSize: 12)),
                                     ],
-                                  ]),
-                                  const SizedBox(height: 2),
-                                  Text('${p.seller!.totalSales} sotuv · ${p.seller!.rating.toStringAsFixed(1)} ★',
-                                      style: TextStyle(color: c.mutedForeground, fontSize: 12)),
-                                ],
+                                  ),
+                                ),
+                                Icon(LucideIcons.chevronRight,
+                                    size: 18, color: c.mutedForeground),
+                              ]),
+                            ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 12),
+                                  side: BorderSide(
+                                      color: brand.withValues(alpha: 0.6)),
+                                  foregroundColor: brand,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10)),
+                                ),
+                                onPressed:
+                                    _messagingSeller ? null : _messageSeller,
+                                icon: _messagingSeller
+                                    ? SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2, color: brand))
+                                    : const Icon(LucideIcons.messageCircle,
+                                        size: 16),
+                                label: const Text('Sotuvchiga yozish',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w600)),
                               ),
                             ),
-                            Icon(LucideIcons.chevronRight,
-                                size: 18, color: c.mutedForeground),
-                          ]),
+                          ],
                         ),
                       ),
                     ),
@@ -317,7 +448,9 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                             child: Text(
                               p.description!,
                               maxLines: _expanded ? null : 4,
-                              overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                              overflow: _expanded
+                                  ? TextOverflow.visible
+                                  : TextOverflow.ellipsis,
                               style: TextStyle(
                                   color: c.foreground.withValues(alpha: 0.85),
                                   height: 1.5,
@@ -326,10 +459,14 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                           ),
                           if (p.description!.length > 200)
                             TextButton(
-                              style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                              onPressed: () => setState(() => _expanded = !_expanded),
+                              style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero),
+                              onPressed: () =>
+                                  setState(() => _expanded = !_expanded),
                               child: Text(_expanded ? 'Yopish' : 'Batafsil',
-                                  style: TextStyle(color: brand, fontWeight: FontWeight.w600)),
+                                  style: TextStyle(
+                                      color: brand,
+                                      fontWeight: FontWeight.w600)),
                             ),
                         ],
                       ),
@@ -351,7 +488,8 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                         _specRow(c, 'Joylashuv', p.location ?? '—'),
                         _specRow(c, 'Mavjudligi',
                             p.quantity > 0 ? '${p.quantity} dona' : 'Sotilgan'),
-                        _specRow(c, 'Kelishadi', p.isNegotiable ? 'Ha' : 'Yoʼq'),
+                        _specRow(
+                            c, 'Kelishadi', p.isNegotiable ? 'Ha' : 'Yoʼq'),
                         _specRow(c, 'Yetkazib berish',
                             p.shippingAvailable ? 'Mavjud' : 'Olib ketish'),
                       ],
@@ -366,7 +504,8 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
               padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + mq.padding.bottom),
               decoration: BoxDecoration(
                 color: c.background,
-                border: Border(top: BorderSide(color: c.border.withValues(alpha: 0.4))),
+                border: Border(
+                    top: BorderSide(color: c.border.withValues(alpha: 0.4))),
                 boxShadow: [
                   BoxShadow(
                       color: Colors.black.withValues(alpha: 0.05),
@@ -386,10 +525,13 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(LucideIcons.minus, size: 16),
-                      onPressed: _quantity > 1 ? () => setState(() => _quantity--) : null,
+                      onPressed: _quantity > 1
+                          ? () => setState(() => _quantity--)
+                          : null,
                     ),
                     Text('$_quantity',
-                        style: TextStyle(color: c.foreground, fontWeight: FontWeight.w700)),
+                        style: TextStyle(
+                            color: c.foreground, fontWeight: FontWeight.w700)),
                     IconButton(
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(LucideIcons.plus, size: 16),
@@ -406,8 +548,8 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       side: BorderSide(color: brand.withValues(alpha: 0.6)),
                       foregroundColor: brand,
-                      shape:
-                          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: p.isSold ? null : _addToCart,
                     icon: const Icon(LucideIcons.shoppingCart, size: 16),
@@ -421,8 +563,8 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
                       backgroundColor: brand,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape:
-                          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
                     ),
                     onPressed: p.isSold ? null : _buyNow,
                     child: const Text('Sotib olish',
@@ -448,7 +590,8 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
         child: SizedBox(
             width: 36,
             height: 36,
-            child: Icon(icon, size: 18, color: activeIconColor ?? c.foreground)),
+            child:
+                Icon(icon, size: 18, color: activeIconColor ?? c.foreground)),
       ),
     );
   }
@@ -469,7 +612,9 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: c.foreground, fontSize: 11.5, fontWeight: FontWeight.w600)),
+                  color: c.foreground,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600)),
         ),
       ]),
     );
@@ -479,15 +624,24 @@ class _ProductDetailSheetState extends ConsumerState<ProductDetailSheet> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.border.withValues(alpha: 0.25))),
+        border:
+            Border(bottom: BorderSide(color: c.border.withValues(alpha: 0.25))),
       ),
       child: Row(children: [
         Expanded(
             child: Text(key,
                 style: TextStyle(color: c.mutedForeground, fontSize: 13))),
-        Text(value,
-            style: TextStyle(
-                color: c.foreground, fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  color: c.foreground,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ),
       ]),
     );
   }

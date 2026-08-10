@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../shared/stories/story_presence_controller.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/stories_repository.dart';
 import '../../data/story_models.dart';
@@ -44,6 +45,15 @@ class StoriesNotifier extends StateNotifier<StoriesState> {
     await ref.read(storiesRepositoryProvider).markViewed(story.id, userId);
     final updated = {...state.viewedIds, story.id};
     state = state.copyWith(viewedIds: updated);
+    final group = state.groups.where((item) => item.userId == story.userId);
+    if (group.isNotEmpty) {
+      ref.read(storyPresenceControllerProvider.notifier).seed(
+            userId: story.userId,
+            hasActiveStory: true,
+            allViewed:
+                group.first.stories.every((item) => updated.contains(item.id)),
+          );
+    }
   }
 
   Future<void> deleteStory(String storyId) async {

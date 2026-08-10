@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import 'message_attachment.dart';
 import 'message_content_rich.dart';
 import 'message_context_menu.dart';
@@ -17,6 +17,7 @@ import 'location_message.dart';
 import 'shared_post_preview.dart';
 import 'story_reply_preview.dart';
 import 'link_preview.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 // Telegram-style message bubble with all features — matches web messages/EnhancedMessageBubble.tsx
 class EnhancedMessageBubble extends StatelessWidget {
@@ -159,7 +160,7 @@ class EnhancedMessageBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMine && showAvatar)
-            Padding(padding: const EdgeInsets.only(right: 6), child: UserAvatar(avatarUrl: senderAvatar, fallback: (senderName?.isNotEmpty ?? false) ? senderName![0].toUpperCase() : '?', size: 30))
+            Padding(padding: const EdgeInsets.only(right: 6), child: StoryAvatarRing(userId: null, avatarUrl: senderAvatar, fallback: (senderName?.isNotEmpty ?? false) ? senderName![0].toUpperCase() : '?', size: 30))
           else if (!isMine)
             const SizedBox(width: 36),
           Flexible(
@@ -246,7 +247,7 @@ class EnhancedMessageBubble extends StatelessWidget {
       onViewInfo: onViewInfo,
       onReply: onReply,
       onForward: onForward,
-      onCopy: onCopy ?? () { Clipboard.setData(ClipboardData(text: content)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'))); },
+      onCopy: onCopy ?? () { Clipboard.setData(ClipboardData(text: content)); AppToast.success(context, "Nusxalandi"); },
       onEdit: isMine ? onEdit : null,
       onPin: onPin,
       onDelete: onDelete,
