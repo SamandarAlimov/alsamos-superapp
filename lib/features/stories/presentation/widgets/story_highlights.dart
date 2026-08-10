@@ -9,6 +9,7 @@ import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/story_models.dart';
 import '../providers/highlights_provider.dart';
 import 'story_viewer.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// Horizontal rail of story highlights for a profile page.
 /// Pixel-perfect port of web `StoryHighlights.tsx`.
@@ -62,16 +63,25 @@ class StoryHighlights extends ConsumerWidget {
 
     return SizedBox(
       height: 96,
-      child: ListView(
+      child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: [
-          if (isOwn) _NewHighlightTile(userId: userId),
-          for (final h in state.highlights) ...[
-            const SizedBox(width: 14),
-            _HighlightTile(highlight: h, userId: userId, isOwn: isOwn),
-          ],
-        ],
+        itemCount: (isOwn ? 1 : 0) + state.highlights.length * 2,
+        itemBuilder: (_, index) {
+          if (isOwn && index == 0) {
+            return _NewHighlightTile(userId: userId);
+          }
+          final adjustedIndex = isOwn ? index - 1 : index;
+          if (adjustedIndex.isOdd) {
+            return const SizedBox(width: 14);
+          }
+          final highlightIndex = adjustedIndex ~/ 2;
+          return _HighlightTile(
+            highlight: state.highlights[highlightIndex],
+            userId: userId,
+            isOwn: isOwn,
+          );
+        },
       ),
     );
   }
@@ -99,8 +109,7 @@ class _NewHighlightTile extends ConsumerWidget {
         .read(highlightsControllerProvider(userId).notifier)
         .createHighlight(name.trim());
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('\u201C$name\u201D yaratildi')));
+      AppToast.success(context, '\u201C$name\u201D yaratildi');
     }
   }
 

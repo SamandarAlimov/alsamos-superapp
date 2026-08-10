@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../providers/marketplace_provider.dart';
 
 class BecomeSellerSheet extends ConsumerStatefulWidget {
@@ -61,8 +62,7 @@ class _BecomeSellerSheetState extends ConsumerState<BecomeSellerSheet> {
       Navigator.of(context).pop(true);
     } else {
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Roʼyxatdan oʼtkazib boʼlmadi')));
+      AppToast.error(context, 'Roʼyxatdan oʼtkazib boʼlmadi');
     }
   }
 
@@ -174,11 +174,15 @@ class _BecomeSellerSheetState extends ConsumerState<BecomeSellerSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        Text(t.$2,
-                            style: TextStyle(
-                                color: c.foreground,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700)),
+                        Flexible(
+                          child: Text(t.$2,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: c.foreground,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700)),
+                        ),
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),

@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/profile_model.dart';
 import '../providers/profile_provider.dart';
@@ -35,8 +37,7 @@ class _FollowMessageButtonsState extends ConsumerState<FollowMessageButtons> {
       ref.invalidate(profileProvider(widget.profile.id));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Xato: $e')));
+        AppToast.error(context, friendlyError(e));
       }
     } finally {
       if (mounted) setState(() => _busy = false);

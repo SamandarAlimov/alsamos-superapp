@@ -99,4 +99,25 @@ class NotificationsNotifier
       if (mounted) state = previous;
     }
   }
+
+  Future<bool> respondToCollaborationInvite(
+    AppNotification notification, {
+    required bool accept,
+  }) async {
+    final collaborationId = notification.data['collaboration_id']?.toString();
+    if (collaborationId == null || collaborationId.isEmpty) {
+      return false;
+    }
+    try {
+      await _repo.respondToCollaborationInvite(
+        collaborationId: collaborationId,
+        accept: accept,
+      );
+      await markAsRead(notification.id);
+      await load();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 }

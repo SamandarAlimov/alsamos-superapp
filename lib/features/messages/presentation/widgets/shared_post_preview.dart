@@ -5,7 +5,8 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/content/utils/content_metadata.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 
 /// Ports `src/components/messages/SharedPostPreview.tsx` — inline post card.
 class SharedPostPreview extends StatefulWidget {
@@ -58,11 +59,12 @@ class _SharedPostPreviewState extends State<SharedPostPreview> {
       );
     }
     final media = (_post!['media_urls'] as List?)?.cast<String>() ?? const <String>[];
+    final cleanContent = stripPostMetadata(_post!['content'] as String?);
     final hasMedia = media.isNotEmpty;
     final mediaType = _post!['media_type'] as String? ?? '';
     final isVideo = mediaType == 'video' || mediaType == 'reel';
     return InkWell(
-      onTap: () => context.push(isVideo ? '/videos?v=${_post!['id']}' : '/home?post=${_post!['id']}'),
+      onTap: () => context.push(isVideo ? '/videos?v=${_post!['id']}' : '/post/${_post!['id']}'),
       borderRadius: BorderRadius.circular(12),
       child: Container(
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12), border: Border.all(color: border)),
@@ -81,13 +83,13 @@ class _SharedPostPreviewState extends State<SharedPostPreview> {
             padding: const EdgeInsets.all(10),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                UserAvatar(avatarUrl: _profile?['avatar_url'] as String?, fallback: ((_profile?['display_name'] ?? _profile?['username'] ?? 'U') as String)[0].toUpperCase(), size: 22),
+                StoryAvatarRing(userId: _profile?['id'] as String?, avatarUrl: _profile?['avatar_url'] as String?, fallback: ((_profile?['display_name'] ?? _profile?['username'] ?? 'U') as String)[0].toUpperCase(), size: 22),
                 const SizedBox(width: 6),
                 Flexible(child: Text((_profile?['display_name'] ?? _profile?['username'] ?? 'User') as String, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: tone))),
               ]),
-              if ((_post!['content'] as String?)?.isNotEmpty ?? false) ...[
+              if (cleanContent.isNotEmpty) ...[
                 const SizedBox(height: 6),
-                Text(_post!['content'] as String, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: dim)),
+                Text(cleanContent, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: dim)),
               ],
               const SizedBox(height: 6),
               Row(children: [

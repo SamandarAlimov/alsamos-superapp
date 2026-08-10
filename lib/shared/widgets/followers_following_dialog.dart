@@ -7,7 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../app/theme/app_theme.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../navigation/app_routes.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 import 'verified_badge.dart';
 
 enum FollowListType { followers, following }
@@ -178,11 +178,13 @@ class _FFDState extends ConsumerState<FollowersFollowingDialog> {
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                             child: Row(children: [
-                              UserAvatar(
+                              StoryAvatarRing(
+                                userId: u.id,
                                 avatarUrl: u.avatarUrl,
                                 fallback: (u.displayName ?? u.username ?? 'U')[0].toUpperCase(),
                                 size: 40,
                                 backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
+                                inactiveBorderColor: c.border,
                               ),
                               const SizedBox(width: 12),
                               Expanded(

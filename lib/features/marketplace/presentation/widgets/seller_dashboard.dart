@@ -65,6 +65,8 @@ class SellerDashboardView extends ConsumerWidget {
                             fontWeight: FontWeight.w800)),
                     Text(
                         '${(me?.businessType ?? "business").toUpperCase()} · ${me?.totalSales ?? 0} sotuv',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: c.mutedForeground, fontSize: 12)),
                   ],
                 ),
@@ -249,7 +251,6 @@ class SellerDashboardView extends ConsumerWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Container(
             padding: const EdgeInsets.all(6),
@@ -259,19 +260,19 @@ class SellerDashboardView extends ConsumerWidget {
             ),
             child: Icon(icon, color: accent, size: 16),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: TextStyle(color: c.mutedForeground, fontSize: 11)),
-              const SizedBox(height: 2),
-              Text(value,
-                  style: TextStyle(
-                      color: c.foreground,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800)),
-            ],
-          ),
+          const Spacer(), // Natural spacing instead of spaceBetween
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: c.mutedForeground, fontSize: 11)),
+          const SizedBox(height: 2),
+          Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: c.foreground,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -295,13 +296,22 @@ class SellerDashboardView extends ConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(title,
-                  style: TextStyle(
-                      color: c.foreground,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700)),
-              Text(subtitle,
-                  style: TextStyle(color: c.mutedForeground, fontSize: 12)),
+              Flexible(
+                child: Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: c.foreground,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: c.mutedForeground, fontSize: 12)),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -314,8 +324,31 @@ class SellerDashboardView extends ConsumerWidget {
   Widget _revenueChart(AlsamosColors c, Color brand, List<dynamic> series) {
     if (series.isEmpty) {
       return Center(
-          child: Text('Maʼlumot yoʼq',
-              style: TextStyle(color: c.mutedForeground)));
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: brand.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(LucideIcons.trendingUp, color: brand, size: 24),
+            ),
+            const SizedBox(height: 12),
+            Text('Hali savdo yoʼq',
+                style: TextStyle(
+                    color: c.foreground,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Mahsulotlaringizni ulashing va birinchi buyurtmani oling',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.mutedForeground, fontSize: 12)),
+          ],
+        ),
+      );
     }
     final spots = <FlSpot>[
       for (var i = 0; i < series.length; i++)
@@ -383,8 +416,31 @@ class SellerDashboardView extends ConsumerWidget {
   Widget _ordersChart(AlsamosColors c, Color brand, List<dynamic> series) {
     if (series.isEmpty) {
       return Center(
-          child: Text('Maʼlumot yoʼq',
-              style: TextStyle(color: c.mutedForeground)));
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: brand.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(LucideIcons.shoppingBag, color: brand, size: 24),
+            ),
+            const SizedBox(height: 12),
+            Text('Hali buyurtma yoʼq',
+                style: TextStyle(
+                    color: c.foreground,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Buyurtmalar kelishi bilan bu yerda koʼrinadi',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.mutedForeground, fontSize: 12)),
+          ],
+        ),
+      );
     }
     final maxY = series.fold<int>(0, (m, e) => (e.orders as int) > m ? e.orders as int : m);
     return BarChart(
@@ -448,9 +504,13 @@ class SellerDashboardView extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: c.mutedForeground, fontSize: 11)),
           const SizedBox(height: 4),
           Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                   color: color ?? c.foreground,
                   fontSize: 18,

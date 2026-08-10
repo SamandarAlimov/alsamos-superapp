@@ -42,11 +42,15 @@ class VideoCommerceSection extends ConsumerWidget {
                         color: Colors.white, size: 14),
                   ),
                   const SizedBox(width: 8),
-                  Text('Video orqali sotib oling',
-                      style: TextStyle(
-                          color: c.foreground,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800)),
+                  Flexible(
+                    child: Text('Video orqali sotib oling',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: c.foreground,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800)),
+                  ),
                 ]),
               ),
               SizedBox(

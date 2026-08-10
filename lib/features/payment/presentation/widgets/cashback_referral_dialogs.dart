@@ -5,6 +5,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// v26: Cashback dialog — shows current cashback %, history list, and CTA.
 class CashbackDialog extends ConsumerStatefulWidget {
@@ -85,7 +86,7 @@ class _CashbackDialogState extends ConsumerState<CashbackDialog> {
                 Row(children: const [
                   Icon(LucideIcons.trendingUp, color: Colors.white70, size: 14),
                   SizedBox(width: 6),
-                  Text("Har bir to'lovdan 1% keshbek", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  Flexible(child: Text("Har bir to'lovdan 1% keshbek", maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white70, fontSize: 12))),
                 ]),
               ]),
             ),
@@ -166,10 +167,7 @@ class _ReferralDialogState extends ConsumerState<ReferralDialog> {
   void _copy() {
     if (_code == null) return;
     Clipboard.setData(ClipboardData(text: _code!));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text("Kod nusxalandi"), duration: Duration(seconds: 2),
-      behavior: SnackBarBehavior.floating,
-    ));
+    AppToast.success(context, "Kod nusxalandi");
   }
 
   @override
@@ -225,9 +223,7 @@ class _ReferralDialogState extends ConsumerState<ReferralDialog> {
                   onPressed: _code == null ? null : () {
                     final shareText = "Alsamos ilovasini sinab ko'ring! Kodim bilan ro'yxatdan o'ting: $_code";
                     Clipboard.setData(ClipboardData(text: shareText));
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text("Taklif matni nusxalandi"), behavior: SnackBarBehavior.floating,
-                    ));
+                    AppToast.success(context, "Taklif matni nusxalandi");
                   },
                   icon: const Icon(LucideIcons.share2, size: 18),
                   label: const Text("Do'stga ulashing"),
@@ -244,9 +240,9 @@ class _ReferralDialogState extends ConsumerState<ReferralDialog> {
     decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(10)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [Icon(icon, size: 14, color: c.mutedForeground), const SizedBox(width: 6),
-        Text(label, style: TextStyle(fontSize: 11, color: c.mutedForeground))]),
+        Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: c.mutedForeground)))]),
       const SizedBox(height: 6),
-      Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: c.foreground)),
+      Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: c.foreground)),
     ]),
   );
 }

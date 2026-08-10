@@ -10,8 +10,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
+import '../../../../features/profile/data/username_service.dart';
+import '../../../../core/responsive/breakpoints.dart';
 import '../../../../shared/navigation/app_routes.dart';
 import '../../../../shared/widgets/alsamos_logo.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 import '../providers/auth_provider.dart';
 
 /// Pixel-perfect port of web `AuthPage.tsx` (login / signup).
@@ -108,40 +112,6 @@ class _AuthPageState extends ConsumerState<AuthPage>
     _confirm.clear();
   }
 
-  void _toast(String msg, {bool error = false}) {
-    if (!mounted) return;
-    final c = AlsamosColors.of(context);
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(
-                error ? LucideIcons.alertCircle : LucideIcons.checkCircle,
-                size: 16,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  msg,
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w500),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: error ? c.destructive : const Color(0xFF22C55E),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.all(12),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12)),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-  }
-
   /// Zod-equivalent validation (web parity).
   String? _validate() {
     final id = _identifier.text.trim();
@@ -191,13 +161,23 @@ class _AuthPageState extends ConsumerState<AuthPage>
     HapticFeedback.lightImpact();
     final err = _validate();
     if (err != null) {
-      _toast(err, error: true);
+      AppToast.error(context, err);
       return;
     }
     if (mounted) setState(() => _submitting = true);
     try {
       final notifier = ref.read(authProvider.notifier);
       if (_isSignUp) {
+        final usernameService = UsernameService();
+        final usernameResult = await usernameService.checkAvailability(
+          _username.text.trim(),
+        );
+        if (!usernameResult.available) {
+          AppToast.error(context,
+              usernameResult.localizedMessage ?? 'Username band');
+          setState(() => _submitting = false);
+          return;
+        }
         await notifier.signUp(
           _identifier.text.trim().toLowerCase(),
           _password.text,
@@ -205,35 +185,132 @@ class _AuthPageState extends ConsumerState<AuthPage>
           username: _username.text.trim(),
         );
         if (!mounted) return;
-        _toast('Akkaunt yaratildi! Alsamosga xush kelibsiz.');
+        AppToast.success(context, 'Akkaunt yaratildi! Alsamosga xush kelibsiz.');
       } else {
         await notifier.signInWithPassword(
             _identifier.text.trim(), _password.text);
         if (!mounted) return;
-        _toast('Xush kelibsiz!');
+        AppToast.success(context, 'Xush kelibsiz!');
       }
       if (mounted && ref.read(authProvider).isAuthenticated) {
         context.go(AppRoutes.home);
       }
-    } on AuthException catch (e) {
-      final msg = e.message.toLowerCase().contains('invalid login')
-          ? 'Email/username yoki parol noto‘g‘ri'
-          : e.message.toLowerCase().contains('already registered')
-              ? 'Bu email allaqachon ro‘yxatdan o‘tgan. Iltimos, kiring.'
-              : e.message;
-      if (mounted) _toast(msg, error: true);
-    } on TimeoutException {
-      if (mounted) {
-        _toast(
-          'Ulanish vaqti tugadi. Internetni tekshirib qayta urinib ko‘ring.',
-          error: true,
-        );
+    } on MfaRequiredException {
+      if (!mounted) return;
+      final ok = await _showMfaVerifyDialog();
+      if (ok && mounted && ref.read(authProvider).isAuthenticated) {
+        AppToast.success(context, '2FA tasdiqlandi. Xush kelibsiz!');
+        context.go(AppRoutes.home);
       }
+    } on AuthException catch (e) {
+      AppToast.error(context, friendlyError(e));
+    } on TimeoutException {
+      AppToast.error(
+        context,
+        'Ulanish vaqti tugadi. Internetni tekshirib qayta urinib ko‘ring.',
+      );
     } catch (e) {
-      if (mounted) _toast('Xatolik yuz berdi. Qaytadan urinib ko‘ring.', error: true);
+      AppToast.error(
+        context,
+        'Xatolik yuz berdi. Qaytadan urinib ko‘ring.',
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<bool> _showMfaVerifyDialog() async {
+    final code = TextEditingController();
+    String? error;
+    var loading = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Ikki bosqichli tasdiqlash'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Authenticator ilovasidagi 6 xonali kodni kiriting.'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: code,
+                autofocus: true,
+                maxLength: 6,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: InputDecoration(
+                  counterText: '',
+                  errorText: error,
+                  hintText: '000000',
+                ),
+                onSubmitted: (_) async {
+                  if (loading) return;
+                  setLocal(() {
+                    loading = true;
+                    error = null;
+                  });
+                  try {
+                    await ref
+                        .read(authProvider.notifier)
+                        .verifyMfaCode(code.text);
+                    if (ctx.mounted) Navigator.pop(ctx, true);
+                  } catch (e) {
+                    setLocal(() {
+                      loading = false;
+                      error = 'Kod noto‘g‘ri yoki eskirgan';
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: loading
+                  ? null
+                  : () async {
+                      await ref.read(authProvider.notifier).logout();
+                      if (ctx.mounted) Navigator.pop(ctx, false);
+                    },
+              child: const Text('Bekor'),
+            ),
+            FilledButton(
+              onPressed: loading
+                  ? null
+                  : () async {
+                      setLocal(() {
+                        loading = true;
+                        error = null;
+                      });
+                      try {
+                        await ref
+                            .read(authProvider.notifier)
+                            .verifyMfaCode(code.text);
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } catch (e) {
+                        setLocal(() {
+                          loading = false;
+                          error = 'Kod noto‘g‘ri yoki eskirgan';
+                        });
+                      }
+                    },
+              child: loading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Tasdiqlash'),
+            ),
+          ],
+        ),
+      ),
+    );
+    code.dispose();
+    return ok == true;
   }
 
   @override
@@ -246,210 +323,248 @@ class _AuthPageState extends ConsumerState<AuthPage>
       if (next.isAuthenticated) context.go(AppRoutes.home);
     });
 
-    return Scaffold(
-      backgroundColor: c.background,
-      body: Stack(
-        children: [
-          // Animated-style background glows (3 blobs like web).
-          Positioned(
-              top: -220,
-              left: -220,
-              child: _glow(primary.withValues(alpha: 0.10), 460)),
-          Positioned(
-              bottom: -220,
-              right: -220,
-              child: _glow(primary.withValues(alpha: 0.10), 460)),
-          Positioned(
-              top: 80,
-              right: 40,
-              child: _glow(primary.withValues(alpha: 0.05), 300)),
-          // Auth card
-          Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.92, end: 1).animate(_scaleAnim),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: Container(
-                      padding: const EdgeInsets.all(32),
-                      decoration: BoxDecoration(
-                        color: c.card.withValues(alpha: 0.88),
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                            color: c.border.withValues(alpha: 0.5),
-                            width: 1),
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.18),
-                              blurRadius: 32,
-                              offset: const Offset(0, 12)),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const AlsamosLogo(size: AlsamosLogoSize.xl),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Ulaning, ulashing, kashf eting.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: c.mutedForeground,
-                                fontSize: 14,
-                                height: 1.4),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final responsive = Responsive.of(context);
+        final horizontalPadding = responsive.isMobile ? 12.0 : 24.0;
+        final verticalPadding = responsive.isMobile ? 12.0 : 24.0;
+        final cardPadding = responsive.isMobile ? 20.0 : 32.0;
+        final cardMaxWidth = responsive.isMobile ? 420.0 : 440.0;
+
+        return Scaffold(
+          backgroundColor: c.background,
+          body: Stack(
+            children: [
+              // Animated-style background glows (3 blobs like web).
+              Positioned(
+                  top: -220,
+                  left: -220,
+                  child: _glow(primary.withValues(alpha: 0.10), 460)),
+              Positioned(
+                  bottom: -220,
+                  right: -220,
+                  child: _glow(primary.withValues(alpha: 0.10), 460)),
+              Positioned(
+                  top: 80,
+                  right: 40,
+                  child: _glow(primary.withValues(alpha: 0.05), 300)),
+              Center(
+                child: SafeArea(
+                  child: SingleChildScrollView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: horizontalPadding,
+                      vertical: verticalPadding,
+                    ),
+                    child: FadeTransition(
+                      opacity: _fadeAnim,
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.92, end: 1)
+                            .animate(_scaleAnim),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: cardMaxWidth,
+                            minWidth: constraints.maxWidth < 360 ||
+                                    responsive.isMobile
+                                ? 0
+                                : 360,
                           ),
-                          const SizedBox(height: 28),
-                          // Mode toggle
-                          Container(
-                            padding: const EdgeInsets.all(4),
+                          child: Container(
+                            padding: EdgeInsets.all(cardPadding),
                             decoration: BoxDecoration(
-                                color: c.muted,
-                                borderRadius: BorderRadius.circular(12)),
-                            child: Row(
+                              color: c.card.withValues(alpha: 0.88),
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                  color: c.border.withValues(alpha: 0.5),
+                                  width: 1),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.18),
+                                    blurRadius: 32,
+                                    offset: const Offset(0, 12)),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                _modeTab('Sign In', !_isSignUp, () {
-                                  HapticFeedback.selectionClick();
-                                  if (mounted) setState(() => _isSignUp = false);
-                                  _resetForm();
-                                }, c),
-                                _modeTab('Sign Up', _isSignUp, () {
-                                  HapticFeedback.selectionClick();
-                                  if (mounted) setState(() => _isSignUp = true);
-                                  _resetForm();
-                                }, c),
+                                const AlsamosLogo(size: AlsamosLogoSize.xl),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Ulaning, ulashing, kashf eting.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      color: c.mutedForeground,
+                                      fontSize: 14,
+                                      height: 1.4),
+                                ),
+                                const SizedBox(height: 28),
+                                // Mode toggle
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                      color: c.muted,
+                                      borderRadius: BorderRadius.circular(12)),
+                                  child: Row(
+                                    children: [
+                                      _modeTab('Sign In', !_isSignUp, () {
+                                        HapticFeedback.selectionClick();
+                                        if (mounted) {
+                                          setState(() => _isSignUp = false);
+                                        }
+                                        _resetForm();
+                                      }, c),
+                                      _modeTab('Sign Up', _isSignUp, () {
+                                        HapticFeedback.selectionClick();
+                                        if (mounted) {
+                                          setState(() => _isSignUp = true);
+                                        }
+                                        _resetForm();
+                                      }, c),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 22),
+                                // Animated swap between login / signup forms
+                                AbsorbPointer(
+                                  absorbing: _submitting,
+                                  child: AnimatedSize(
+                                    duration: const Duration(milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    child: AnimatedSwitcher(
+                                      duration:
+                                          const Duration(milliseconds: 240),
+                                      switchInCurve: Curves.easeOutCubic,
+                                      switchOutCurve: Curves.easeInCubic,
+                                      transitionBuilder: (child, anim) {
+                                        final curved = CurvedAnimation(
+                                          parent: anim,
+                                          curve: Curves.easeOutCubic,
+                                        );
+                                        return FadeTransition(
+                                          opacity: curved,
+                                          child: SlideTransition(
+                                            position: Tween<Offset>(
+                                              begin: const Offset(0, 0.035),
+                                              end: Offset.zero,
+                                            ).animate(curved),
+                                            child: ScaleTransition(
+                                              scale: Tween<double>(
+                                                      begin: 0.985, end: 1)
+                                                  .animate(curved),
+                                              child: child,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      child: _isSignUp
+                                          ? _signupFields(c)
+                                          : _loginFields(c),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 22),
+                                // Hero submit button
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 52,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: AppColors.gradientPrimary,
+                                      borderRadius: BorderRadius.circular(12),
+                                      boxShadow: [
+                                        BoxShadow(
+                                            color:
+                                                primary.withValues(alpha: 0.35),
+                                            blurRadius: 18,
+                                            offset: const Offset(0, 6)),
+                                      ],
+                                    ),
+                                    child: TextButton(
+                                      onPressed: _submitting ? null : _submit,
+                                      style: TextButton.styleFrom(
+                                        foregroundColor:
+                                            theme.colorScheme.onPrimary,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12)),
+                                      ),
+                                      child: _submitting
+                                          ? SizedBox(
+                                              width: 22,
+                                              height: 22,
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2.4,
+                                                  color: theme
+                                                      .colorScheme.onPrimary))
+                                          : Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Text(
+                                                    _isSignUp
+                                                        ? 'Create Account'
+                                                        : 'Sign In',
+                                                    style: TextStyle(
+                                                        color: theme.colorScheme
+                                                            .onPrimary,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        fontSize: 15)),
+                                                const SizedBox(width: 6),
+                                                Icon(LucideIcons.arrowRight,
+                                                    size: 17,
+                                                    color: theme
+                                                        .colorScheme.onPrimary),
+                                              ],
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                                if (!_isSignUp) ...[
+                                  const SizedBox(height: 14),
+                                  TextButton(
+                                    onPressed: () => ForgotPasswordDialog.show(
+                                      context,
+                                      initialEmail:
+                                          _identifier.text.trim().contains('@')
+                                              ? _identifier.text.trim()
+                                              : null,
+                                    ),
+                                    child: Text('Forgot Password?',
+                                        style: TextStyle(
+                                            color: primary,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500)),
+                                  ),
+                                ],
+                                const SizedBox(height: 22),
+                                Divider(color: c.border, height: 1),
+                                const SizedBox(height: 18),
+                                Wrap(
+                                  alignment: WrapAlignment.center,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    _footerLink('Privacy', c),
+                                    _dot(c),
+                                    _footerLink('Terms', c),
+                                    _dot(c),
+                                    _footerLink('Help Center', c),
+                                  ],
+                                ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 22),
-                          // Animated swap between login / signup forms
-                          AbsorbPointer(
-                            absorbing: _submitting,
-                            child: AnimatedSize(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOutCubic,
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 240),
-                                switchInCurve: Curves.easeOutCubic,
-                                switchOutCurve: Curves.easeInCubic,
-                                transitionBuilder: (child, anim) {
-                                  final curved = CurvedAnimation(
-                                    parent: anim,
-                                    curve: Curves.easeOutCubic,
-                                  );
-                                  return FadeTransition(
-                                    opacity: curved,
-                                    child: SlideTransition(
-                                      position: Tween<Offset>(
-                                        begin: const Offset(0, 0.035),
-                                        end: Offset.zero,
-                                      ).animate(curved),
-                                      child: ScaleTransition(
-                                        scale: Tween<double>(begin: 0.985, end: 1)
-                                            .animate(curved),
-                                        child: child,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child:
-                                    _isSignUp ? _signupFields(c) : _loginFields(c),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 22),
-                          // Hero submit button
-                          SizedBox(
-                            width: double.infinity,
-                            height: 52,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: AppColors.gradientPrimary,
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                      color: primary.withValues(alpha: 0.35),
-                                      blurRadius: 18,
-                                      offset: const Offset(0, 6)),
-                                ],
-                              ),
-                              child: TextButton(
-                                onPressed: _submitting ? null : _submit,
-                                style: TextButton.styleFrom(
-                                  foregroundColor: theme.colorScheme.onPrimary,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12)),
-                                ),
-                                child: _submitting
-                                    ? SizedBox(
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2.4,
-                                            color: theme.colorScheme.onPrimary))
-                                    : Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Text(
-                                              _isSignUp
-                                                  ? 'Create Account'
-                                                  : 'Sign In',
-                                              style: TextStyle(
-                                                  color: theme
-                                                      .colorScheme.onPrimary,
-                                                  fontWeight:
-                                                      FontWeight.w600,
-                                                  fontSize: 15)),
-                                          const SizedBox(width: 6),
-                                          Icon(LucideIcons.arrowRight,
-                                              size: 17,
-                                              color: theme
-                                                  .colorScheme.onPrimary),
-                                        ],
-                                      ),
-                              ),
-                            ),
-                          ),
-                          if (!_isSignUp) ...[
-                            const SizedBox(height: 14),
-                            TextButton(
-                              onPressed: () => ForgotPasswordDialog.show(
-                                context,
-                                initialEmail: _identifier.text.trim().contains('@') ? _identifier.text.trim() : null,
-                              ),
-                              child: Text('Forgot Password?',
-                                  style: TextStyle(
-                                      color: primary,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500)),
-                            ),
-                          ],
-                          const SizedBox(height: 22),
-                          Divider(color: c.border, height: 1),
-                          const SizedBox(height: 18),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _footerLink('Privacy', c),
-                              _dot(c),
-                              _footerLink('Terms', c),
-                              _dot(c),
-                              _footerLink('Help Center', c),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -618,14 +733,13 @@ class _AuthPageState extends ConsumerState<AuthPage>
           : null,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle:
-            TextStyle(color: c.mutedForeground.withValues(alpha: 0.7), fontSize: 14),
+        hintStyle: TextStyle(
+            color: c.mutedForeground.withValues(alpha: 0.7), fontSize: 14),
         prefixIcon: Padding(
           padding: const EdgeInsets.only(left: 14, right: 10),
           child: Icon(icon, size: 17, color: c.mutedForeground),
         ),
-        prefixIconConstraints:
-            const BoxConstraints(minWidth: 0, minHeight: 0),
+        prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
         filled: true,
         fillColor: c.muted.withValues(alpha: 0.55),
         contentPadding:
@@ -663,14 +777,13 @@ class _AuthPageState extends ConsumerState<AuthPage>
       style: TextStyle(color: c.foreground, fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle:
-            TextStyle(color: c.mutedForeground.withValues(alpha: 0.7), fontSize: 14),
+        hintStyle: TextStyle(
+            color: c.mutedForeground.withValues(alpha: 0.7), fontSize: 14),
         prefixIcon: Padding(
           padding: const EdgeInsets.only(left: 14, right: 10),
           child: Icon(LucideIcons.lock, size: 17, color: c.mutedForeground),
         ),
-        prefixIconConstraints:
-            const BoxConstraints(minWidth: 0, minHeight: 0),
+        prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
         suffixIcon: IconButton(
           splashRadius: 18,
           icon: Icon(show ? LucideIcons.eyeOff : LucideIcons.eye,
@@ -710,8 +823,8 @@ class _AuthPageState extends ConsumerState<AuthPage>
   Widget _dot(AlsamosColors c) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Text('•',
-          style: TextStyle(fontSize: 12, color: c.mutedForeground)),
+      child:
+          Text('•', style: TextStyle(fontSize: 12, color: c.mutedForeground)),
     );
   }
 }

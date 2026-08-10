@@ -1,31 +1,38 @@
 import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import '../../../../shared/widgets/alsamos_refresh_indicator.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
-
-import '../../data/bookmarks_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
-import '../../../auth/presentation/providers/auth_provider.dart';
-import '../../../home/presentation/widgets/post_view_modal.dart';
-import '../../../stories/presentation/providers/highlights_provider.dart';
-import '../../../../shared/widgets/user_avatar.dart';
-import '../../../../shared/widgets/verified_badge.dart';
-import '../../../../shared/widgets/username_qr_dialog.dart';
-import '../../../../shared/widgets/skeleton_shimmer.dart';
+import '../../../../core/widgets/state_views.dart';
+import '../../../../shared/content/utils/content_metadata.dart';
+import '../../../../shared/navigation/app_routes.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
+import '../../../../shared/widgets/alsamos_refresh_indicator.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/empty_state.dart';
+import '../../../../shared/widgets/error_mapper.dart';
+import '../../../../shared/widgets/skeleton_shimmer.dart';
+import '../../../../shared/widgets/username_qr_dialog.dart';
+import '../../../../shared/widgets/verified_badge.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../home/data/models/post_model.dart';
+import '../../../home/presentation/widgets/post_view_modal.dart';
+import '../../../stories/presentation/widgets/story_highlights.dart';
+import '../../data/bookmarks_provider.dart';
 import '../../data/profile_model.dart';
+import '../../data/user_block_service.dart';
 import '../providers/profile_provider.dart';
-import '../widgets/follow_message_buttons.dart';
 import '../widgets/edit_profile_dialog.dart';
+import 'profile_photo_viewer.dart';
 
 String _fmt(int n) {
   if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
@@ -47,23 +54,28 @@ bool _gridMediaIsImage(String? url) => _hasMediaExt(
 
 bool _gridMediaIsVideo(String? mediaType, String? url) {
   if (_gridMediaIsImage(url)) return false;
-  if (_hasMediaExt(url, r'\.(mp4|webm|mov|m4v|avi|mkv|flv|wmv)$')) {
-    return true;
-  }
+  if (_hasMediaExt(url, r'\.(mp4|webm|mov|m4v|avi|mkv|flv|wmv)$')) return true;
   final kind = mediaType?.toLowerCase().trim();
   return kind == 'video' || kind == 'reel' || kind == 'short';
 }
 
-/// Pixel-perfect port of web pages/ProfilePage.tsx.
+bool _looksLikeUuid(String value) =>
+    RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        .hasMatch(value);
+
+/// Unified Profile Page used for every user in the application.
 ///
-/// Web reference: rounded-2xl cover (h-36 sm:h-48 md:h-64) + gradient fallback,
-/// pill "Cover o'zgartirish" button bottom-right, story-ring avatar overlapping
-/// cover, name+@username+verified, Edit/Ads/Archive buttons, bio + meta row
-/// (location/website/joined date), stats with border-y, story highlights row,
-/// 4 tabs (Posts/Videos/Reposts/Saved) with primary underline + 3-col grid.
+/// Pass [userId] for direct UUID-based access, or [usernameOrId] for
+/// username/UUID resolution. When both are null, shows the current user's
+/// profile.
+///
+/// The layout is identical for all users — only action buttons and editable
+/// functionality change based on ownership.
 class ProfilePage extends ConsumerStatefulWidget {
   final String? userId;
-  const ProfilePage({super.key, this.userId});
+  final String? usernameOrId;
+  const ProfilePage({super.key, this.userId, this.usernameOrId});
+
   @override
   ConsumerState<ProfilePage> createState() => _ProfilePageState();
 }
@@ -72,13 +84,30 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   int _tab = 0;
   bool _uploadingCover = false;
   bool _uploadingAvatar = false;
+  bool _followBusy = false;
+  bool _blockBusy = false;
+  final ScrollController _scrollController = ScrollController();
 
-  static const _tabs = [
-    (LucideIcons.layoutGrid, 'Postlar'),
-    (LucideIcons.video, 'Videolar'),
-    (LucideIcons.repeat2, 'Repostlar'),
-    (LucideIcons.bookmark, 'Saqlangan'),
-  ];
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  String? get _resolvedUserId {
+    if (widget.userId != null) return widget.userId;
+    if (widget.usernameOrId != null && _looksLikeUuid(widget.usernameOrId!)) {
+      return widget.usernameOrId;
+    }
+    return null;
+  }
+
+  String? get _resolvedUsername {
+    if (widget.usernameOrId != null && !_looksLikeUuid(widget.usernameOrId!)) {
+      return widget.usernameOrId;
+    }
+    return null;
+  }
 
   Future<void> _pickAndUploadCover(String userId) async {
     final picker = ImagePicker();
@@ -99,15 +128,11 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           .from('profiles')
           .update({'cover_url': url}).eq('id', userId);
       if (mounted) {
-        ref.invalidate(profileProvider(widget.userId));
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cover rasm yangilandi')));
+        ref.invalidate(profileProvider(_resolvedUserId));
+        AppToast.success(context, 'Cover rasm yangilandi');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Xato: $e')));
-      }
+      if (mounted) AppToast.error(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _uploadingCover = false);
     }
@@ -128,22 +153,77 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       await supabase.storage.from('message-attachments').upload(path, file);
       final url =
           supabase.storage.from('message-attachments').getPublicUrl(path);
-      await supabase
-          .from('profiles')
-          .update({'avatar_url': url}).eq('id', userId);
+      final insertRes = await supabase
+          .from('profile_photo_history')
+          .insert({
+            'user_id': userId,
+            'photo_url': url,
+            'is_current': false,
+          })
+          .select()
+          .single();
+      await supabase.rpc('set_current_profile_photo', params: {
+        'p_user_id': userId,
+        'p_photo_id': insertRes['id'],
+        'p_photo_url': url,
+      });
       if (mounted) {
-        ref.invalidate(profileProvider(widget.userId));
+        ref.invalidate(profileProvider(_resolvedUserId));
         ref.invalidate(authProvider);
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profil rasmi yangilandi')));
+        AppToast.success(context, 'Profil rasmi yangilandi');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Xato: $e')));
-      }
+      if (mounted) AppToast.error(context, friendlyError(e));
     } finally {
       if (mounted) setState(() => _uploadingAvatar = false);
+    }
+  }
+
+  Future<void> _toggleFollow(FullProfile profile, bool currentlyFollowing) async {
+    final me = ref.read(authProvider).user?.id;
+    if (me == null || _followBusy) return;
+    setState(() => _followBusy = true);
+    HapticFeedback.selectionClick();
+    try {
+      await ref
+          .read(profileRepositoryProvider)
+          .toggleFollow(me, profile.id, currentlyFollowing);
+      ref.invalidate(isFollowingProvider(profile.id));
+      ref.invalidate(profileProvider(profile.id));
+      if (mounted) {
+        AppToast.success(
+          context,
+          currentlyFollowing
+              ? '${profile.title} - obuna bekor qilindi'
+              : '${profile.title} - obuna bo\'lindi',
+        );
+      }
+    } catch (e) {
+      if (mounted) AppToast.error(context, friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _followBusy = false);
+    }
+  }
+
+  Future<void> _toggleBlock(FullProfile profile) async {
+    final me = ref.read(authProvider).user?.id;
+    if (me == null || me == profile.id || _blockBusy) return;
+    setState(() => _blockBusy = true);
+    try {
+      const service = UserBlockService();
+      final current = await service.isBlocked(profile.id);
+      await service.setBlocked(profile.id, !current);
+      if (mounted) {
+        AppToast.info(
+          context,
+          !current
+              ? '${profile.title} bloklandi'
+              : '${profile.title} blokdan chiqarildi',
+        );
+        setState(() {});
+      }
+    } finally {
+      if (mounted) setState(() => _blockBusy = false);
     }
   }
 
@@ -151,129 +231,182 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final me = ref.watch(authProvider).user?.id;
-    final profileAsync = ref.watch(profileProvider(widget.userId));
 
+    if (_resolvedUsername != null) {
+      return Scaffold(
+        backgroundColor: c.background,
+        body: FutureBuilder<FullProfile?>(
+          future: ref
+              .read(profileRepositoryProvider)
+              .fetchProfile(username: _resolvedUsername),
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const _ProfileSkeleton();
+            }
+            if (snap.data == null) {
+              return const EmptyView(
+                icon: LucideIcons.userX,
+                title: 'Profil topilmadi',
+              );
+            }
+            return _buildBody(snap.data!, me, c);
+          },
+        ),
+      );
+    }
+
+    final profileAsync = ref.watch(profileProvider(_resolvedUserId));
     return Scaffold(
       backgroundColor: c.background,
       body: profileAsync.when(
         loading: () => const _ProfileSkeleton(),
-        error: (e, _) => Center(
-          child:
-              Text('Xatolik: $e', style: TextStyle(color: c.mutedForeground)),
+        error: (e, _) => ErrorView(
+          error: e,
+          onRetry: () => ref.invalidate(profileProvider(_resolvedUserId)),
         ),
         data: (profile) {
           if (profile == null) {
-            return Center(
-              child: Text('Profil topilmadi',
-                  style: TextStyle(color: c.mutedForeground)),
+            return const EmptyView(
+              icon: LucideIcons.userX,
+              title: 'Profil topilmadi',
             );
           }
-          final isOwn = profile.id == me;
-          final postsAsync = ref.watch(userPostsProvider(profile.id));
-          final highlightsAsync = ref.watch(highlightsProvider(profile.id));
-          // v36: brand orange `AlsamosRefreshIndicator`
-          return AlsamosRefreshIndicator(
-            onRefresh: () async {
-              ref.invalidate(profileProvider(widget.userId));
-              ref.invalidate(userPostsProvider(profile.id));
-              ref.invalidate(highlightsProvider(profile.id));
-              await Future.delayed(const Duration(milliseconds: 400));
-            },
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 896),
-                child: CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 12),
-                          _CoverAndAvatar(
-                            profile: profile,
-                            isOwn: isOwn,
-                            uploadingCover: _uploadingCover,
-                            uploadingAvatar: _uploadingAvatar,
-                            onPickCover: () => _pickAndUploadCover(profile.id),
-                            onPickAvatar: () =>
-                                _pickAndUploadAvatar(profile.id),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 56),
-                                _NameAndActions(
-                                  profile: profile,
-                                  isOwn: isOwn,
-                                  onEdit: () =>
-                                      EditProfileDialog.show(context, profile),
-                                  onAds: () => context.push('/ads'),
-                                  onArchive: () =>
-                                      context.push('/story-archive'),
-                                ),
-                                if (profile.bio != null &&
-                                    profile.bio!.trim().isNotEmpty) ...[
-                                  const SizedBox(height: 14),
-                                  Text(
-                                    profile.bio!,
-                                    style: TextStyle(
-                                        color: c.foreground,
-                                        fontSize: 14,
-                                        height: 1.55),
-                                  ),
-                                ],
-                                const SizedBox(height: 12),
-                                _MetaRow(profile: profile, c: c),
-                                const SizedBox(height: 16),
-                                _StatsBar(
-                                  profile: profile,
-                                  onFollowers: () => _openFollowDialog(
-                                      context, profile,
-                                      type: 'followers'),
-                                  onFollowing: () => _openFollowDialog(
-                                      context, profile,
-                                      type: 'following'),
-                                ),
-                                const SizedBox(height: 16),
-                                _Highlights(
-                                  highlightsAsync: highlightsAsync,
-                                  isOwn: isOwn,
-                                ),
-                                const SizedBox(height: 8),
-                              ],
-                            ),
-                          ),
-                          _TabBar(
-                              active: _tab,
-                              onChange: (i) {
-                                HapticFeedback.selectionClick();
-                                setState(() => _tab = i);
-                              }),
-                        ],
-                      ),
-                    ),
-                    _TabBody(
-                      tab: _tab,
-                      postsAsync: postsAsync,
-                      isOwn: isOwn,
-                      c: c,
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 96)),
-                  ],
-                ),
-              ),
-            ),
-          );
+          return _buildBody(profile, me, c);
         },
       ),
     );
   }
 
-  void _openFollowDialog(BuildContext context, FullProfile profile,
-      {required String type}) {
+  Widget _buildBody(FullProfile profile, String? me, AlsamosColors c) {
+    final isOwn = profile.id == me;
+    final postsAsync = ref.watch(userPostsProvider(profile.id));
+    final tabs = _buildTabs(isOwn);
+
+    return Scrollbar(
+      controller: _scrollController,
+      thumbVisibility: true,
+      thickness: 8,
+      radius: const Radius.circular(4),
+      child: AlsamosRefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(profileProvider(_resolvedUserId ?? profile.id));
+          ref.invalidate(userPostsProvider(profile.id));
+          await Future.delayed(const Duration(milliseconds: 400));
+        },
+        child: CustomScrollView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 896),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 12),
+                      _CoverAndAvatar(
+                        profile: profile,
+                        isOwn: isOwn,
+                        uploadingCover: _uploadingCover,
+                        uploadingAvatar: _uploadingAvatar,
+                        onPickCover: () => _pickAndUploadCover(profile.id),
+                        onPickAvatar: () => _pickAndUploadAvatar(profile.id),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 56),
+                            _NameAndActions(
+                              profile: profile,
+                              isOwn: isOwn,
+                              followBusy: _followBusy,
+                              blockBusy: _blockBusy,
+                              onEdit: () =>
+                                  EditProfileDialog.show(context, profile),
+                              onAds: () => context.push('/ads'),
+                              onArchive: () => context.push('/story-archive'),
+                              onFollowToggle: (following) =>
+                                  _toggleFollow(profile, following),
+                              onMessage: () => context
+                                  .push('${AppRoutes.messages}/${profile.id}'),
+                              onBlockToggle: () => _toggleBlock(profile),
+                            ),
+                            if (profile.bio != null &&
+                                profile.bio!.trim().isNotEmpty) ...[
+                              const SizedBox(height: 14),
+                              Text(
+                                profile.bio!,
+                                style: TextStyle(
+                                  color: c.foreground,
+                                  fontSize: 14,
+                                  height: 1.55,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            _MetaRow(profile: profile),
+                            const SizedBox(height: 16),
+                            _StatsBar(
+                              profile: profile,
+                              onFollowers: () =>
+                                  _openFollowSheet(context, profile, 'followers'),
+                              onFollowing: () =>
+                                  _openFollowSheet(context, profile, 'following'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: StoryHighlights(userId: profile.id),
+                      ),
+                      const SizedBox(height: 8),
+                      _TabBar(
+                        tabs: tabs,
+                        active: _tab,
+                        onChange: (i) {
+                          HapticFeedback.selectionClick();
+                          setState(() => _tab = i);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            _TabBody(
+              tab: _tab,
+              tabs: tabs,
+              postsAsync: postsAsync,
+              isOwn: isOwn,
+              c: c,
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 96)),
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<_ProfileTab> _buildTabs(bool isOwn) {
+    return [
+      const _ProfileTab(LucideIcons.layoutGrid, 'Postlar', 'posts'),
+      const _ProfileTab(LucideIcons.video, 'Videolar', 'videos'),
+      const _ProfileTab(LucideIcons.repeat2, 'Repostlar', 'reposts'),
+      if (isOwn)
+        const _ProfileTab(LucideIcons.bookmark, 'Saqlangan', 'saved'),
+    ];
+  }
+
+  void _openFollowSheet(
+      BuildContext context, FullProfile profile, String type) {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: AlsamosColors.of(context).card,
@@ -281,42 +414,54 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _FollowDialogStub(profileId: profile.id, type: type),
+      builder: (_) => _FollowSheet(profileId: profile.id, type: type),
     );
   }
 }
+
+class _ProfileTab {
+  final IconData icon;
+  final String label;
+  final String key;
+  const _ProfileTab(this.icon, this.label, this.key);
+}
+
+// ---------------------------------------------------------------------------
+// SKELETON
+// ---------------------------------------------------------------------------
 
 class _ProfileSkeleton extends StatelessWidget {
   const _ProfileSkeleton();
   @override
   Widget build(BuildContext context) {
-    // v43: SkeletonShimmer reusable widget bilan refaktor
     return const SingleChildScrollView(
       padding: EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SkeletonShimmer(
-              height: 168, borderRadius: BorderRadius.all(Radius.circular(16))),
+              height: 168,
+              borderRadius: BorderRadius.all(Radius.circular(16))),
           SizedBox(height: 64),
           Row(children: [
             SkeletonShimmer.circle(96),
             SizedBox(width: 16),
             Expanded(
-                child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SkeletonShimmer(
-                    height: 20,
-                    width: 180,
-                    borderRadius: BorderRadius.all(Radius.circular(6))),
-                SizedBox(height: 8),
-                SkeletonShimmer(
-                    height: 14,
-                    width: 120,
-                    borderRadius: BorderRadius.all(Radius.circular(6))),
-              ],
-            )),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SkeletonShimmer(
+                      height: 20,
+                      width: 180,
+                      borderRadius: BorderRadius.all(Radius.circular(6))),
+                  SizedBox(height: 8),
+                  SkeletonShimmer(
+                      height: 14,
+                      width: 120,
+                      borderRadius: BorderRadius.all(Radius.circular(6))),
+                ],
+              ),
+            ),
           ]),
           SizedBox(height: 24),
           SkeletonShimmer(
@@ -329,8 +474,7 @@ class _ProfileSkeleton extends StatelessWidget {
           SizedBox(height: 24),
           Row(children: [
             Expanded(
-                child: Column(
-              children: [
+              child: Column(children: [
                 SkeletonShimmer(
                     height: 20,
                     width: 60,
@@ -340,12 +484,11 @@ class _ProfileSkeleton extends StatelessWidget {
                     height: 12,
                     width: 80,
                     borderRadius: BorderRadius.all(Radius.circular(6))),
-              ],
-            )),
+              ]),
+            ),
             SizedBox(width: 16),
             Expanded(
-                child: Column(
-              children: [
+              child: Column(children: [
                 SkeletonShimmer(
                     height: 20,
                     width: 60,
@@ -355,12 +498,11 @@ class _ProfileSkeleton extends StatelessWidget {
                     height: 12,
                     width: 80,
                     borderRadius: BorderRadius.all(Radius.circular(6))),
-              ],
-            )),
+              ]),
+            ),
             SizedBox(width: 16),
             Expanded(
-                child: Column(
-              children: [
+              child: Column(children: [
                 SkeletonShimmer(
                     height: 20,
                     width: 60,
@@ -370,14 +512,18 @@ class _ProfileSkeleton extends StatelessWidget {
                     height: 12,
                     width: 80,
                     borderRadius: BorderRadius.all(Radius.circular(6))),
-              ],
-            )),
+              ]),
+            ),
           ]),
         ],
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// COVER + AVATAR
+// ---------------------------------------------------------------------------
 
 class _CoverAndAvatar extends StatelessWidget {
   final FullProfile profile;
@@ -401,6 +547,7 @@ class _CoverAndAvatar extends StatelessWidget {
     final primary = Theme.of(context).colorScheme.primary;
     final w = MediaQuery.of(context).size.width;
     final coverH = w >= 768 ? 256.0 : (w >= 640 ? 192.0 : 168.0);
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -426,20 +573,21 @@ class _CoverAndAvatar extends StatelessWidget {
                     )
                   else
                     const DecoratedBox(
-                        decoration:
-                            BoxDecoration(gradient: AppColors.gradientPrimary)),
-                  DecoratedBox(
-                      decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [
-                        c.background.withValues(alpha: 0.5),
-                        Colors.transparent
-                      ],
+                      decoration:
+                          BoxDecoration(gradient: AppColors.gradientPrimary),
                     ),
-                  )),
-                  // Back button (only when can pop)
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          c.background.withValues(alpha: 0.5),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
                   if (Navigator.of(context).canPop())
                     Positioned(
                       top: 10,
@@ -449,7 +597,6 @@ class _CoverAndAvatar extends StatelessWidget {
                         onTap: () => context.pop(),
                       ),
                     ),
-                  // Cover edit pill
                   if (isOwn)
                     Positioned(
                       bottom: 12,
@@ -464,51 +611,68 @@ class _CoverAndAvatar extends StatelessWidget {
             ),
           ),
         ),
-        // Avatar with gradient story ring overlapping cover
         Positioned(
           left: 24,
           bottom: -48,
           child: GestureDetector(
-            onTap: isOwn ? onPickAvatar : null,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ProfilePhotoViewer(
+                    userId: profile.id,
+                    initialAvatarUrl: profile.avatarUrl,
+                  ),
+                ),
+              );
+            },
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: AppColors.gradientPrimary,
-                  ),
-                  child: Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle, color: c.background),
-                    child: UserAvatar(
-                      avatarUrl: profile.avatarUrl,
-                      fallback: profile.initial,
-                      size: 88,
+                StoryAvatarRing(
+                  userId: profile.id,
+                  avatarUrl: profile.avatarUrl,
+                  fallback: profile.initial,
+                  size: 96,
+                  inactiveBorderColor: c.border,
+                ),
+                if (profile.isOnline)
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22C55E),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: c.background, width: 3),
+                      ),
                     ),
                   ),
-                ),
                 if (isOwn)
                   Positioned(
                     bottom: 0,
                     right: 0,
-                    child: Container(
-                      width: 30,
-                      height: 30,
-                      decoration: BoxDecoration(
-                        color: primary,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: c.background, width: 2),
+                    child: GestureDetector(
+                      onTap: onPickAvatar,
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: primary,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: c.background, width: 2),
+                        ),
+                        child: uploadingAvatar
+                            ? const Padding(
+                                padding: EdgeInsets.all(6),
+                                child: CircularProgressIndicator(
+                                    color: Colors.white, strokeWidth: 2),
+                              )
+                            : const Icon(LucideIcons.camera,
+                                color: Colors.white, size: 14),
                       ),
-                      child: uploadingAvatar
-                          ? const Padding(
-                              padding: EdgeInsets.all(6),
-                              child: CircularProgressIndicator(
-                                  color: Colors.white, strokeWidth: 2))
-                          : const Icon(LucideIcons.camera,
-                              color: Colors.white, size: 14),
                     ),
                   ),
               ],
@@ -568,10 +732,11 @@ class _CoverEditPill extends StatelessWidget {
             children: [
               if (uploading)
                 const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2))
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2),
+                )
               else
                 const Icon(LucideIcons.camera, color: Colors.white, size: 14),
               const SizedBox(width: 6),
@@ -590,15 +755,128 @@ class _CoverEditPill extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// NAME + ACTIONS
+// ---------------------------------------------------------------------------
+
 class _NameAndActions extends StatelessWidget {
   final FullProfile profile;
   final bool isOwn;
+  final bool followBusy;
+  final bool blockBusy;
   final VoidCallback onEdit;
   final VoidCallback onAds;
   final VoidCallback onArchive;
+  final void Function(bool currentlyFollowing) onFollowToggle;
+  final VoidCallback onMessage;
+  final VoidCallback onBlockToggle;
+
   const _NameAndActions({
     required this.profile,
     required this.isOwn,
+    required this.followBusy,
+    required this.blockBusy,
+    required this.onEdit,
+    required this.onAds,
+    required this.onArchive,
+    required this.onFollowToggle,
+    required this.onMessage,
+    required this.onBlockToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          profile.displayName ?? profile.username ?? 'User',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 22,
+                            letterSpacing: -0.2,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (profile.isVerified) ...[
+                        const SizedBox(width: 6),
+                        const VerifiedBadge(size: 18),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Flexible(
+                      child: Text(
+                        '@${profile.username ?? 'user'}',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.mutedForeground,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => UsernameQrDialog.show(
+                        context,
+                        title: profile.displayName ??
+                            profile.username ??
+                            'Alsamos',
+                        subtitle: '@${profile.username ?? 'user'}',
+                        data:
+                            'https://alsamos.app/user/${profile.username ?? profile.id}',
+                        avatarUrl: profile.avatarUrl,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(LucideIcons.qrCode,
+                            size: 15, color: c.mutedForeground),
+                      ),
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (isOwn)
+              _OwnerActions(
+                  onEdit: onEdit, onAds: onAds, onArchive: onArchive)
+            else
+              _VisitorActions(
+                profile: profile,
+                followBusy: followBusy,
+                blockBusy: blockBusy,
+                onFollowToggle: onFollowToggle,
+                onMessage: onMessage,
+                onBlockToggle: onBlockToggle,
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _OwnerActions extends StatelessWidget {
+  final VoidCallback onEdit;
+  final VoidCallback onAds;
+  final VoidCallback onArchive;
+  const _OwnerActions({
     required this.onEdit,
     required this.onAds,
     required this.onArchive,
@@ -607,98 +885,50 @@ class _NameAndActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      profile.displayName ?? profile.username ?? 'User',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 22),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (profile.isVerified) ...[
-                    const SizedBox(width: 6),
-                    const VerifiedBadge(size: 18),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 2),
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                Flexible(
-                  child: Text('@${profile.username ?? 'user'}',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: c.mutedForeground, fontSize: 14)),
-                ),
-                const SizedBox(width: 4),
-                InkWell(
-                  borderRadius: BorderRadius.circular(999),
-                  onTap: () => UsernameQrDialog.show(
-                    context,
-                    title: profile.displayName ?? profile.username ?? 'Alsamos',
-                    subtitle: '@${profile.username ?? 'user'}',
-                    data: 'https://alsamos.app/user/${profile.username ?? profile.id}',
-                    avatarUrl: profile.avatarUrl,
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(LucideIcons.qrCode, size: 15, color: c.mutedForeground),
-                  ),
-                ),
-              ]),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        if (isOwn)
-          _OwnActions(onEdit: onEdit, onAds: onAds, onArchive: onArchive)
-        else
-          FollowMessageButtons(profile: profile),
-      ],
-    );
-  }
-}
-
-class _OwnActions extends StatelessWidget {
-  final VoidCallback onEdit;
-  final VoidCallback onAds;
-  final VoidCallback onArchive;
-  const _OwnActions(
-      {required this.onEdit, required this.onAds, required this.onArchive});
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final c = AlsamosColors.of(context);
     return Wrap(
       spacing: 6,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        FilledButton.icon(
-          onPressed: onEdit,
-          icon: const Icon(LucideIcons.edit3, size: 14),
-          label: const Text('Tahrirlash', style: TextStyle(fontSize: 13)),
-          style: FilledButton.styleFrom(
-            backgroundColor: primary,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            minimumSize: const Size(0, 36),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.alsamosOrange, AppColors.alsamosOrangeDark],
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: onEdit,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.edit3, size: 14, color: Colors.white),
+                    SizedBox(width: 6),
+                    Text(
+                      'Tahrirlash',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-        _SquareIconButton(
+        _SquareIconBtn(
             icon: LucideIcons.megaphone,
             onTap: onAds,
             tooltip: 'Reklama',
             c: c),
-        _SquareIconButton(
+        _SquareIconBtn(
             icon: LucideIcons.archive,
             onTap: onArchive,
             tooltip: 'Arxiv',
@@ -708,16 +938,181 @@ class _OwnActions extends StatelessWidget {
   }
 }
 
-class _SquareIconButton extends StatelessWidget {
+class _VisitorActions extends ConsumerWidget {
+  final FullProfile profile;
+  final bool followBusy;
+  final bool blockBusy;
+  final void Function(bool) onFollowToggle;
+  final VoidCallback onMessage;
+  final VoidCallback onBlockToggle;
+
+  const _VisitorActions({
+    required this.profile,
+    required this.followBusy,
+    required this.blockBusy,
+    required this.onFollowToggle,
+    required this.onMessage,
+    required this.onBlockToggle,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = AlsamosColors.of(context);
+    final followingAsync = ref.watch(isFollowingProvider(profile.id));
+    final isFollowing =
+        followingAsync.maybeWhen(data: (v) => v, orElse: () => false);
+
+    return Wrap(
+      spacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SizedBox(
+          height: 36,
+          child: isFollowing
+              ? OutlinedButton(
+                  onPressed: followBusy ? null : () => onFollowToggle(true),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: c.border),
+                    foregroundColor: c.foreground,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text(
+                    followBusy ? '...' : 'Obuna bo\'lingan',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                )
+              : DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [
+                      AppColors.alsamosOrange,
+                      AppColors.alsamosOrangeDark,
+                    ]),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: followBusy ? null : () => onFollowToggle(false),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 9),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(LucideIcons.userPlus,
+                              size: 14, color: Colors.white),
+                          const SizedBox(width: 6),
+                          Text(
+                            followBusy ? '...' : 'Obuna',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ]),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        _SquareIconBtn(
+          icon: LucideIcons.messageCircle,
+          onTap: onMessage,
+          tooltip: 'Xabar',
+          c: c,
+        ),
+        _SquareIconBtn(
+          icon: LucideIcons.moreHorizontal,
+          onTap: () => _showMoreMenu(context),
+          tooltip: 'Ko\'proq',
+          c: c,
+        ),
+      ],
+    );
+  }
+
+  void _showMoreMenu(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: c.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: c.muted,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(LucideIcons.share2),
+              title: const Text('Profilni ulashish'),
+              onTap: () {
+                Navigator.pop(context);
+                Clipboard.setData(ClipboardData(
+                  text:
+                      'https://alsamos.app/user/${profile.username ?? profile.id}',
+                ));
+                AppToast.success(context, 'Havola nusxalandi');
+              },
+            ),
+            ListTile(
+              leading: Icon(LucideIcons.ban,
+                  color: blockBusy ? c.mutedForeground : const Color(0xFFEF4444)),
+              title: Text(
+                'Bloklash',
+                style: TextStyle(
+                  color: blockBusy ? c.mutedForeground : const Color(0xFFEF4444),
+                ),
+              ),
+              onTap: blockBusy
+                  ? null
+                  : () {
+                      Navigator.pop(context);
+                      onBlockToggle();
+                    },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.flag, color: Color(0xFFEF4444)),
+              title: const Text('Shikoyat qilish',
+                  style: TextStyle(color: Color(0xFFEF4444))),
+              onTap: () {
+                Navigator.pop(context);
+                AppToast.info(context, 'Shikoyat yuborildi');
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SquareIconBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final String tooltip;
   final AlsamosColors c;
-  const _SquareIconButton(
-      {required this.icon,
-      required this.onTap,
-      required this.tooltip,
-      required this.c});
+  const _SquareIconBtn({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+    required this.c,
+  });
   @override
   Widget build(BuildContext context) {
     return Tooltip(
@@ -743,56 +1138,70 @@ class _SquareIconButton extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// META ROW (location, website, joined)
+// ---------------------------------------------------------------------------
+
 class _MetaRow extends StatelessWidget {
   final FullProfile profile;
-  final AlsamosColors c;
-  const _MetaRow({required this.profile, required this.c});
+  const _MetaRow({required this.profile});
 
   @override
   Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    final primary = Theme.of(context).colorScheme.primary;
     final items = <Widget>[];
+
     if (profile.location != null && profile.location!.trim().isNotEmpty) {
-      items.add(_metaItem(LucideIcons.mapPin, profile.location!, c));
+      items.add(_metaChip(LucideIcons.mapPin, profile.location!, c.mutedForeground));
     }
     if (profile.website != null && profile.website!.trim().isNotEmpty) {
       final clean = profile.website!.replaceFirst(RegExp(r'^https?://'), '');
-      items.add(_metaItem(LucideIcons.link, clean, c,
-          color: Theme.of(context).colorScheme.primary));
+      items.add(_metaChip(LucideIcons.link, clean, primary));
     }
     if (profile.createdAt != null) {
       final joined = DateFormat.yMMMM().format(profile.createdAt!);
-      items.add(_metaItem(LucideIcons.calendar, joined, c));
+      items.add(_metaChip(LucideIcons.calendar, joined, c.mutedForeground));
     }
     if (items.isEmpty) return const SizedBox.shrink();
-    return Wrap(
-      spacing: 16,
-      runSpacing: 6,
-      children: items,
-    );
+    return Wrap(spacing: 16, runSpacing: 6, children: items);
   }
 
-  Widget _metaItem(IconData icon, String text, AlsamosColors c,
-      {Color? color}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: color ?? c.mutedForeground),
-        const SizedBox(width: 4),
-        Text(text,
-            style: TextStyle(color: color ?? c.mutedForeground, fontSize: 13)),
-      ],
+  Widget _metaChip(IconData icon, String text, Color color) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 200),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// STATS BAR
+// ---------------------------------------------------------------------------
 
 class _StatsBar extends ConsumerWidget {
   final FullProfile profile;
   final VoidCallback onFollowers;
   final VoidCallback onFollowing;
-  const _StatsBar(
-      {required this.profile,
-      required this.onFollowers,
-      required this.onFollowing});
+  const _StatsBar({
+    required this.profile,
+    required this.onFollowers,
+    required this.onFollowing,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -808,8 +1217,7 @@ class _StatsBar extends ConsumerWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _StatItem(
-              value: _fmt(profile.postsCount), label: 'Postlar', onTap: () {}),
+          _StatItem(value: _fmt(profile.postsCount), label: 'Postlar', onTap: () {}),
           _StatItem(
               value: _fmt(profile.followersCount),
               label: 'Obunachilar',
@@ -828,8 +1236,7 @@ class _StatItem extends StatelessWidget {
   final String value;
   final String label;
   final VoidCallback onTap;
-  const _StatItem(
-      {required this.value, required this.label, required this.onTap});
+  const _StatItem({required this.value, required this.label, required this.onTap});
   @override
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
@@ -842,11 +1249,9 @@ class _StatItem extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(value,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
             const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(fontSize: 12, color: c.mutedForeground)),
+            Text(label, style: TextStyle(fontSize: 12, color: c.mutedForeground)),
           ],
         ),
       ),
@@ -854,131 +1259,15 @@ class _StatItem extends StatelessWidget {
   }
 }
 
-class _Highlights extends StatelessWidget {
-  final AsyncValue<List<StoryHighlight>> highlightsAsync;
-  final bool isOwn;
-  const _Highlights({required this.highlightsAsync, required this.isOwn});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AlsamosColors.of(context);
-    return highlightsAsync.when(
-      loading: () => SizedBox(
-        height: 86,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: 5,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (_, __) => Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(color: c.muted, shape: BoxShape.circle),
-          ),
-        ),
-      ),
-      error: (_, __) => const SizedBox.shrink(),
-      data: (items) {
-        if (items.isEmpty && !isOwn) return const SizedBox.shrink();
-        return SizedBox(
-          height: 96,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: items.length + (isOwn ? 1 : 0),
-            separatorBuilder: (_, __) => const SizedBox(width: 14),
-            itemBuilder: (_, i) {
-              if (isOwn && i == items.length) {
-                return _HighlightBubble.add(
-                    onTap: () =>
-                        Navigator.of(context).pushNamed('/highlights/new'));
-              }
-              final h = items[i];
-              return _HighlightBubble(
-                title: h.name,
-                coverUrl: h.coverUrl,
-                onTap: () =>
-                    Navigator.of(context).pushNamed('/highlight/${h.id}'),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _HighlightBubble extends StatelessWidget {
-  final String title;
-  final String? coverUrl;
-  final VoidCallback onTap;
-  final bool isAdd;
-  const _HighlightBubble({
-    required this.title,
-    required this.coverUrl,
-    required this.onTap,
-  }) : isAdd = false;
-  const _HighlightBubble.add({required this.onTap})
-      : title = "Qo'shish",
-        coverUrl = null,
-        isAdd = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AlsamosColors.of(context);
-    final primary = Theme.of(context).colorScheme.primary;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(40),
-      child: SizedBox(
-        width: 72,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: isAdd ? null : AppColors.gradientPrimary,
-                color: isAdd ? c.muted : null,
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(2),
-                decoration:
-                    BoxDecoration(shape: BoxShape.circle, color: c.background),
-                child: ClipOval(
-                  child: SizedBox(
-                    width: 52,
-                    height: 52,
-                    child: isAdd
-                        ? Icon(LucideIcons.plus, color: primary, size: 22)
-                        : (coverUrl != null && coverUrl!.isNotEmpty
-                            ? CachedNetworkImage(
-                                imageUrl: coverUrl!, fit: BoxFit.cover)
-                            : Container(
-                                color: c.muted,
-                                child: const Icon(LucideIcons.image,
-                                    size: 22, color: Colors.white70))),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: c.foreground)),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// ---------------------------------------------------------------------------
+// TABS
+// ---------------------------------------------------------------------------
 
 class _TabBar extends StatelessWidget {
+  final List<_ProfileTab> tabs;
   final int active;
   final ValueChanged<int> onChange;
-  const _TabBar({required this.active, required this.onChange});
+  const _TabBar({required this.tabs, required this.active, required this.onChange});
 
   @override
   Widget build(BuildContext context) {
@@ -990,15 +1279,14 @@ class _TabBar extends StatelessWidget {
         border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
       ),
       child: Row(
-        children: List.generate(_ProfilePageState._tabs.length, (i) {
+        children: List.generate(tabs.length, (i) {
           final isActive = active == i;
           return Expanded(
             child: InkWell(
               onTap: () => onChange(i),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
                 decoration: BoxDecoration(
                   border: Border(
                     bottom: BorderSide(
@@ -1010,18 +1298,24 @@ class _TabBar extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(_ProfilePageState._tabs[i].$1,
+                    Icon(tabs[i].icon,
                         size: 18,
                         color: isActive ? primary : c.mutedForeground),
                     if (wide) ...[
                       const SizedBox(width: 6),
-                      Text(_ProfilePageState._tabs[i].$2,
+                      Flexible(
+                        child: Text(
+                          tabs[i].label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 13,
-                              color: isActive ? primary : c.mutedForeground,
-                              fontWeight: isActive
-                                  ? FontWeight.w600
-                                  : FontWeight.w500)),
+                            fontSize: 13,
+                            color: isActive ? primary : c.mutedForeground,
+                            fontWeight:
+                                isActive ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -1034,119 +1328,146 @@ class _TabBar extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// TAB BODY
+// ---------------------------------------------------------------------------
+
 class _TabBody extends ConsumerWidget {
   final int tab;
-  final AsyncValue postsAsync;
+  final List<_ProfileTab> tabs;
+  final AsyncValue<List<Post>> postsAsync;
   final bool isOwn;
   final AlsamosColors c;
-  const _TabBody(
-      {required this.tab,
-      required this.postsAsync,
-      required this.isOwn,
-      required this.c});
+  const _TabBody({
+    required this.tab,
+    required this.tabs,
+    required this.postsAsync,
+    required this.isOwn,
+    required this.c,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (tab == 2) {
-      return _emptySliver(
+    final currentTab = tabs[tab];
+
+    switch (currentTab.key) {
+      case 'reposts':
+        return _emptySliver(
           LucideIcons.repeat2,
           'Repostlar yo\'q',
           isOwn
               ? 'Yoqqan kontentni repost qiling!'
-              : 'Hech narsa repost qilinmagan');
-    }
-    if (tab == 3) {
-      if (!isOwn) {
-        return _emptySliver(LucideIcons.bookmark, 'Saqlangan postlar yo\'q',
-            'Saqlangan postlar faqat egasiga ko\'rinadi');
-      }
-      final bookmarksAsync = ref.watch(bookmarksProvider);
-      return bookmarksAsync.when(
-        loading: () => const SliverToBoxAdapter(
+              : 'Hech narsa repost qilinmagan',
+        );
+
+      case 'saved':
+        if (!isOwn) {
+          return _emptySliver(LucideIcons.bookmark, 'Saqlangan postlar yo\'q',
+              'Saqlangan postlar faqat egasiga ko\'rinadi');
+        }
+        final bookmarksAsync = ref.watch(bookmarksProvider);
+        return bookmarksAsync.when(
+          loading: () => const SliverToBoxAdapter(
             child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CircularProgressIndicator()))),
-        error: (e, _) => SliverToBoxAdapter(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          error: (e, _) => SliverToBoxAdapter(
             child: Center(
-                child: Text('$e', style: TextStyle(color: c.mutedForeground)))),
-        data: (list) {
-          if (list.isEmpty) {
-            return _emptySliver(LucideIcons.bookmark, 'Saqlangan postlar yo\'q',
-                'Postlarni keyinroq ko\'rish uchun bookmark qiling');
-          }
-          return SliverPadding(
+              child: Text('$e', style: TextStyle(color: c.mutedForeground)),
+            ),
+          ),
+          data: (list) {
+            if (list.isEmpty) {
+              return _emptySliver(LucideIcons.bookmark, 'Saqlangan postlar yo\'q',
+                  'Postlarni keyinroq ko\'rish uchun bookmark qiling');
+            }
+            return _buildBookmarksGrid(list, context);
+          },
+        );
+
+      case 'videos':
+        return postsAsync.when(
+          loading: () => const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          error: (e, _) => SliverToBoxAdapter(
+            child: Center(
+              child: Text('$e', style: TextStyle(color: c.mutedForeground)),
+            ),
+          ),
+          data: (posts) {
+            final videos =
+                posts.where((p) => p.mediaType == 'video').toList();
+            if (videos.isEmpty) {
+              return _emptySliver(
+                LucideIcons.video,
+                'Videolar yo\'q',
+                isOwn ? 'Birinchi videongizni yuklang!' : 'Hozircha video yo\'q',
+              );
+            }
+            return _buildPostsGrid(videos, context);
+          },
+        );
+
+      default: // 'posts'
+        return postsAsync.when(
+          loading: () => const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          error: (e, _) => SliverToBoxAdapter(
+            child: Center(
+              child: Text('$e', style: TextStyle(color: c.mutedForeground)),
+            ),
+          ),
+          data: (posts) {
+            if (posts.isEmpty) {
+              return _emptySliver(
+                LucideIcons.layoutGrid,
+                'Postlar yo\'q',
+                isOwn ? 'Birinchi postingizni yarating!' : 'Hozircha post yo\'q',
+                actionLabel: isOwn ? 'Birinchi post qo\'shish' : null,
+                onAction: isOwn ? () => GoRouter.of(context).push('/create') : null,
+              );
+            }
+            return _buildPostsGrid(posts, context);
+          },
+        );
+    }
+  }
+
+  Widget _buildPostsGrid(List<Post> posts, BuildContext context) {
+    return SliverToBoxAdapter(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 896),
+          child: Padding(
             padding: const EdgeInsets.all(2),
-            sliver: SliverGrid(
+            child: GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 3, crossAxisSpacing: 2, mainAxisSpacing: 2),
-              delegate: SliverChildBuilderDelegate(
-                (ctx, i) {
-                  final post = list[i];
-                  final media =
-                      (post.mediaUrls != null && post.mediaUrls!.isNotEmpty)
-                          ? post.mediaUrls!.first as String
-                          : null;
-                  return _PostGridTile(
-                    mediaUrl: media,
-                    content: post.content,
-                    isVideo: _gridMediaIsVideo(post.mediaType, media),
-                    hasMultiple: (post.mediaUrls?.length ?? 0) > 1,
-                    likesCount: post.likesCount,
-                    commentsCount: post.commentsCount,
-                    c: c,
-                    onTap: () => GoRouter.of(ctx).push('/post/${post.id}'),
-                  );
-                },
-                childCount: list.length,
-              ),
-            ),
-          );
-        },
-      );
-    }
-    return postsAsync.when(
-      loading: () => const SliverToBoxAdapter(
-          child: Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: CircularProgressIndicator()))),
-      error: (e, _) => SliverToBoxAdapter(
-          child: Center(
-              child: Text('$e', style: TextStyle(color: c.mutedForeground)))),
-      data: (posts) {
-        final list = (posts as List);
-        final filtered = tab == 1
-            ? list.where((p) => p.mediaType == 'video').toList()
-            : list;
-        if (filtered.isEmpty) {
-          return _emptySliver(
-            tab == 1 ? LucideIcons.video : LucideIcons.layoutGrid,
-            tab == 1 ? 'Videolar yo\'q' : 'Postlar yo\'q',
-            isOwn ? 'Birinchi postingizni yarating!' : 'Hozircha post yo\'q',
-            actionLabel: isOwn ? 'Birinchi post qo\'shish' : null,
-            onAction: isOwn ? () => GoRouter.of(context).push('/create') : null,
-          );
-        }
-        return SliverPadding(
-          padding: const EdgeInsets.all(2),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3, crossAxisSpacing: 2, mainAxisSpacing: 2),
-            delegate: SliverChildBuilderDelegate(
-              (ctx, i) {
-                final post = filtered[i];
-                final mediaList = post.mediaUrls as List?;
-                final media = (mediaList != null && mediaList.isNotEmpty)
-                    ? mediaList.first as String
-                    : null;
-                final isVideo = _gridMediaIsVideo(post.mediaType, media);
-                final hasMultiple = (mediaList?.length ?? 0) > 1;
+              itemCount: posts.length,
+              itemBuilder: (ctx, i) {
+                final post = posts[i];
+                final media =
+                    post.mediaUrls.isNotEmpty ? post.mediaUrls.first : null;
                 return _PostGridTile(
                   mediaUrl: media,
-                  content: post.content as String?,
-                  isVideo: isVideo,
-                  hasMultiple: hasMultiple,
-                  likesCount: (post.likesCount as int?) ?? 0,
-                  commentsCount: (post.commentsCount as int?) ?? 0,
+                  content: post.content,
+                  isVideo: _gridMediaIsVideo(post.mediaType, media),
+                  hasMultiple: post.mediaUrls.length > 1,
+                  isPinned: post.isPinned,
+                  likesCount: post.likesCount,
+                  commentsCount: post.commentsCount,
                   c: c,
                   onTap: () => PostViewModal.show(
                     ctx,
@@ -1155,35 +1476,81 @@ class _TabBody extends ConsumerWidget {
                   ),
                 );
               },
-              childCount: filtered.length,
             ),
           ),
-        );
-      },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBookmarksGrid(List<BookmarkedPost> list, BuildContext context) {
+    return SliverToBoxAdapter(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 896),
+          child: Padding(
+            padding: const EdgeInsets.all(2),
+            child: GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3, crossAxisSpacing: 2, mainAxisSpacing: 2),
+              itemCount: list.length,
+              itemBuilder: (ctx, i) {
+                final post = list[i];
+                final media =
+                    (post.mediaUrls != null && post.mediaUrls!.isNotEmpty)
+                        ? post.mediaUrls!.first as String
+                        : null;
+                return _PostGridTile(
+                  mediaUrl: media,
+                  content: post.content,
+                  isVideo: _gridMediaIsVideo(post.mediaType, media),
+                  hasMultiple: (post.mediaUrls?.length ?? 0) > 1,
+                  isPinned: false,
+                  likesCount: post.likesCount,
+                  commentsCount: post.commentsCount,
+                  c: c,
+                  onTap: () => GoRouter.of(ctx).push('/post/${post.id}'),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _emptySliver(IconData icon, String title, String subtitle,
       {String? actionLabel, VoidCallback? onAction}) {
-    // v42: EmptyState widget bilan delegatsiya — a11y Semantics bilan
     return SliverToBoxAdapter(
-      child: EmptyState(
-        icon: icon,
-        title: title,
-        subtitle: subtitle,
-        ctaLabel: actionLabel,
-        onCta: onAction,
-        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 896),
+          child: EmptyState(
+            icon: icon,
+            title: title,
+            subtitle: subtitle,
+            ctaLabel: actionLabel,
+            onCta: onAction,
+            padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+          ),
+        ),
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// POST GRID TILE
+// ---------------------------------------------------------------------------
 
 class _PostGridTile extends StatefulWidget {
   final String? mediaUrl;
   final String? content;
   final bool isVideo;
   final bool hasMultiple;
+  final bool isPinned;
   final int likesCount;
   final int commentsCount;
   final AlsamosColors c;
@@ -1193,6 +1560,7 @@ class _PostGridTile extends StatefulWidget {
     required this.content,
     required this.isVideo,
     required this.hasMultiple,
+    required this.isPinned,
     required this.likesCount,
     required this.commentsCount,
     required this.c,
@@ -1205,41 +1573,6 @@ class _PostGridTile extends StatefulWidget {
 class _PostGridTileState extends State<_PostGridTile> {
   bool _hover = false;
 
-  Widget _textFallback() {
-    final c = widget.c;
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Center(
-        child: Text(
-          widget.content ?? 'No content',
-          maxLines: 4,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 11, color: c.foreground),
-        ),
-      ),
-    );
-  }
-
-  Widget _mediaFallback({required IconData icon}) {
-    final c = widget.c;
-    return Container(
-      color: c.muted,
-      child: Center(
-        child: Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.35),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white24),
-          ),
-          child: Icon(icon, color: Colors.white, size: 22),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = widget.c;
@@ -1250,26 +1583,59 @@ class _PostGridTileState extends State<_PostGridTile> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: Container(
-          color: c.muted,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: c.muted,
+            borderRadius: BorderRadius.circular(4),
+          ),
           child: Stack(
             fit: StackFit.expand,
             children: [
               if (widget.mediaUrl != null && widget.isVideo)
-                _mediaFallback(icon: LucideIcons.play)
+                Container(
+                  color: c.muted,
+                  child: Center(
+                    child: Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: const Icon(LucideIcons.play,
+                          color: Colors.white, size: 22),
+                    ),
+                  ),
+                )
               else if (widget.mediaUrl != null)
                 CachedNetworkImage(
                   imageUrl: widget.mediaUrl!,
                   fit: BoxFit.cover,
                   placeholder: (_, __) => Container(color: c.muted),
-                  errorWidget: (_, __, ___) =>
-                      _mediaFallback(icon: LucideIcons.imageOff),
+                  errorWidget: (_, __, ___) => Container(
+                    color: c.muted,
+                    child: const Center(
+                      child: Icon(LucideIcons.imageOff,
+                          color: Colors.white70, size: 20),
+                    ),
+                  ),
                 )
               else
-                _textFallback(),
-              if (widget.isVideo)
-                const Center(
-                    child:
-                        Icon(LucideIcons.play, color: Colors.white, size: 28)),
+                Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Center(
+                    child: Text(
+                      stripPostMetadata(widget.content).isEmpty
+                          ? 'No content'
+                          : stripPostMetadata(widget.content),
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: c.foreground),
+                    ),
+                  ),
+                ),
               if (widget.hasMultiple)
                 Positioned(
                   top: 6,
@@ -1284,7 +1650,20 @@ class _PostGridTileState extends State<_PostGridTile> {
                         color: Colors.white, size: 12),
                   ),
                 ),
-              // Hover overlay with stats
+              if (widget.isPinned)
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(LucideIcons.pin,
+                        size: 11, color: Colors.white),
+                  ),
+                ),
               AnimatedOpacity(
                 opacity: _hover ? 1 : 0,
                 duration: const Duration(milliseconds: 150),
@@ -1296,20 +1675,32 @@ class _PostGridTileState extends State<_PostGridTile> {
                       const Icon(LucideIcons.heart,
                           color: Colors.white, size: 16),
                       const SizedBox(width: 4),
-                      Text('${widget.likesCount}',
+                      Flexible(
+                        child: Text(
+                          '${widget.likesCount}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               color: Colors.white,
                               fontSize: 13,
-                              fontWeight: FontWeight.w600)),
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
                       const SizedBox(width: 12),
                       const Icon(LucideIcons.messageCircle,
                           color: Colors.white, size: 16),
                       const SizedBox(width: 4),
-                      Text('${widget.commentsCount}',
+                      Flexible(
+                        child: Text(
+                          '${widget.commentsCount}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               color: Colors.white,
                               fontSize: 13,
-                              fontWeight: FontWeight.w600)),
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1322,10 +1713,14 @@ class _PostGridTileState extends State<_PostGridTile> {
   }
 }
 
-class _FollowDialogStub extends StatelessWidget {
+// ---------------------------------------------------------------------------
+// FOLLOWERS/FOLLOWING SHEET
+// ---------------------------------------------------------------------------
+
+class _FollowSheet extends StatelessWidget {
   final String profileId;
   final String type;
-  const _FollowDialogStub({required this.profileId, required this.type});
+  const _FollowSheet({required this.profileId, required this.type});
   @override
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
@@ -1352,7 +1747,6 @@ class _FollowDialogStub extends StatelessWidget {
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
-            // v37: "Tez orada" o'rniga real empty state — ikona + tushuntirish + CTA
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
               child: Center(
@@ -1375,8 +1769,8 @@ class _FollowDialogStub extends StatelessWidget {
                   const SizedBox(height: 14),
                   Text(
                     type == 'followers'
-                        ? "Hozircha obunachilar yo\u2018q"
-                        : "Hech kimga obuna bo\u2018lmagansiz",
+                        ? "Hozircha obunachilar yo‘q"
+                        : "Hech kimga obuna bo‘lmagansiz",
                     style: TextStyle(
                         color: c.foreground,
                         fontSize: 14,
@@ -1385,8 +1779,8 @@ class _FollowDialogStub extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     type == 'followers'
-                        ? "Postlar va kontent yarating \u2014 odamlar sizni topishadi."
-                        : "Qiziqarli mualliflarni topish uchun Discover sahifasiga o\u2018ting.",
+                        ? "Postlar va kontent yarating — odamlar sizni topishadi."
+                        : "Qiziqarli mualliflarni topish uchun Discover sahifasiga o‘ting.",
                     textAlign: TextAlign.center,
                     style: TextStyle(color: c.mutedForeground, fontSize: 12),
                   ),

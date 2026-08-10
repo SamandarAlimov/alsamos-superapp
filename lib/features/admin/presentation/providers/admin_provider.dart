@@ -113,6 +113,8 @@ class AdminNotifier extends StateNotifier<AdminState> {
 }
 
 final adminProvider = StateNotifierProvider<AdminNotifier, AdminState>((ref) {
-  final userId = ref.watch(authProvider).user?.id;
-  return AdminNotifier(ref.watch(adminRepositoryProvider), userId);
+  // Use ref.read() instead of ref.watch() to avoid provider invalidation
+  // when auth state changes. Admin state should persist across auth updates.
+  final userId = ref.read(authProvider).user?.id;
+  return AdminNotifier(ref.read(adminRepositoryProvider), userId);
 });

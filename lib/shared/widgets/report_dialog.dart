@@ -3,6 +3,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_colors.dart';
+import 'app_toast.dart';
 
 /// v44: Enhanced ReportDialog — web parity.
 /// 6 ta sabab kategoriya + qo'shimcha tafsilot textarea + 2 bosqichli (select → confirm)
@@ -77,9 +78,7 @@ class _ReportSheetState extends State<_ReportSheet> {
     if (!mounted) return;
     Navigator.pop(context, ok ? _selected!.id : null);
     if (ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Shikoyat qabul qilindi, rahmat.')),
-      );
+      AppToast.success(context, 'Shikoyat qabul qilindi, rahmat.');
     }
   }
 

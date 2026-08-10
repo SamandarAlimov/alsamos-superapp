@@ -1,13 +1,23 @@
 .dart_tool/
 build/
+.flutter-plugins
+.flutter-plugins-dependencies
 .dart_tool/
 build/
 **/flutter/ephemeral/
 **/.plugin_symlinks/
 **/.gradle/
 **/.kotlin/
+.claude/
 
 # Android release signing secrets
+.env
+.env.*
+!.env.example
+*google-services*.json
+*GoogleService-Info*.plist
+*service-account*.json
+firebase_options.dart
 android/local.properties
 android/key.properties
 android/app/*.jks

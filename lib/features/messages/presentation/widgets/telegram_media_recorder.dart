@@ -10,6 +10,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 enum RecorderMode { voice, video }
 enum _RecState { idle, recording, preview }
@@ -111,7 +113,7 @@ class _TelegramMediaRecorderState extends State<TelegramMediaRecorder> {
       final url = supa.storage.from('chat-media').getPublicUrl(storagePath);
       widget.onSend(RecordedMedia(url: url, mediaType: widget.mode == RecorderMode.voice ? 'voice' : 'video', durationSec: _elapsed.inSeconds));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+      if (mounted) AppToast.error(context, friendlyError(e));
     } finally { if (mounted) setState(() => _uploading = false); }
   }
 

@@ -1,28 +1,54 @@
 import '../../../core/supabase/supabase_client.dart';
 import 'payment_models.dart';
 
-/// Ported from web PaymentSettingsPage — real `wallets` + `transactions`.
 class PaymentRepository {
-  /// Fetch the user's wallet, creating one if it does not exist (web parity).
-  Future<Wallet?> fetchOrCreateWallet(String userId) async {
-    final existing = await supabase.from('wallets').select().eq('user_id', userId).maybeSingle();
+  Future<Wallet?> fetchOrCreateWallet() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return null;
+
+    final existing = await supabase
+        .from('wallets')
+        .select()
+        .eq('user_id', userId)
+        .maybeSingle();
     if (existing != null) return Wallet.fromMap(existing);
     try {
-      final created =
-          await supabase.from('wallets').insert({'user_id': userId}).select().single();
+      final created = await supabase
+          .from('wallets')
+          .insert({'user_id': userId})
+          .select()
+          .single();
       return Wallet.fromMap(created);
     } catch (_) {
-      return null;
+      final retry = await supabase
+          .from('wallets')
+          .select()
+          .eq('user_id', userId)
+          .maybeSingle();
+      return retry != null ? Wallet.fromMap(retry) : null;
     }
   }
 
-  Future<List<WalletTransaction>> fetchTransactions(String walletId) async {
+  Future<List<WalletTransaction>> fetchTransactions() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    final wallet = await supabase
+        .from('wallets')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (wallet == null) return [];
+
+    final walletId = wallet['id'] as String;
     final res = await supabase
         .from('transactions')
         .select()
         .eq('wallet_id', walletId)
         .order('created_at', ascending: false)
         .limit(50);
-    return (res as List).map((e) => WalletTransaction.fromMap(e as Map<String, dynamic>)).toList();
+    return (res as List)
+        .map((e) => WalletTransaction.fromMap(e as Map<String, dynamic>))
+        .toList();
   }
 }

@@ -8,7 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/supabase/supabase_client.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../data/admin_models.dart';
 import '../../data/admin_repository.dart';
 
@@ -412,7 +412,8 @@ class _CountriesPanel extends StatelessWidget {
                         padding:
                             const EdgeInsets.symmetric(vertical: 4),
                         child: Row(children: [
-                          UserAvatar(
+                          StoryAvatarRing(
+                            userId: u.id,
                             avatarUrl: u.avatarUrl,
                             fallback: ((u.username ?? '?')
                                 .characters

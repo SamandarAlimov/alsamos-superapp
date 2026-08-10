@@ -10,6 +10,8 @@ import 'models/product_model.dart';
 
 class MarketplaceRepository {
   const MarketplaceRepository();
+  static const _productSelect =
+      '*, seller:sellers(id, user_id, business_name, business_type, logo_url, location, is_verified, rating, total_sales, profile:profiles(username, display_name, avatar_url)), category:product_categories(id, name, slug, icon), images:product_images(id, url, position)';
 
   // ---------- Categories ----------
   Future<List<ProductCategory>> fetchCategories() async {
@@ -35,9 +37,7 @@ class MarketplaceRepository {
       if (cat != null) categoryId = cat['id']?.toString();
     }
 
-    dynamic q = supabase.from('products').select(
-          '*, seller:sellers(id, user_id, business_name, business_type, logo_url, location, is_verified, rating, total_sales, profile:profiles(username, display_name, avatar_url)), category:product_categories(id, name, slug, icon), images:product_images(id, url, position)',
-        );
+    dynamic q = supabase.from('products').select(_productSelect);
     q = q.eq('status', 'active');
     if (categoryId != null) q = q.eq('category_id', categoryId);
     if (search != null && search.isNotEmpty) q = q.ilike('title', '%$search%');
@@ -57,6 +57,28 @@ class MarketplaceRepository {
       map['is_liked'] = likedIds.contains(map['id']?.toString());
       return Product.fromMap(map);
     }).toList();
+  }
+
+  Future<Product?> fetchProductById(String productId) async {
+    final data = await supabase
+        .from('products')
+        .select(_productSelect)
+        .eq('id', productId)
+        .neq('status', 'deleted')
+        .maybeSingle();
+    if (data == null) return null;
+    final map = Map<String, dynamic>.from(data);
+    final uid = supabase.auth.currentUser?.id;
+    if (uid != null) {
+      final like = await supabase
+          .from('product_likes')
+          .select('product_id')
+          .eq('user_id', uid)
+          .eq('product_id', productId)
+          .maybeSingle();
+      map['is_liked'] = like != null;
+    }
+    return Product.fromMap(map);
   }
 
   Future<List<Product>> fetchSellerProducts(String sellerId) async {
@@ -379,8 +401,18 @@ class MarketplaceRepository {
   }
 
   Future<bool> updateOrderStatus(String orderId, String status) async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return false;
     try {
-      await supabase.from('orders').update({'status': status}).eq('id', orderId);
+      final seller = await fetchMySeller();
+      if (seller == null) {
+        return false;
+      }
+      await supabase
+          .from('orders')
+          .update({'status': status})
+          .eq('id', orderId)
+          .eq('seller_id', seller.id);
       return true;
     } catch (_) {
       return false;
@@ -472,7 +504,9 @@ class MarketplaceRepository {
   Future<({Seller? seller, List<Product> products, List<ProductReview> reviews})>
       fetchSellerStore(String sellerId) async {
     final seller = await fetchSeller(sellerId);
-    if (seller == null) return (seller: null, products: <Product>[], reviews: <ProductReview>[]);
+    if (seller == null) {
+      return (seller: null, products: <Product>[], reviews: <ProductReview>[]);
+    }
 
     final productsRaw = await supabase
         .from('products')

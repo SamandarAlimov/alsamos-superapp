@@ -5,8 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/premium_motion.dart';
-import '../../../../shared/widgets/user_avatar.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 
 // Telegram-style conversation row — matches web messages/ChatListItem.tsx (compact + full).
@@ -15,6 +15,7 @@ class ChatListItemData {
   final String type; // 'private' | 'group' | 'channel'
   final String? name;
   final String? avatarUrl;
+  final String? storyUserId;
   final bool isVerified;
   final bool isSelfChat;
   final bool isOnline;
@@ -28,6 +29,7 @@ class ChatListItemData {
     required this.type,
     this.name,
     this.avatarUrl,
+    this.storyUserId,
     this.isVerified = false,
     this.isSelfChat = false,
     this.isOnline = false,
@@ -204,13 +206,15 @@ class ChatListItem extends StatelessWidget {
                             shape: BoxShape.circle, color: _avatarBg(context)),
                         child:
                             Icon(iconFallback, color: Colors.white, size: 18))
-                    : UserAvatar(
+                    : _ChatAvatarWithStory(
+                        userId: conversation.storyUserId,
                         avatarUrl: conversation.avatarUrl,
                         fallback: _getName().isNotEmpty
                             ? _getName()[0].toUpperCase()
                             : '?',
                         size: 44,
-                        backgroundColor: primary),
+                        backgroundColor: primary,
+                      ),
               ),
             ),
             if (conversation.isOnline &&
@@ -284,13 +288,15 @@ class ChatListItem extends StatelessWidget {
                   color: iconFallback != null ? _avatarBg(context) : null),
               child: iconFallback != null
                   ? Icon(iconFallback, color: Colors.white, size: 22)
-                  : UserAvatar(
+                  : _ChatAvatarWithStory(
+                      userId: conversation.storyUserId,
                       avatarUrl: conversation.avatarUrl,
                       fallback: _getName().isNotEmpty
                           ? _getName()[0].toUpperCase()
                           : '?',
                       size: 52,
-                      backgroundColor: primary),
+                      backgroundColor: primary,
+                    ),
             ),
             if (conversation.isOnline &&
                 conversation.type == 'private' &&
@@ -463,4 +469,31 @@ class ChatListItem extends StatelessWidget {
           leading: Icon(icon, size: 18, color: color),
           title: Text(label, style: TextStyle(color: color, fontSize: 14)),
           onTap: onTap);
+}
+
+class _ChatAvatarWithStory extends StatelessWidget {
+  final String? userId;
+  final String? avatarUrl;
+  final String fallback;
+  final double size;
+  final Color backgroundColor;
+
+  const _ChatAvatarWithStory({
+    required this.userId,
+    required this.avatarUrl,
+    required this.fallback,
+    required this.size,
+    required this.backgroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StoryAvatarRing(
+      userId: userId,
+      avatarUrl: avatarUrl,
+      fallback: fallback,
+      size: size,
+      backgroundColor: backgroundColor,
+    );
+  }
 }

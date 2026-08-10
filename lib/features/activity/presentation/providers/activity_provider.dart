@@ -35,6 +35,8 @@ class ActivityNotifier extends StateNotifier<ActivityState> {
 }
 
 final activityProvider = StateNotifierProvider<ActivityNotifier, ActivityState>((ref) {
-  final userId = ref.watch(authProvider).user?.id;
-  return ActivityNotifier(ref.watch(activityRepositoryProvider), userId);
+  // Use ref.read() instead of ref.watch() to avoid provider invalidation
+  // when auth state changes. Activity data should persist across auth updates.
+  final userId = ref.read(authProvider).user?.id;
+  return ActivityNotifier(ref.read(activityRepositoryProvider), userId);
 });

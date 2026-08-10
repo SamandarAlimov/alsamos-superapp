@@ -5,6 +5,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// v25: port web payment Transfer flow (P2P).
 /// User → amount → recipient identifier (username/phone/card) → supabase
@@ -50,10 +51,7 @@ class _TransferDialogState extends ConsumerState<TransferDialog> {
       });
       if (!mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text("O'tkazma yuborildi: $amt so'm"),
-        backgroundColor: const Color(0xFF22C55E),
-      ));
+      AppToast.success(context, "O'tkazma yuborildi: $amt so'm");
     } catch (e) {
       if (!mounted) return;
       setState(() { _sending = false; _error = 'Xatolik: $e'; });

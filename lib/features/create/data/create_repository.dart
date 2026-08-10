@@ -1,8 +1,13 @@
-import '../../../core/supabase/supabase_client.dart';
+import '../../../core/data/base_repository.dart';
+import '../../../core/data/supabase_data_source.dart';
 
 /// Ported from web pages/CreatePage.tsx + useCreatePost.
-class CreateRepository {
-  const CreateRepository();
+class CreateRepository extends BaseRepository {
+  const CreateRepository({
+    SupabaseDataSource db = const SupabaseDataSource(),
+  }) : _db = db;
+
+  final SupabaseDataSource _db;
 
   Future<void> createPost({
     required String userId,
@@ -11,12 +16,14 @@ class CreateRepository {
     String? mediaType,
     String visibility = 'public',
   }) async {
-    await supabase.from('posts').insert({
-      'user_id': userId,
-      'content': content,
-      'media_urls': mediaUrls,
-      'media_type': mediaType,
-      'visibility': visibility,
+    return guard('createPost', () async {
+      await _db.table('posts').insert({
+        'user_id': userId,
+        'content': content,
+        'media_urls': mediaUrls,
+        'media_type': mediaType,
+        'visibility': visibility,
+      });
     });
   }
 }

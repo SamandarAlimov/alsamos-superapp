@@ -29,9 +29,10 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/online_indicator.dart';
-import '../../../../shared/widgets/user_avatar.dart';
 import '../../../../shared/widgets/verified_badge.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 class Creator {
   final String id;
@@ -125,9 +126,7 @@ class _PopularCreatorsState extends State<PopularCreators> {
     final supa = Supabase.instance.client;
     final uid = supa.auth.currentUser?.id;
     if (uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please login to follow users')),
-      );
+      AppToast.error(context, 'Obuna bo\'lish uchun kiring');
       return;
     }
     setState(() => _busyId = creator.id);
@@ -140,25 +139,19 @@ class _PopularCreatorsState extends State<PopularCreators> {
             .eq('following_id', creator.id);
         _following[creator.id] = false;
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Unfollowed')),
-          );
+          AppToast.success(context, 'Obuna bekor qilindi');
         }
       } else {
         await supa.from('follows').insert(
             {'follower_id': uid, 'following_id': creator.id});
         _following[creator.id] = true;
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Following')),
-          );
+          AppToast.success(context, 'Obuna bo\'ldingiz');
         }
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to update follow status')),
-        );
+        AppToast.error(context, 'Obuna holatini yangilab bo\'lmadi');
       }
     }
     if (mounted) setState(() => _busyId = null);
@@ -323,25 +316,13 @@ class _CreatorCardState extends State<_CreatorCard> {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  UserAvatar(
+                  StoryAvatarRing(
+                    userId: cr.id,
                     avatarUrl: cr.avatarUrl,
                     fallback: name[0].toUpperCase(),
                     size: 64, // size="lg"
                     backgroundColor: primary,
-                  ),
-                  // Story ring effect — web has showRing prop on StoryAvatar.
-                  // We render a thin ring around the avatar.
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                              color: primary.withValues(alpha: 0.4),
-                              width: 2),
-                        ),
-                      ),
-                    ),
+                    inactiveBorderColor: primary.withValues(alpha: 0.4),
                   ),
                   Positioned(
                     right: 0,

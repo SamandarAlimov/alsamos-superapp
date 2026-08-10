@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
 import 'app_radius.dart';
@@ -16,19 +15,41 @@ class AppTheme {
         ? ThemeData.dark(useMaterial3: true)
         : ThemeData.light(useMaterial3: true);
 
-    final interTheme = GoogleFonts.interTextTheme(base.textTheme).apply(
+    final interTheme = base.textTheme.apply(
+      fontFamily: 'Inter',
       bodyColor: t.foreground,
       displayColor: t.foreground,
     );
     // Web uses `font-display: Space Grotesk` for headings/logo, Inter for body.
     final textTheme = interTheme.copyWith(
-      displayLarge: GoogleFonts.spaceGrotesk(textStyle: interTheme.displayLarge, fontWeight: FontWeight.w700, color: t.foreground),
-      displayMedium: GoogleFonts.spaceGrotesk(textStyle: interTheme.displayMedium, fontWeight: FontWeight.w700, color: t.foreground),
-      displaySmall: GoogleFonts.spaceGrotesk(textStyle: interTheme.displaySmall, fontWeight: FontWeight.w700, color: t.foreground),
-      headlineLarge: GoogleFonts.spaceGrotesk(textStyle: interTheme.headlineLarge, fontWeight: FontWeight.w700, color: t.foreground),
-      headlineMedium: GoogleFonts.spaceGrotesk(textStyle: interTheme.headlineMedium, fontWeight: FontWeight.w600, color: t.foreground),
-      headlineSmall: GoogleFonts.spaceGrotesk(textStyle: interTheme.headlineSmall, fontWeight: FontWeight.w600, color: t.foreground),
-      titleLarge: GoogleFonts.spaceGrotesk(textStyle: interTheme.titleLarge, fontWeight: FontWeight.w600, color: t.foreground),
+      displayLarge: interTheme.displayLarge?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w700,
+          color: t.foreground),
+      displayMedium: interTheme.displayMedium?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w700,
+          color: t.foreground),
+      displaySmall: interTheme.displaySmall?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w700,
+          color: t.foreground),
+      headlineLarge: interTheme.headlineLarge?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w700,
+          color: t.foreground),
+      headlineMedium: interTheme.headlineMedium?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w600,
+          color: t.foreground),
+      headlineSmall: interTheme.headlineSmall?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w600,
+          color: t.foreground),
+      titleLarge: interTheme.titleLarge?.copyWith(
+          fontFamily: 'SpaceGrotesk',
+          fontWeight: FontWeight.w600,
+          color: t.foreground),
     );
 
     final colorScheme = ColorScheme(
@@ -80,7 +101,8 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: t.muted.withValues(alpha: 0.5),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         border: OutlineInputBorder(
           borderRadius: AppRadius.brLg,
           borderSide: BorderSide(color: t.input),

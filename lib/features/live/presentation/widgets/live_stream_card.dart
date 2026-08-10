@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import 'live_stream_viewer.dart';
 
 class LiveStreamSummary {
@@ -50,7 +50,7 @@ class _LiveStreamCardState extends State<LiveStreamCard> with SingleTickerProvid
               padding: const EdgeInsets.all(2),
               decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(begin: Alignment.bottomLeft, end: Alignment.topRight, colors: [Color(0xFFEF4444), Color(0xFFEC4899)])),
               child: Container(padding: const EdgeInsets.all(2), decoration: BoxDecoration(color: colors.background, shape: BoxShape.circle),
-                child: UserAvatar(avatarUrl: s.avatarUrl, fallback: name[0].toUpperCase(), size: 56, backgroundColor: const Color(0xFFEF4444))),
+                child: StoryAvatarRing(userId: s.id, avatarUrl: s.avatarUrl, fallback: name[0].toUpperCase(), size: 50, ringPadding: 3, backgroundColor: const Color(0xFFEF4444))),
             )),
             Positioned(left: 6, right: 6, bottom: -2, child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
@@ -84,7 +84,7 @@ class _LiveStreamCardState extends State<LiveStreamCard> with SingleTickerProvid
             child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(LucideIcons.users, color: Colors.white, size: 11), const SizedBox(width: 4), Text('${s.viewerCount}', style: const TextStyle(color: Colors.white, fontSize: 11))]),
           )),
           Positioned(left: 10, right: 10, bottom: 10, child: Row(children: [
-            UserAvatar(avatarUrl: s.avatarUrl, fallback: name[0].toUpperCase(), size: 28, backgroundColor: const Color(0xFFEF4444)),
+            StoryAvatarRing(userId: s.id, avatarUrl: s.avatarUrl, fallback: name[0].toUpperCase(), size: 22, ringPadding: 3, backgroundColor: const Color(0xFFEF4444)),
             const SizedBox(width: 8),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
               Text(s.title ?? 'Live stream', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),

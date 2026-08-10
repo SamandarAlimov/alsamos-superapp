@@ -12,6 +12,7 @@ import '../../data/map_models.dart';
 import '../../data/map_repository.dart';
 import '../providers/map_provider.dart';
 import 'transport_mode_picker.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 // ─── arrival time helper ───────────────────────────────────────────────────
 String _arrivalTime(double seconds) {
@@ -116,8 +117,17 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
       widget.onMapSelectionModeChange?.call(null);
       widget.onClearSelectedMapLocation?.call();
     }
-    // auto-calc if both set
+    // Update origin when currentLocation arrives late
     final dir = ref.read(directionsProvider);
+    if (widget.currentLocation != null && dir.origin == null) {
+      _originCtrl.text = 'Joriy joylashuv';
+      ref.read(directionsProvider.notifier).setOrigin((
+        lat: widget.currentLocation!.lat,
+        lng: widget.currentLocation!.lng,
+        name: 'Joriy joylashuv',
+      ));
+    }
+    // auto-calc if both set
     if (dir.origin != null && dir.destination != null && dir.routes.isEmpty && !dir.loading) {
       _calcRoute();
     }
@@ -226,7 +236,7 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
     if (dir.origin == null || dir.destination == null) return;
     final url = 'https://www.google.com/maps/dir/${dir.origin!.lat},${dir.origin!.lng}/${dir.destination!.lat},${dir.destination!.lng}';
     Clipboard.setData(ClipboardData(text: url));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Havola nusxalandi!")));
+    AppToast.success(context, "Havola nusxalandi!");
   }
 
   void _handleClose() {
@@ -539,15 +549,15 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
         Row(children: [
           Icon(LucideIcons.clock, size: 20, color: primary),
           const SizedBox(width: 8),
-          Text(formatDuration(route.duration), style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: c.foreground)),
+          Flexible(child: Text(formatDuration(route.duration), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: c.foreground))),
           const SizedBox(width: 16),
           Icon(LucideIcons.route, size: 16, color: c.mutedForeground),
           const SizedBox(width: 4),
-          Text(formatDistance(route.distance), style: TextStyle(fontSize: 14, color: c.mutedForeground)),
+          Flexible(child: Text(formatDistance(route.distance), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, color: c.mutedForeground))),
           const SizedBox(width: 8),
           Icon(LucideIcons.calendar, size: 14, color: c.mutedForeground),
           const SizedBox(width: 4),
-          Text('${_arrivalTime(route.duration)} da yetish', style: TextStyle(fontSize: 13, color: c.mutedForeground)),
+          Flexible(child: Text('${_arrivalTime(route.duration)} da yetish', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: c.mutedForeground))),
         ]),
         const SizedBox(height: 14),
         Row(children: [
@@ -560,7 +570,7 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
           const SizedBox(width: 8),
           _IconOutlinedBtn(icon: isFav ? LucideIcons.star : LucideIcons.starOff, color: isFav ? const Color(0xFFF59E0B) : c.mutedForeground, onTap: () {
             if (dir.destination != null) {
-              ref.read(savedPlacesProvider.notifier).toggleFavorite(SavedPlace(id: 'fav_${DateTime.now().millisecondsSinceEpoch}', name: dir.destination!.name, lat: dir.destination!.lat, lng: dir.destination!.lng, isFavorite: true, icon: '⭐'));
+              ref.read(savedPlacesProvider.notifier).toggleFavorite(SavedPlace(id: 'fav_${DateTime.now().millisecondsSinceEpoch}', name: dir.destination!.name, lat: dir.destination!.lat, lng: dir.destination!.lng, isFavorite: true, icon: 'star'));
             }
           }),
           const SizedBox(width: 8),
@@ -632,7 +642,7 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
                     Container(
                       width: 36, height: 36,
                       decoration: BoxDecoration(color: primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                      child: Center(child: Text(maneuverEmoji(step.maneuverType, step.maneuverModifier), style: const TextStyle(fontSize: 16))),
+                      child: Center(child: Icon(maneuverIcon(step.maneuverType, step.maneuverModifier), size: 16)),
                     ),
                     if (i < route.steps.length - 1) Container(width: 2, height: 20, color: c.border, margin: const EdgeInsets.symmetric(vertical: 3)),
                   ]),
@@ -674,7 +684,7 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
           Container(
             width: 60, height: 60,
             decoration: BoxDecoration(color: primary.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(16)),
-            child: Center(child: Text(maneuverEmoji(step.maneuverType, step.maneuverModifier), style: const TextStyle(fontSize: 28))),
+            child: Center(child: Icon(maneuverIcon(step.maneuverType, step.maneuverModifier), size: 28)),
           ),
           const SizedBox(width: 14),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -716,7 +726,7 @@ class _DirectionsPanelState extends ConsumerState<DirectionsPanel> {
         ...route.steps.skip(stepIdx + 1).take(3).map((s) => Padding(
           padding: const EdgeInsets.only(bottom: 6),
           child: Row(children: [
-            Container(width: 32, height: 32, decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(8)), child: Center(child: Text(maneuverEmoji(s.maneuverType, s.maneuverModifier), style: const TextStyle(fontSize: 14)))),
+            Container(width: 32, height: 32, decoration: BoxDecoration(color: c.muted, borderRadius: BorderRadius.circular(8)), child: Center(child: Icon(maneuverIcon(s.maneuverType, s.maneuverModifier), size: 14))),
             const SizedBox(width: 10),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(s.instruction, style: TextStyle(fontSize: 12, color: c.foreground), maxLines: 1, overflow: TextOverflow.ellipsis),

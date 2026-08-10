@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 
 class MentionUser {
@@ -87,7 +87,12 @@ class _MentionAutocompleteState extends State<MentionAutocomplete> {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       child: Row(children: [
-                        UserAvatar(avatarUrl: u.avatarUrl, fallback: (u.displayName ?? u.username ?? 'U')[0].toUpperCase(), size: 28),
+                        StoryAvatarRing(
+                          userId: u.id,
+                          avatarUrl: u.avatarUrl,
+                          fallback: (u.displayName ?? u.username ?? 'U')[0].toUpperCase(),
+                          size: 28,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

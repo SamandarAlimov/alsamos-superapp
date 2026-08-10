@@ -3,7 +3,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_colors.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 import 'verified_badge.dart';
 import 'rich_text_content.dart';
 import 'comment_likes_dialog.dart';
@@ -204,7 +204,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                UserAvatar(
+                                StoryAvatarRing(
                                   avatarUrl: cm.avatarUrl,
                                   fallback: cm.displayName.isNotEmpty
                                       ? cm.displayName[0].toUpperCase()
@@ -223,13 +223,11 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                           Flexible(
                                             child: Text(
                                               cm.displayName,
-                                              style: theme
-                                                  .textTheme.bodyMedium
+                                              style: theme.textTheme.bodyMedium
                                                   ?.copyWith(
                                                       fontWeight:
                                                           FontWeight.w600),
-                                              overflow:
-                                                  TextOverflow.ellipsis,
+                                              overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
                                           if (cm.isVerified) ...[
@@ -241,8 +239,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                             _relative(cm.createdAt),
                                             style: theme.textTheme.bodySmall
                                                 ?.copyWith(
-                                                    color:
-                                                        c.mutedForeground,
+                                                    color: c.mutedForeground,
                                                     fontSize: 11),
                                           ),
                                         ],
@@ -262,8 +259,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                                       : LucideIcons.heart,
                                                   size: 14,
                                                   color: cm.hasLiked
-                                                      ? const Color(
-                                                          0xFFEF4444)
+                                                      ? const Color(0xFFEF4444)
                                                       : c.mutedForeground,
                                                 ),
                                                 const SizedBox(width: 4),
@@ -286,17 +282,14 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                             onTap: () {
                                               setState(() {
                                                 _replyTo = cm.id;
-                                                _replyToName =
-                                                    cm.displayName;
+                                                _replyToName = cm.displayName;
                                               });
                                             },
                                             child: Text(
                                               'Javob',
-                                              style: theme
-                                                  .textTheme.bodySmall
+                                              style: theme.textTheme.bodySmall
                                                   ?.copyWith(
-                                                      color: c
-                                                          .mutedForeground,
+                                                      color: c.mutedForeground,
                                                       fontSize: 12,
                                                       fontWeight:
                                                           FontWeight.w500),
@@ -372,8 +365,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Icon(LucideIcons.send, size: 20),
                       color: theme.colorScheme.primary,
                       onPressed: _sending ? null : _send,

@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/admin_models.dart';
@@ -476,7 +476,8 @@ class _AdminPageState extends ConsumerState<AdminPage>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              UserAvatar(
+              StoryAvatarRing(
+                userId: r.userId,
                 avatarUrl: r.avatarUrl,
                 fallback: ((r.username ?? r.fullName).isEmpty
                         ? '?'
@@ -667,7 +668,8 @@ class _AdminPageState extends ConsumerState<AdminPage>
                         border: Border.all(color: c.border),
                       ),
                       child: Row(children: [
-                        UserAvatar(
+                        StoryAvatarRing(
+                          userId: a.userId,
                           avatarUrl: a.avatarUrl,
                           fallback:
                               ((a.username ?? '?')[0]).toUpperCase(),

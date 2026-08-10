@@ -5,7 +5,9 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 enum ChatType { private, group, channel, secret }
 enum _Step { selectType, selectUsers, groupDetails }
@@ -97,7 +99,7 @@ class _CreateChatDialogState extends State<CreateChatDialog> {
   Future<void> _createPrivate(String userId) async {
     if (mounted) setState(() => _creating = true);
     try { await widget.onCreatePrivate(userId); if (mounted) Navigator.pop(context); }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'))); }
+    catch (e) { if (mounted) AppToast.error(context, friendlyError(e)); }
     finally { if (mounted) setState(() => _creating = false); }
   }
 
@@ -111,7 +113,7 @@ class _CreateChatDialogState extends State<CreateChatDialog> {
         await widget.onCreateGroup(_groupName.text.trim(), _selected.toList());
       }
       if (mounted) Navigator.pop(context);
-    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'))); }
+    } catch (e) { if (mounted) AppToast.error(context, friendlyError(e)); }
     finally { if (mounted) setState(() => _creating = false); }
   }
 
@@ -175,10 +177,14 @@ class _CreateChatDialogState extends State<CreateChatDialog> {
                   Container(width: 22, height: 22, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _selected.contains(u.id) ? primary : colors.border, width: 2), color: _selected.contains(u.id) ? primary : null), child: _selected.contains(u.id) ? const Icon(LucideIcons.check, size: 14, color: Colors.white) : null),
                   const SizedBox(width: 10),
                 ],
-                Stack(children: [
-                  UserAvatar(avatarUrl: u.avatarUrl, fallback: (u.displayName ?? u.username ?? '?')[0].toUpperCase(), size: 40, backgroundColor: primary),
-                  if (u.isOnline) Positioned(bottom: 0, right: 0, child: Container(width: 11, height: 11, decoration: BoxDecoration(color: const Color(0xFF22C55E), shape: BoxShape.circle, border: Border.all(color: colors.card, width: 2)))),
-                ]),
+                StoryAvatarRing(
+                  userId: u.id,
+                  avatarUrl: u.avatarUrl,
+                  fallback: (u.displayName ?? u.username ?? '?')[0].toUpperCase(),
+                  size: 40,
+                  backgroundColor: primary,
+                  showOnline: u.isOnline,
+                ),
                 const SizedBox(width: 10),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(u.displayName ?? u.username ?? 'Unknown', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.foreground)),

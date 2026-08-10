@@ -4,7 +4,9 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 class _Conv {
   final String id;
@@ -83,9 +85,9 @@ class _TelegramForwardDialogState extends State<TelegramForwardDialog> {
           await supa.from('messages').insert({'conversation_id': convId, 'sender_id': uid, 'content': '', 'forwarded_from_id': mid});
         }
       }
-      if (mounted) { Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Forwarded to ${_selected.length} chat(s)'))); }
+      if (mounted) { Navigator.pop(context); AppToast.success(context, "Yuborildi"); }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (mounted) AppToast.error(context, friendlyError(e));
     } finally { if (mounted) setState(() => _forwarding = false); }
   }
 
@@ -142,7 +144,7 @@ class _TelegramForwardDialogState extends State<TelegramForwardDialog> {
                         child: sel ? const Icon(LucideIcons.check, size: 14, color: Colors.white) : null),
                       const SizedBox(width: 12),
                       Container(width: 42, height: 42, decoration: BoxDecoration(shape: BoxShape.circle, color: fallback != null ? (c.type == 'group' ? const Color(0xFF3B82F6) : const Color(0xFF8B5CF6)) : null),
-                        child: fallback != null ? Icon(fallback, color: Colors.white, size: 18) : UserAvatar(avatarUrl: c.avatarUrl, fallback: (c.name?.isNotEmpty ?? false) ? c.name![0].toUpperCase() : '?', size: 42, backgroundColor: primary)),
+                        child: fallback != null ? Icon(fallback, color: Colors.white, size: 18) : StoryAvatarRing(userId: null, avatarUrl: c.avatarUrl, fallback: (c.name?.isNotEmpty ?? false) ? c.name![0].toUpperCase() : '?', size: 42, backgroundColor: primary)),
                       const SizedBox(width: 10),
                       Expanded(child: Text(c.name ?? 'Unnamed', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, color: colors.foreground))),
                     ]),

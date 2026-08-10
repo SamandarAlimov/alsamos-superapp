@@ -4,6 +4,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/stories/story_caption_meta.dart';
 
 /// Ports `src/components/messages/StoryReplyPreview.tsx` — thumbnail + caption.
 class StoryReplyPreview extends StatefulWidget {
@@ -59,6 +60,7 @@ class _StoryReplyPreviewState extends State<StoryReplyPreview> {
       );
     }
     final isVideo = _story!['media_type'] == 'video';
+    final caption = StoryCaptionMeta.parse(_story!['caption'] as String?);
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Container(
@@ -78,8 +80,8 @@ class _StoryReplyPreviewState extends State<StoryReplyPreview> {
           const SizedBox(width: 8),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Text('Replied to story', style: TextStyle(fontSize: 11, color: tone, fontWeight: FontWeight.w600)),
-            if ((_story!['caption'] as String?)?.isNotEmpty ?? false)
-              Text(_story!['caption'] as String, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: dim)),
+            if (caption.text.isNotEmpty)
+              Text(caption.text, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: dim)),
           ])),
         ]),
       ),

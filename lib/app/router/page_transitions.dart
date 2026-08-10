@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/widgets/error_boundary.dart';
+
 /// v44: Page transition helpers for GoRouter.
 /// Web parity: Framer Motion-style page enter/exit.
 ///
@@ -18,7 +20,10 @@ CustomTransitionPage<T> fadeSlidePage<T>(
     key: state.pageKey,
     transitionDuration: duration,
     reverseTransitionDuration: duration,
-    child: child,
+    child: ErrorBoundary.page(
+      child: child,
+      onRetry: () async => GoRouter.of(context).go(state.uri.toString()),
+    ),
     transitionsBuilder: (ctx, anim, secAnim, child) {
       final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
@@ -49,7 +54,10 @@ CustomTransitionPage<T> modalUpPage<T>(
     transitionDuration: const Duration(milliseconds: 320),
     reverseTransitionDuration: const Duration(milliseconds: 220),
     fullscreenDialog: true,
-    child: child,
+    child: ErrorBoundary.page(
+      child: child,
+      onRetry: () async => GoRouter.of(context).go(state.uri.toString()),
+    ),
     transitionsBuilder: (ctx, anim, _, child) {
       final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return FadeTransition(
@@ -78,7 +86,10 @@ CustomTransitionPage<T> cupertinoPage<T>(
   return CustomTransitionPage<T>(
     key: state.pageKey,
     transitionDuration: const Duration(milliseconds: 300),
-    child: child,
+    child: ErrorBoundary.page(
+      child: child,
+      onRetry: () async => GoRouter.of(context).go(state.uri.toString()),
+    ),
     transitionsBuilder: (ctx, anim, secAnim, child) => CupertinoPageTransition(
       primaryRouteAnimation: anim,
       secondaryRouteAnimation: secAnim,

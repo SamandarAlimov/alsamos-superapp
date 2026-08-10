@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../app/theme/app_theme.dart';
-import 'user_avatar.dart';
+import '../stories/story_avatar_ring.dart';
 import 'verified_badge.dart';
 
 /// 1:1 port of web `UserSearchDialog.tsx`.
@@ -219,14 +219,15 @@ class _UserSearchState extends State<_UserSearch> {
                                     horizontal: 16, vertical: 10),
                                 child: Row(
                                   children: [
-                                    UserAvatar(
+                                    StoryAvatarRing(
+                                      userId: r.id,
                                       avatarUrl: r.avatarUrl,
                                       fallback: r.displayName.isNotEmpty
                                           ? r.displayName[0].toUpperCase()
                                           : '?',
                                       size: 44,
-                                      userId: r.id,
                                       showOnline: true,
+                                      inactiveBorderColor: c.border,
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(

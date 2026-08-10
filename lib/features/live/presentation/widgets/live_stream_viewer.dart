@@ -7,8 +7,9 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../providers/live_webrtc_service.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// Pixel-perfect Flutter port of web `LiveStreamViewer.tsx`.
 ///
@@ -31,11 +32,11 @@ class LiveStreamViewer extends StatefulWidget {
 
 const List<String> _kReactionEmojis = [
   '\u2764\uFE0F', // ❤️
-  '\u{1F525}',    // 🔥
-  '\u{1F60D}',    // 😍
-  '\u{1F44F}',    // 👏
-  '\u{1F602}',    // 😂
-  '\u{1F62E}',    // 😮
+  '\u{1F525}', // 🔥
+  '\u{1F60D}', // 😍
+  '\u{1F44F}', // 👏
+  '\u{1F602}', // 😂
+  '\u{1F62E}', // 😮
 ];
 
 class _Comment {
@@ -81,6 +82,8 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
   RealtimeChannel? _commentsChan;
   RealtimeChannel? _reactionsChan;
   RealtimeChannel? _streamChan;
+  RealtimeChannel? _moderationChan;
+  Timer? _viewerHeartbeat;
   LiveWebRtcService? _liveRtc;
   MediaStream? _remoteStream;
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
@@ -110,6 +113,8 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
     _commentsChan?.unsubscribe();
     _reactionsChan?.unsubscribe();
     _streamChan?.unsubscribe();
+    _moderationChan?.unsubscribe();
+    _viewerHeartbeat?.cancel();
     super.dispose();
   }
 
@@ -185,16 +190,27 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
     if (uid != null) {
       try {
         await supa.from('live_stream_viewers').upsert(
-          {'stream_id': widget.streamId, 'user_id': uid},
+          {
+            'stream_id': widget.streamId,
+            'user_id': uid,
+            'last_seen_at': DateTime.now().toUtc().toIso8601String(),
+          },
           onConflict: 'stream_id,user_id',
         );
+        _viewerHeartbeat?.cancel();
+        _viewerHeartbeat = Timer.periodic(const Duration(seconds: 12), (_) {
+          unawaited(supa.from('live_stream_viewers').upsert({
+            'stream_id': widget.streamId,
+            'user_id': uid,
+            'last_seen_at': DateTime.now().toUtc().toIso8601String(),
+          }, onConflict: 'stream_id,user_id'));
+        });
       } catch (_) {}
     }
     try {
       final existing = await supa
           .from('live_stream_comments')
-          .select(
-              'id, content, username, avatar_url, display_name, created_at')
+          .select('id, content, username, avatar_url, display_name, created_at')
           .eq('stream_id', widget.streamId)
           .order('created_at', ascending: false)
           .limit(50);
@@ -296,8 +312,7 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
             value: widget.streamId,
           ),
           callback: (p) {
-            final emoji =
-                (p.newRecord['emoji'] as String?) ?? '\u2764\uFE0F';
+            final emoji = (p.newRecord['emoji'] as String?) ?? '\u2764\uFE0F';
             _spawnFloat(emoji);
           },
         )
@@ -320,6 +335,35 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
               setState(() => _state = _StreamState.ended);
               unawaited(_liveRtc?.dispose() ?? Future<void>.value());
             }
+          },
+        )
+        .subscribe();
+
+    _moderationChan = supa
+        .channel('viewer-moderation-${widget.streamId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'live_stream_moderation_actions',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'stream_id',
+            value: widget.streamId,
+          ),
+          callback: (p) {
+            final uid = supa.auth.currentUser?.id;
+            final target = p.newRecord['target_user_id']?.toString();
+            final action = p.newRecord['action_type']?.toString();
+            if (uid == null ||
+                target != uid ||
+                (action != 'kick' && action != 'ban')) {
+              return;
+            }
+            if (!mounted) return;
+            Navigator.of(context).pop();
+            AppToast.info(context, action == 'ban'
+                    ? 'Live bloklandi'
+                    : 'Live dan chiqarildingiz');
           },
         )
         .subscribe();
@@ -388,6 +432,21 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
     } catch (_) {}
   }
 
+  Future<void> _reportStream() async {
+    final supa = Supabase.instance.client;
+    final uid = supa.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      await supa.from('live_stream_reports').insert({
+        'stream_id': widget.streamId,
+        'reporter_id': uid,
+        'reason': 'viewer_report',
+      });
+      if (!mounted) return;
+      AppToast.success(context, 'Shikoyat yuborildi');
+    } catch (_) {}
+  }
+
   // ----------------------------- build ----------------------------
 
   @override
@@ -453,8 +512,7 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
             ),
             child: const Text('Yopish'),
           ),
@@ -579,16 +637,16 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                   Container(
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(
-                          color: const Color(0xFFEF4444), width: 2),
+                      border:
+                          Border.all(color: const Color(0xFFEF4444), width: 2),
                     ),
                     padding: const EdgeInsets.all(1),
-                    child: UserAvatar(
+                    child: StoryAvatarRing(
+                      userId: null,
                       avatarUrl: _broadcasterAvatar,
-                      fallback: (_broadcasterName ??
-                              _broadcasterUsername ??
-                              'U')[0]
-                          .toUpperCase(),
+                      fallback:
+                          (_broadcasterName ?? _broadcasterUsername ?? 'U')[0]
+                              .toUpperCase(),
                       size: 36,
                       backgroundColor: const Color(0xFFEF4444),
                     ),
@@ -616,8 +674,8 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                           ),
                           const SizedBox(width: 8),
                           FadeTransition(
-                            opacity: Tween(begin: 0.55, end: 1.0)
-                                .animate(_pulse),
+                            opacity:
+                                Tween(begin: 0.55, end: 1.0).animate(_pulse),
                             child: const _LivePill(),
                           ),
                         ]),
@@ -635,9 +693,21 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                       ],
                     ),
                   ),
-                  _CircleBtn(
-                    icon: LucideIcons.x,
-                    onTap: () => Navigator.pop(context),
+                  PopupMenuButton<String>(
+                    color: Colors.black.withValues(alpha: 0.86),
+                    icon: const Icon(LucideIcons.moreVertical,
+                        color: Colors.white),
+                    onSelected: (value) {
+                      if (value == 'report') _reportStream();
+                      if (value == 'close') Navigator.pop(context);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'report',
+                        child: Text('Shikoyat qilish'),
+                      ),
+                      PopupMenuItem(value: 'close', child: Text('Chiqish')),
+                    ],
                   ),
                 ]),
                 if (_title != null && _title!.trim().isNotEmpty)
@@ -647,8 +717,7 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                       _title!,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 13),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
               ],
@@ -705,8 +774,8 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                           children: [
                             for (final e in _kReactionEmojis)
                               Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 4),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 4),
                                 child: GestureDetector(
                                   onTap: () => _react(e),
                                   child: Text(
@@ -723,15 +792,14 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                     Expanded(
                       child: TextField(
                         controller: _ctrl,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 13),
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 13),
                         decoration: InputDecoration(
                           hintText: "Izoh qo'shing...",
                           hintStyle: TextStyle(
                               color: Colors.white.withValues(alpha: 0.6)),
                           filled: true,
-                          fillColor:
-                              Colors.white.withValues(alpha: 0.1),
+                          fillColor: Colors.white.withValues(alpha: 0.1),
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 10),
                           suffixIcon: IconButton(
@@ -742,19 +810,16 @@ class _LiveStreamViewerState extends State<LiveStreamViewer>
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(24),
                             borderSide: BorderSide(
-                                color:
-                                    Colors.white.withValues(alpha: 0.2)),
+                                color: Colors.white.withValues(alpha: 0.2)),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(24),
                             borderSide: BorderSide(
-                                color:
-                                    Colors.white.withValues(alpha: 0.2)),
+                                color: Colors.white.withValues(alpha: 0.2)),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(24),
-                            borderSide:
-                                const BorderSide(color: Colors.white54),
+                            borderSide: const BorderSide(color: Colors.white54),
                           ),
                         ),
                         onSubmitted: (_) => _sendComment(),
@@ -846,18 +911,17 @@ class _CommentBubble extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          UserAvatar(
+          StoryAvatarRing(
+            userId: null,
             avatarUrl: c.avatarUrl,
-            fallback: ((c.displayName ?? c.username ?? '?')[0])
-                .toUpperCase(),
+            fallback: ((c.displayName ?? c.username ?? '?')[0]).toUpperCase(),
             size: 22,
             backgroundColor: Colors.deepPurple,
           ),
           const SizedBox(width: 6),
           Flexible(
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(10),
@@ -876,8 +940,7 @@ class _CommentBubble extends StatelessWidget {
                   ),
                   Text(
                     c.text,
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 13),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ],
               ),
@@ -918,8 +981,7 @@ class _FloatingEmojiState extends State<_FloatingEmoji>
           offset: Offset(0, -220 * _c.value),
           child: Transform.scale(
             scale: 1 + _c.value * 0.5,
-            child: Text(widget.emoji,
-                style: const TextStyle(fontSize: 30)),
+            child: Text(widget.emoji, style: const TextStyle(fontSize: 30)),
           ),
         ),
       ),

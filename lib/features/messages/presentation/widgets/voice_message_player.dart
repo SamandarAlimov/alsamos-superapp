@@ -4,6 +4,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/utils/video_controller_lifecycle.dart';
 
 /// Ports `src/components/VoiceMessagePlayer.tsx` — 40-bar waveform, play/pause,
 /// progress scrubbing, 1x/1.5x/2x playback rate, duration, sender name.
@@ -73,7 +74,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   @override
   void dispose() {
     _ctrl?.removeListener(_listen);
-    _ctrl?.dispose();
+    disposeVideoControllerSafely(_ctrl);
     super.dispose();
   }
 

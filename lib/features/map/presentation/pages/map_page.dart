@@ -2,35 +2,45 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 import 'dart:ui' as ui;
 
 import 'package:battery_plus/battery_plus.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
+import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_cache/flutter_map_cache.dart';
 import 'package:flutter_map_compass/flutter_map_compass.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/content/utils/content_metadata.dart';
 import '../../data/map_models.dart';
+import '../../data/overpass_client.dart';
+import '../../utils/map_deep_links.dart';
 import '../providers/location_provider.dart';
+import '../providers/map_layers_provider.dart';
 import '../providers/map_provider.dart';
-import '../widgets/directions_mobile_sheet.dart';
-import '../widgets/directions_panel.dart';
+import '../widgets/draggable_directions_sheet.dart';
+import '../widgets/collapsible_directions_panel.dart';
 import '../widgets/location_history_mobile_sheet.dart';
 import '../widgets/location_history_panel.dart';
+import '../widgets/map_marker_layers.dart';
 import '../widgets/map_quick_actions.dart';
 import '../widgets/step_tracking_charts.dart';
 import '../widgets/transport_mode_picker.dart';
+import '../../../../shared/services/connectivity_service.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 class MapPage extends ConsumerStatefulWidget {
   const MapPage({super.key});
@@ -39,25 +49,39 @@ class MapPage extends ConsumerStatefulWidget {
 }
 
 class _MapPageState extends ConsumerState<MapPage>
-    with SingleTickerProviderStateMixin {
-  static const _defaultCenter = LatLng(41.2995, 69.2401);
+    with TickerProviderStateMixin {
+  static const _initialCenter = LatLng(41.2995, 69.2401);
 
   final _mapCtrl   = MapController();
   final _searchCtrl = TextEditingController();
   late final TabController _tab;
   final _battery   = Battery();
-  StreamSubscription<List<ConnectivityResult>>? _connSub;
+  StreamSubscription<bool>? _connSub;
 
   // Map state
-  LatLng  _center    = _defaultCenter;
+  LatLng  _center    = _initialCenter;
+  bool _hasCenteredOnUser = false;
   double  _zoom      = 15;
   MapLayer _layer    = MapLayer.standard;
   TransportMode _transport = TransportMode.driving;
 
+  // Animated zoom
+  AnimationController? _zoomAnim;
+  double _zoomAnimFrom = 0;
+  double _zoomAnimTo = 0;
+
+  // Debounce for position changes
+  Timer? _posDebounce;
+
+  // Keyboard focus node
+  final _mapFocusNode = FocusNode();
+
   // UI state
   bool _sidebarOpen         = true;
   bool _showDirectionsPanel = false; // desktop only
+  bool _directionsPanelCollapsed = false; // desktop collapse state
   bool _showDirMobile       = false; // mobile sheet
+  SheetSnapState _mobileSheetState = SheetSnapState.half; // mobile sheet state
   bool _showHistoryMobile   = false; // mobile history sheet
   bool _showNearby          = true;
   bool _showFollowing       = true;
@@ -107,6 +131,10 @@ class _MapPageState extends ConsumerState<MapPage>
   // Location tracking path (bread-crumb trail)
   final List<LatLng> _trackingPath = [];
 
+  // Cached tile provider with connection limits
+  late final CachedTileProvider _cachedTileProvider;
+  late final Dio _tileDio;
+
   // Compass heading
   double _compassHeading = 0;
 
@@ -117,10 +145,27 @@ class _MapPageState extends ConsumerState<MapPage>
   void initState() {
     super.initState();
     _tab = TabController(length: 3, vsync: this);
+    _initTileProvider();
     _initBattery();
     _initConnectivity();
     _initTts();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initMap());
+  }
+
+  void _initTileProvider() {
+    _tileDio = Dio()
+      ..httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = HttpClient();
+          client.maxConnectionsPerHost = 4;
+          return client;
+        },
+      );
+    _cachedTileProvider = CachedTileProvider(
+      store: MemCacheStore(maxSize: 209715200),
+      dio: _tileDio,
+      maxStale: const Duration(days: 30),
+    );
   }
 
   Future<void> _initTts() async {
@@ -155,23 +200,35 @@ class _MapPageState extends ConsumerState<MapPage>
     } catch (_) {}
   }
 
-  Future<void> _initConnectivity() async {
-    try {
-      final res = await Connectivity().checkConnectivity();
-      if (mounted) setState(() => _isOnline = res.isNotEmpty && res.first != ConnectivityResult.none);
-      _connSub = Connectivity().onConnectivityChanged.listen((res) {
-        if (mounted) setState(() => _isOnline = res.isNotEmpty && res.first != ConnectivityResult.none);
-      });
-    } catch (_) {}
+  void _initConnectivity() {
+    final svc = ref.read(connectivityServiceProvider);
+    _isOnline = svc.isOnlineNow;
+    _connSub = svc.onlineStream.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
   }
 
   Future<void> _initMap() async {
-    // start location tracking
     await ref.read(locationProvider.notifier).startTracking();
-    final pos = ref.read(locationProvider).currentPosition;
-    if (pos != null && mounted) {
+
+    // Check for deep link query params (alsamos://map?lat=...&lng=...&z=...)
+    final qp = GoRouterState.of(context).uri.queryParameters;
+    final deepLat = double.tryParse(qp['lat'] ?? '');
+    final deepLng = double.tryParse(qp['lng'] ?? '');
+    final deepZoom = double.tryParse(qp['z'] ?? '');
+
+    if (deepLat != null && deepLng != null && mounted) {
+      final loc = LatLng(deepLat, deepLng);
+      final z = deepZoom?.clamp(3.0, 19.0) ?? 15;
+      setState(() { _center = loc; _zoom = z; });
+      try { _mapCtrl.move(loc, z); } catch (_) {}
+      return;
+    }
+
+      final pos = ref.read(locationProvider).currentPosition;
+    if (pos != null && mounted && !_hasCenteredOnUser) {
       final loc = LatLng(pos.latitude, pos.longitude);
-      setState(() { _center = loc; _zoom = 15; });
+      setState(() { _center = loc; _zoom = 15; _hasCenteredOnUser = true; });
       try { _mapCtrl.move(loc, 15); } catch (_) {}
     }
     // setup Supabase presence (who's viewing map)
@@ -225,6 +282,9 @@ class _MapPageState extends ConsumerState<MapPage>
     _refreshTimer?.cancel();
     _searchDebounce?.cancel();
     _routeAnimTimer?.cancel();
+    _zoomAnim?.dispose();
+    _posDebounce?.cancel();
+    _mapFocusNode.dispose();
     _tts.stop();
     _presenceChannel?.unsubscribe();
     super.dispose();
@@ -246,22 +306,64 @@ class _MapPageState extends ConsumerState<MapPage>
 
   
 
+  // ─── Animated zoom ───────────────────────────────────────────────────────
+  void _animateZoom(double target) {
+    final clamped = target.clamp(3.0, 19.0);
+    if ((clamped - _zoom).abs() < 0.01) return;
+    _zoomAnim?.stop();
+    _zoomAnim?.dispose();
+    _zoomAnimFrom = _zoom;
+    _zoomAnimTo = clamped;
+    _zoomAnim = AnimationController(vsync: this, duration: const Duration(milliseconds: 250))
+      ..addListener(_onZoomFrame)
+      ..addStatusListener((s) {
+        if (s == AnimationStatus.completed) { _zoomAnim?.dispose(); _zoomAnim = null; }
+      })
+      ..forward();
+  }
+
+  void _onZoomFrame() {
+    if (_zoomAnim == null) return;
+    final t = Curves.easeOut.transform(_zoomAnim!.value);
+    _mapCtrl.move(_center, _zoomAnimFrom + (_zoomAnimTo - _zoomAnimFrom) * t);
+  }
+
+  // ─── Position-change debounce ────────────────────────────────────────────
+  void _onMapMoved() {
+    _posDebounce?.cancel();
+    _posDebounce = Timer(const Duration(milliseconds: 400), () {
+      // After the map settles, POI/marker layers re-cluster automatically
+      // via their own Consumer rebuilds when positionChanged triggers setState.
+    });
+  }
+
   void _cycleLayer() => setState(() => _layer = MapLayer.values[(_layer.index + 1) % MapLayer.values.length]);
+
+  // ─── Calculate bottom offset for floating buttons based on sheet state ──
+  double _getBottomOffsetForSheet() {
+    switch (_mobileSheetState) {
+      case SheetSnapState.collapsed:
+        return MediaQuery.of(context).size.height * 0.18 + 16;
+      case SheetSnapState.half:
+        return MediaQuery.of(context).size.height * 0.48 + 16;
+      case SheetSnapState.expanded:
+        return MediaQuery.of(context).size.height * 0.88 + 16;
+    }
+  }
 
   // ─── Center on current location ─────────────────────────────────────────
   void _centerOnMe() {
+    final notifier = ref.read(locationProvider.notifier);
     final pos = ref.read(locationProvider).currentPosition;
     if (pos != null) {
       final loc = LatLng(pos.latitude, pos.longitude);
-      setState(() { _center = loc; _zoom = 16; });
+      setState(() { _center = loc; _zoom = 16; _hasCenteredOnUser = true; });
       _mapCtrl.move(loc, 16);
     } else {
-      // location not yet fetched — try to start tracking
-      ref.read(locationProvider.notifier).startTracking().then((_) {
-        final newPos = ref.read(locationProvider).currentPosition;
+      notifier.acquireForButton().then((newPos) {
         if (newPos != null && mounted) {
           final loc = LatLng(newPos.latitude, newPos.longitude);
-          setState(() { _center = loc; _zoom = 16; });
+          setState(() { _center = loc; _zoom = 16; _hasCenteredOnUser = true; });
           _mapCtrl.move(loc, 16);
         }
       });
@@ -274,10 +376,7 @@ class _MapPageState extends ConsumerState<MapPage>
     final name = await ref.read(mapRepoProvider).reverseGeocode(latLng.latitude, latLng.longitude);
     setState(() => _selectedMapLoc = (lat: latLng.latitude, lng: latLng.longitude, name: name));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('${_mapSelectionMode == "origin" ? "Boshlangich nuqta" : "Manzil"} tanlandi: $name'),
-        duration: const Duration(seconds: 2),
-      ));
+      AppToast.success(context, '${_mapSelectionMode == "origin" ? "Boshlangich nuqta" : "Manzil"} tanlandi: $name');
     }
   }
 
@@ -309,32 +408,53 @@ class _MapPageState extends ConsumerState<MapPage>
             ])),
           ])),
           const Divider(height: 1),
-          // Actions row
           Row(children: [
             _LongPressAction(icon: LucideIcons.navigation, label: "Yo'nalish", color: primary, onTap: () {
               Navigator.pop(ctx);
               setState(() {
                 _destination = (lat: latLng.latitude, lng: latLng.longitude, name: address.split(',').first);
-                _longPressPoint = null;
-                _showDirMobile = true;
+                _longPressPoint = null; _showDirMobile = true;
               });
             }),
             _LongPressAction(icon: LucideIcons.star, label: 'Saqlash', color: const Color(0xFFF59E0B), onTap: () {
               Navigator.pop(ctx);
-              ref.read(savedPlacesProvider.notifier).addRecent(SavedPlace(
-                id: 'lp_${DateTime.now().millisecondsSinceEpoch}',
-                name: address.split(',').first,
-                lat: latLng.latitude, lng: latLng.longitude, isFavorite: true,
-              ));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sevimlilarga qo'shildi")));
+              final repo = ref.read(mapRepoProvider);
+              final uid = Supabase.instance.client.auth.currentUser?.id;
+              if (uid == null) return;
+              final place = SavedPlace(id: 'lp_${DateTime.now().millisecondsSinceEpoch}', name: address.split(',').first, lat: latLng.latitude, lng: latLng.longitude, isFavorite: true);
+              repo.savePlaceToSupabase(place);
+              ref.read(savedPlacesProvider.notifier).addRecent(place);
+              AppToast.success(context, "Sevimlilarga qo'shildi");
             }),
-            _LongPressAction(icon: LucideIcons.share2, label: 'Xaritada', color: const Color(0xFF3B82F6), onTap: () {
+            _LongPressAction(icon: LucideIcons.share2, label: 'Ulashish', color: const Color(0xFF3B82F6), onTap: () {
               Navigator.pop(ctx);
-              _openInMaps(latLng.latitude, latLng.longitude);
+              shareLocation(lat: latLng.latitude, lng: latLng.longitude, name: address.split(',').first);
             }),
             _LongPressAction(icon: LucideIcons.mapPinOff, label: 'Belgi', color: const Color(0xFFEF4444), onTap: () {
               Navigator.pop(ctx);
               setState(() { _longPressPoint = null; });
+            }),
+          ]),
+          Row(children: [
+            _LongPressAction(icon: LucideIcons.car, label: 'Taksi chaqirish', color: const Color(0xFFFBBF24), onTap: () {
+              Navigator.pop(ctx);
+              setState(() {
+                _destination = (lat: latLng.latitude, lng: latLng.longitude, name: address.split(',').first);
+                _longPressPoint = null;
+              });
+              AppToast.info(context, 'Taksi buyurtmasi yuborildi');
+            }),
+            _LongPressAction(icon: LucideIcons.copy, label: 'Nusxalash', color: const Color(0xFF6366F1), onTap: () {
+              Navigator.pop(ctx);
+              final link = MapDeepLink(latitude: latLng.latitude, longitude: latLng.longitude, zoom: 16).toUri();
+              Clipboard.setData(ClipboardData(text: '$address\n$link'));
+              AppToast.success(context, 'Havola nusxalandi');
+            }),
+            _LongPressAction(icon: LucideIcons.mapPin, label: 'Joylashuvni o\'rnatish', color: const Color(0xFF22C55E), onTap: () {
+              Navigator.pop(ctx);
+              ref.read(locationProvider.notifier).setManualLocation(latLng.latitude, latLng.longitude);
+              AppToast.success(context, 'Joylashuv o\'rnatildi');
+              _longPressPoint = null;
             }),
           ]),
           const SizedBox(height: 8),
@@ -346,6 +466,284 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   // ─── Animated route drawing (smooth draw-on effect) ─────────────────────
+  void _showSocialPostSheet(String postId) {
+    final marker = ref.read(crossFeatureMarkersProvider).socialPosts.where((post) => post.id == postId).cast<SocialPostMapMarker?>().firstWhere((post) => post != null, orElse: () => null);
+    if (marker == null) {
+      context.push('/post/$postId');
+      return;
+    }
+
+    final c = AlsamosColors.of(context);
+    final primary = Theme.of(context).colorScheme.primary;
+    final place = marker.locationName?.trim().isNotEmpty == true
+        ? marker.locationName!
+        : marker.locationAddress?.trim().isNotEmpty == true
+            ? marker.locationAddress!
+            : '${marker.latitude.toStringAsFixed(5)}, ${marker.longitude.toStringAsFixed(5)}';
+    final previewText = stripPostMetadata(marker.content);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(8),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(20), border: Border.all(color: c.border), boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 26, offset: const Offset(0, 12)),
+          ]),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 14), decoration: BoxDecoration(color: c.border, borderRadius: BorderRadius.circular(999)))),
+            Row(children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: primary.withValues(alpha: 0.12),
+                backgroundImage: marker.authorAvatar == null ? null : NetworkImage(marker.authorAvatar!),
+                child: marker.authorAvatar == null ? Icon(LucideIcons.user, color: primary, size: 20) : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(marker.authorName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.foreground, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 2),
+                Row(children: [
+                  Icon(LucideIcons.mapPin, size: 13, color: c.mutedForeground),
+                  const SizedBox(width: 4),
+                  Expanded(child: Text(place, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.mutedForeground, fontSize: 12, fontWeight: FontWeight.w600))),
+                ]),
+              ])),
+              IconButton(
+                tooltip: 'Xaritada ko\'rsatish',
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _mapCtrl.move(LatLng(marker.latitude, marker.longitude), 17);
+                },
+                icon: const Icon(LucideIcons.locateFixed, size: 18),
+              ),
+            ]),
+            if (marker.mediaUrl != null && marker.mediaUrl!.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.network(marker.mediaUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: c.muted, alignment: Alignment.center, child: Icon(LucideIcons.imageOff, color: c.mutedForeground))),
+                ),
+              ),
+            ],
+            if (previewText.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(previewText, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.foreground, fontSize: 14, height: 1.35)),
+            ],
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(child: FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  context.push('/post/${marker.id}');
+                },
+                icon: const Icon(LucideIcons.messageCircle, size: 17),
+                label: const Text('Postni ochish'),
+              )),
+              const SizedBox(width: 10),
+              IconButton.filledTonal(
+                tooltip: 'Manzil havolasini nusxalash',
+                onPressed: () {
+                  final link = MapDeepLink(latitude: marker.latitude, longitude: marker.longitude, zoom: 16).toUri();
+                  Clipboard.setData(ClipboardData(text: '$place\n$link'));
+                  Navigator.pop(ctx);
+                  AppToast.success(context, 'Havola nusxalandi');
+                },
+                icon: const Icon(LucideIcons.copy, size: 18),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  void _showPOIDetails(MapPOI poi, Color primary) {
+    final c = AlsamosColors.of(context);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: c.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: _poiColor(poi.category),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(poi.category.icon, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      poi.name ?? poi.category.displayName,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: c.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      poi.category.displayName,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: c.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+          ),
+          if (poi.address != null ||
+              poi.phone != null ||
+              poi.website != null ||
+              poi.openingHours != null)
+            const Divider(height: 1),
+          if (poi.address != null)
+            ListTile(
+              leading: Icon(
+                LucideIcons.mapPin,
+                size: 18,
+                color: c.mutedForeground,
+              ),
+              title: Text(
+                poi.address!,
+                style: TextStyle(fontSize: 13, color: c.foreground),
+              ),
+              dense: true,
+            ),
+          if (poi.phone != null)
+            ListTile(
+              leading: Icon(
+                LucideIcons.phone,
+                size: 18,
+                color: c.mutedForeground,
+              ),
+              title: Text(
+                poi.phone!,
+                style: TextStyle(fontSize: 13, color: c.foreground),
+              ),
+              dense: true,
+            ),
+          if (poi.website != null)
+            ListTile(
+              leading: Icon(
+                LucideIcons.globe,
+                size: 18,
+                color: c.mutedForeground,
+              ),
+              title: Text(
+                poi.website!,
+                style: TextStyle(fontSize: 13, color: c.foreground),
+              ),
+              dense: true,
+            ),
+          if (poi.openingHours != null)
+            ListTile(
+              leading: Icon(LucideIcons.clock, size: 18, color: c.mutedForeground),
+              title: Text(poi.openingHours!, style: TextStyle(fontSize: 13, color: c.foreground)),
+              dense: true,
+            ),
+          // Distance badge
+          ListTile(
+            leading: Icon(LucideIcons.move, size: 18, color: c.mutedForeground),
+            title: Text(_distanceText(poi.latitude, poi.longitude), style: TextStyle(fontSize: 13, color: c.foreground)),
+            dense: true,
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(children: [
+              Expanded(
+                child: FilledButton.icon(
+                  icon: const Icon(LucideIcons.navigation, size: 16),
+                  label: const Text("Yo'nalish"),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    setState(() {
+                      _destination = (lat: poi.latitude, lng: poi.longitude, name: poi.name ?? poi.category.displayName);
+                      _showDirMobile = true;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(LucideIcons.share2, size: 16),
+                  label: const Text('Ulashish'),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    shareLocation(lat: poi.latitude, lng: poi.longitude, name: poi.name ?? poi.category.displayName);
+                  },
+                ),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  String _distanceText(double lat, double lng) {
+    final pos = ref.read(locationProvider).currentPosition;
+    if (pos == null) return '';
+    const R = 6371.0;
+    final dLat = (lat - pos.latitude) * math.pi / 180;
+    final dLon = (lng - pos.longitude) * math.pi / 180;
+    final a = math.sin(dLat) * math.sin(dLat) + math.cos(pos.latitude * math.pi / 180) * math.cos(lat * math.pi / 180) * math.sin(dLon) * math.sin(dLon);
+    final km = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    if (km < 1) return '${(km * 1000).round()} m uzoqlikda';
+    return '${km.toStringAsFixed(1)} km uzoqlikda';
+  }
+
+  Color _poiColor(POICategory category) {
+    switch (category) {
+      case POICategory.restaurant:
+      case POICategory.cafe:
+      case POICategory.fastFood:
+        return const Color(0xFFEF4444);
+      case POICategory.gas:
+        return const Color(0xFF10B981);
+      case POICategory.atm:
+      case POICategory.bank:
+        return const Color(0xFF3B82F6);
+      case POICategory.pharmacy:
+      case POICategory.hospital:
+        return const Color(0xFFEC4899);
+      case POICategory.shop:
+        return const Color(0xFFF59E0B);
+    }
+  }
+
   void _animateRoute(List<LatLng> fullRoute) {
     _routeAnimTimer?.cancel();
     if (fullRoute.isEmpty) { setState(() => _activeRoute = fullRoute); return; }
@@ -360,14 +758,6 @@ class _MapPageState extends ConsumerState<MapPage>
     });
   }
 
-  // ─── Open place in external map ──────────────────────────────────────────
-  Future<void> _openInMaps(double lat, double lng) async {
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
-
   // ════════════════════════════════════════════════════════════════════════
   //  BUILD
   // ════════════════════════════════════════════════════════════════════════
@@ -379,11 +769,11 @@ class _MapPageState extends ConsumerState<MapPage>
 
     // Move map to user location when it first arrives
     final pos = locSt.currentPosition;
-    if (pos != null && _center == _defaultCenter) {
+    if (pos != null && !_hasCenteredOnUser) {
       Future.microtask(() {
-        if (mounted && _center == _defaultCenter) {
+        if (mounted && !_hasCenteredOnUser) {
           final loc = LatLng(pos.latitude, pos.longitude);
-          setState(() => _center = loc);
+          setState(() { _center = loc; _hasCenteredOnUser = true; });
           try { _mapCtrl.move(loc, 15); } catch (_) {}
         }
       });
@@ -422,12 +812,14 @@ class _MapPageState extends ConsumerState<MapPage>
                 if (_sidebarOpen) SizedBox(width: 320, child: _buildSidebar(c, locSt)),
                 Expanded(child: _buildMapArea(c, locSt, isWide)),
               ]),
-              // Desktop DirectionsPanel
+              // Desktop CollapsibleDirectionsPanel
               if (_showDirectionsPanel)
                 Positioned(
                   left: _sidebarOpen ? 320 : 0,
                   top: 0, bottom: 0,
-                  child: DirectionsPanel(
+                  child: CollapsibleDirectionsPanel(
+                    collapsed: _directionsPanelCollapsed,
+                    onCollapsedChange: (collapsed) => setState(() => _directionsPanelCollapsed = collapsed),
                     currentLocation: locSt.currentPosition != null
                       ? (lat: locSt.currentPosition!.latitude, lng: locSt.currentPosition!.longitude)
                       : null,
@@ -452,7 +844,7 @@ class _MapPageState extends ConsumerState<MapPage>
                       setState(() => _center = LatLng(loc.lat, loc.lng));
                       _mapCtrl.move(LatLng(loc.lat, loc.lng), 17);
                     },
-                    onClose: () => setState(() { _showDirectionsPanel = false; _activeRoute = null; _mapSelectionMode = null; }),
+                    onClose: () => setState(() { _showDirectionsPanel = false; _activeRoute = null; _mapSelectionMode = null; _directionsPanelCollapsed = false; }),
                     mapSelectionMode: _mapSelectionMode,
                     onMapSelectionModeChange: (m) => setState(() => _mapSelectionMode = m),
                     selectedMapLocation: _selectedMapLoc,
@@ -801,38 +1193,10 @@ class _MapPageState extends ConsumerState<MapPage>
       markers.add(Marker(
         point: LatLng(locSt.currentPosition!.latitude, locSt.currentPosition!.longitude),
         width: 60, height: 60,
-        child: _SelfMarker(primary: primary, heading: locSt.currentPosition!.heading),
+        child: RepaintBoundary(
+          child: _SelfMarker(primary: primary, heading: locSt.currentPosition!.heading),
+        ),
       ));
-    }
-    // Nearby users
-    if (_showNearby) {
-      for (final u in locSt.nearbyUsers) {
-        final prof = u.profile;
-        if (prof == null) continue;
-        markers.add(Marker(
-          point: LatLng(u.latitude, u.longitude),
-          width: 44, height: 44,
-          child: GestureDetector(
-            onTap: () => _showUserSheet(u, c),
-            child: _UserMarker(profile: prof, c: c),
-          ),
-        ));
-      }
-    }
-    // Following users
-    if (_showFollowing) {
-      for (final u in locSt.followingUsers) {
-        final prof = u.profile;
-        if (prof == null) continue;
-        markers.add(Marker(
-          point: LatLng(u.latitude, u.longitude),
-          width: 44, height: 44,
-          child: GestureDetector(
-            onTap: () => _showUserSheet(u, c),
-            child: _UserMarker(profile: prof, c: c),
-          ),
-        ));
-      }
     }
     // Destination pin
     if (_destination != null) {
@@ -840,7 +1204,9 @@ class _MapPageState extends ConsumerState<MapPage>
         point: LatLng(_destination!.lat, _destination!.lng),
         width: 36, height: 44,
         alignment: Alignment.topCenter,
-        child: _DestinationPin(primary: primary),
+        child: RepaintBoundary(
+          child: _DestinationPin(primary: primary),
+        ),
       ));
     }
     // Selected map location pin
@@ -853,23 +1219,22 @@ class _MapPageState extends ConsumerState<MapPage>
     }
 
     return Stack(children: [
-      // ── FlutterMap — wrapped with Listener for desktop scroll-wheel zoom ──
-      Listener(
-        onPointerSignal: (event) {
-          if (event is PointerScrollEvent) {
-            final delta = event.scrollDelta.dy;
-            // Trackpad: dy is small; mouse wheel: dy is ±120. Scale accordingly.
-            final zoomDelta = delta.abs() < 10
-                ? -delta * 0.02   // smooth trackpad
-                : -(delta / 120) * 0.8; // mouse wheel
-            final newZoom = (_zoom + zoomDelta).clamp(3.0, 19.0);
-            if ((newZoom - _zoom).abs() > 0.01) {
-              setState(() => _zoom = newZoom);
-              _mapCtrl.move(_center, newZoom);
-            }
-          }
-        },
-        child: FlutterMap(
+      // ── FlutterMap (wrapped for keyboard shortcuts) ──────────────────────
+      Focus(
+        focusNode: _mapFocusNode,
+        autofocus: true,
+        child: CallbackShortcuts(
+          bindings: <ShortcutActivator, VoidCallback>{
+            const SingleActivator(LogicalKeyboardKey.equal): () => _animateZoom(_zoom + 1),
+            const SingleActivator(LogicalKeyboardKey.numpadAdd): () => _animateZoom(_zoom + 1),
+            const SingleActivator(LogicalKeyboardKey.minus): () => _animateZoom(_zoom - 1),
+            const SingleActivator(LogicalKeyboardKey.numpadSubtract): () => _animateZoom(_zoom - 1),
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () => _mapCtrl.move(LatLng(_center.latitude + 0.001, _center.longitude), _zoom),
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () => _mapCtrl.move(LatLng(_center.latitude - 0.001, _center.longitude), _zoom),
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _mapCtrl.move(LatLng(_center.latitude, _center.longitude - 0.001), _zoom),
+            const SingleActivator(LogicalKeyboardKey.arrowRight): () => _mapCtrl.move(LatLng(_center.latitude, _center.longitude + 0.001), _zoom),
+          },
+          child: FlutterMap(
         mapController: _mapCtrl,
         options: MapOptions(
           initialCenter: _center,
@@ -877,16 +1242,16 @@ class _MapPageState extends ConsumerState<MapPage>
           minZoom: 3, maxZoom: 19,
           onTap: _onMapTap,
           onLongPress: _onMapLongPress,
-          onPositionChanged: (cam, _) { _center = cam.center; _zoom = cam.zoom; },
+          onPositionChanged: (cam, _) {
+            _center = cam.center;
+            _zoom = cam.zoom;
+            _onMapMoved();
+          },
           interactionOptions: InteractionOptions(
-            // Allow all gestures except rotation
             flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-            // Faster scroll-wheel / touchpad zoom (default 0.005 is too slow)
-            scrollWheelVelocity: 0.003,
-            // Lower pinch threshold so two-finger zoom starts immediately
+            scrollWheelVelocity: 0.005,
             pinchZoomThreshold: 0.1,
             pinchMoveThreshold: 10.0,
-            // Race: pinchZoom wins over pinchMove
             enableMultiFingerGestureRace: true,
             pinchZoomWinGestures:
                 MultiFingerGesture.pinchZoom | MultiFingerGesture.pinchMove,
@@ -895,14 +1260,13 @@ class _MapPageState extends ConsumerState<MapPage>
           ),
         ),
         children: [
-          TileLayer(urlTemplate: _tileUrl(), userAgentPackageName: 'com.alsamos.app'),
-          // Hybrid mode: labels overlay on top of satellite
-          if (_layer == MapLayer.hybrid)
-            TileLayer(
-              urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-              subdomains: const ['a', 'b', 'c'],
-              userAgentPackageName: 'com.alsamos.app',
-            ),
+          TileLayer(
+            urlTemplate: _tileUrl(),
+            userAgentPackageName: 'com.alsamos.app',
+            tileProvider: _cachedTileProvider,
+            errorTileCallback: (_, __, ___) {},
+            keepBuffer: 6,
+          ),
           // Radius circle
           if (_showRadiusCircle && locSt.currentPosition != null)
             CircleLayer(circles: [
@@ -911,6 +1275,18 @@ class _MapPageState extends ConsumerState<MapPage>
                 radius: _nearbyRadius * 1000, useRadiusInMeter: true,
                 color: primary.withValues(alpha: 0.08),
                 borderColor: primary.withValues(alpha: 0.4),
+                borderStrokeWidth: 1.5,
+              ),
+            ]),
+          // Accuracy circle for user position
+          if (locSt.currentPosition != null && locSt.currentPosition!.accuracy > 0)
+            CircleLayer(circles: [
+              CircleMarker(
+                point: LatLng(locSt.currentPosition!.latitude, locSt.currentPosition!.longitude),
+                radius: locSt.currentPosition!.accuracy,
+                useRadiusInMeter: true,
+                color: locSt.isCoarse ? Colors.amber.withValues(alpha: 0.08) : primary.withValues(alpha: 0.06),
+                borderColor: locSt.isCoarse ? Colors.amber.withValues(alpha: 0.3) : primary.withValues(alpha: 0.25),
                 borderStrokeWidth: 1.5,
               ),
             ]),
@@ -935,6 +1311,56 @@ class _MapPageState extends ConsumerState<MapPage>
               Polyline(points: _viewingRoute!.routeGeometry, strokeWidth: 4, color: const Color(0xFF16A34A)),
             ]),
           MarkerLayer(markers: markers),
+          // Clustered user markers (nearby + following)
+          buildUserMarkersLayer(
+            locSt: locSt,
+            showNearby: _showNearby,
+            showFollowing: _showFollowing,
+            primary: primary,
+            onUserTap: (user) => _showUserSheet(user, c),
+          ),
+          // POI layer
+          Consumer(builder: (_, ref, __) {
+            final config = ref.watch(mapLayersConfigProvider);
+            if (!config.showPOIs || config.poiCategories.isEmpty) return const SizedBox.shrink();
+            return POIMarkersLayer(
+              center: _center,
+              zoom: _zoom,
+              onPOITap: (poi) => _showPOIDetails(poi, primary),
+            );
+          }),
+          // Cross-feature markers
+          Consumer(
+            builder: (context, ref, child) {
+              final config = ref.watch(mapLayersConfigProvider);
+              if (!config.showMarketplace && !config.showEvents && !config.showSocialPosts) {
+                return const SizedBox.shrink();
+              }
+              final bounds = _mapCtrl.camera.visibleBounds;
+              return CrossFeatureMarkersLayer(
+                bounds: bounds,
+                onMarkerTap: (type, id) {
+                  if (type == 'marketplace') {
+                    AppToast.info(context, 'Mahsulot: $id');
+                  } else if (type == 'event') {
+                    AppToast.info(context, 'Tadbir: $id');
+                  } else if (type == 'social') {
+                    _showSocialPostSheet(id);
+                  }
+                },
+              );
+            },
+          ),
+          // Taxi live layer
+          Consumer(builder: (_, ref, __) {
+            final config = ref.watch(mapLayersConfigProvider);
+            if (!config.showTaxis) return const SizedBox.shrink();
+            return TaxiMarkersLayer(
+              onTaxiTap: (taxi) {
+                AppToast.info(context, 'Taksi: ${taxi.vehicleType ?? "Sedan"}');
+              },
+            );
+          }),
           // Route end pin
           if (_activeRoute != null && _activeRoute!.isNotEmpty)
             MarkerLayer(markers: [
@@ -958,7 +1384,8 @@ class _MapPageState extends ConsumerState<MapPage>
           ),
         ],
       ),   // FlutterMap
-      ), // Listener
+        ), // CallbackShortcuts
+      ), // Focus
 
       // ── Top-right: layer cycle button only (Yandex style) ──────────────
       Positioned(top: 8, right: 12, child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
@@ -1002,7 +1429,11 @@ class _MapPageState extends ConsumerState<MapPage>
       // ── Bottom-right: Directions + Traffic + Voice + Locate + Zoom ────────
       Positioned(
         right: 12,
-        bottom: isWide ? 16 : 84,
+        bottom: isWide 
+          ? 16 
+          : _showDirMobile 
+            ? _getBottomOffsetForSheet() 
+            : 84,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           // Traffic toggle
           _GlassPanel(child: _MapToggleBtn(
@@ -1033,27 +1464,27 @@ class _MapPageState extends ConsumerState<MapPage>
               : setState(() => _showDirMobile = !_showDirMobile),
           )),
           const SizedBox(height: 6),
-          // Locate
-          _GlassPanel(child: _MapBtn(
-            icon: LucideIcons.locate,
-            tooltip: 'Joylashuvim',
-            accent: true,
-            primary: primary,
+          // Locate (always tappable — spinner is clickable too)
+          _GlassPanel(child: GestureDetector(
             onTap: _centerOnMe,
+            child: Container(width: 40, height: 40, alignment: Alignment.center,
+              child: locSt.isAcquiring
+                ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: primary))
+                : Icon(LucideIcons.locate, size: 20, color: primary)),
           )),
           const SizedBox(height: 6),
           // Zoom in
           _GlassPanel(child: _MapBtn(
             icon: LucideIcons.plus,
             tooltip: 'Yaqinlashtirish',
-            onTap: () { final z = (_zoom + 1).clamp(3.0, 19.0); setState(() => _zoom = z); _mapCtrl.move(_center, z); },
+            onTap: () => _animateZoom(_zoom + 1),
           )),
           const SizedBox(height: 6),
           // Zoom out
           _GlassPanel(child: _MapBtn(
             icon: LucideIcons.minus,
             tooltip: 'Uzoqlashtirish',
-            onTap: () { final z = (_zoom - 1).clamp(3.0, 19.0); setState(() => _zoom = z); _mapCtrl.move(_center, z); },
+            onTap: () => _animateZoom(_zoom - 1),
           )),
         ]),
       ),
@@ -1070,13 +1501,9 @@ class _MapPageState extends ConsumerState<MapPage>
           ),
         ))),
 
-      // ── Location permission banner (non-blocking) ───────────────────────
-      if (locSt.currentPosition == null && !locSt.isTracking)
-        Positioned(top: 12, left: 12, right: 12, child: _LocationBanner(onEnable: () => ref.read(locationProvider.notifier).startTracking())),
-
-      // ── Mobile Directions sheet ─────────────────────────────────────────
+      // ── Mobile Draggable Directions sheet ───────────────────────────────
       if (!isWide)
-        Positioned.fill(child: Align(alignment: Alignment.bottomCenter, child: DirectionsMobileSheet(
+        Positioned.fill(child: Align(alignment: Alignment.bottomCenter, child: DraggableDirectionsSheet(
           open: _showDirMobile,
           onOpenChange: (v) => setState(() { _showDirMobile = v; if (!v) { _activeRoute = null; _mapSelectionMode = null; } }),
           currentLocation: locSt.currentPosition != null ? (lat: locSt.currentPosition!.latitude, lng: locSt.currentPosition!.longitude) : null,
@@ -1098,6 +1525,7 @@ class _MapPageState extends ConsumerState<MapPage>
           onMapSelectionModeChange: (m) => setState(() => _mapSelectionMode = m),
           selectedMapLocation: _selectedMapLoc,
           onClearSelectedMapLocation: () => setState(() => _selectedMapLoc = null),
+          onSheetStateChange: (state) => setState(() => _mobileSheetState = state),
         ))),
 
       // ── Mobile History sheet ────────────────────────────────────────────
@@ -1150,6 +1578,54 @@ class _MapPageState extends ConsumerState<MapPage>
                 onPressed: () { setState(() => _layer = l); Navigator.pop(ctx); },
               ),
           ]),
+          const SizedBox(height: 8),
+          Text('Qatlamlar', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.mutedForeground)),
+          const SizedBox(height: 6),
+          _LayerToggle(
+            icon: LucideIcons.utensilsCrossed,
+            label: 'POI (restoran, kafe, bank...)',
+            active: ref.watch(mapLayersConfigProvider).showPOIs,
+            onChanged: (v) {
+              ref.read(mapLayersConfigProvider.notifier).togglePOIs(v);
+              if (v) ref.read(mapLayersConfigProvider.notifier).setPOICategories({...POICategory.values});
+            },
+            c: c,
+          ),
+          _LayerToggle(
+            icon: LucideIcons.shoppingBag,
+            label: 'Marketplace',
+            active: ref.watch(mapLayersConfigProvider).showMarketplace,
+            onChanged: (v) => ref.read(mapLayersConfigProvider.notifier).toggleMarketplace(v),
+            c: c,
+          ),
+          _LayerToggle(
+            icon: LucideIcons.calendar,
+            label: 'Tadbirlar',
+            active: ref.watch(mapLayersConfigProvider).showEvents,
+            onChanged: (v) => ref.read(mapLayersConfigProvider.notifier).toggleEvents(v),
+            c: c,
+          ),
+          _LayerToggle(
+            icon: LucideIcons.messageCircle,
+            label: 'Ijtimoiy postlar',
+            active: ref.watch(mapLayersConfigProvider).showSocialPosts,
+            onChanged: (v) => ref.read(mapLayersConfigProvider.notifier).toggleSocialPosts(v),
+            c: c,
+          ),
+          _LayerToggle(
+            icon: LucideIcons.car,
+            label: 'Taksi (real vaqt)',
+            active: ref.watch(mapLayersConfigProvider).showTaxis,
+            onChanged: (v) => ref.read(mapLayersConfigProvider.notifier).toggleTaxis(v),
+            c: c,
+          ),
+          _LayerToggle(
+            icon: LucideIcons.triangleAlert,
+            label: "Hodisalar (yo'l harakati)",
+            active: ref.watch(mapLayersConfigProvider).showIncidents,
+            onChanged: (v) => ref.read(mapLayersConfigProvider.notifier).toggleIncidents(v),
+            c: c,
+          ),
           const SizedBox(height: 16),
           _SettingsRow(icon: LucideIcons.eye, label: 'Joylashuvni ulashish', value: locSt.isSharing, onChanged: (_) => ref.read(locationProvider.notifier).toggleSharing(), c: c),
           _SettingsRow(icon: LucideIcons.lock, label: 'Maxfiy joylashuv', value: _isLocationPrivate, onChanged: (v) => setState(() => _isLocationPrivate = v), c: c),
@@ -1237,7 +1713,7 @@ class _MapPageState extends ConsumerState<MapPage>
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           Icon(LucideIcons.mapPin, size: 13, color: c.mutedForeground),
           const SizedBox(width: 4),
-          Text('${u.distanceKm.toStringAsFixed(1)} km uzoqlikda', style: TextStyle(color: c.mutedForeground, fontSize: 13)),
+          Text(u.distanceKm <= 0 ? '—' : '${u.distanceKm.toStringAsFixed(1)} km uzoqlikda', style: TextStyle(color: c.mutedForeground, fontSize: 13)),
         ]),
         const SizedBox(height: 14),
         Row(children: [
@@ -1293,15 +1769,13 @@ class _MapBtn extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
-  final bool accent;
-  final Color? primary;
-  const _MapBtn({required this.icon, required this.tooltip, required this.onTap, this.accent = false, this.primary});
+  const _MapBtn({required this.icon, required this.tooltip, required this.onTap});
   @override
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     return Tooltip(message: tooltip, child: GestureDetector(onTap: onTap, child: Container(
       width: 40, height: 40, alignment: Alignment.center,
-      child: Icon(icon, size: 20, color: accent ? (primary ?? Theme.of(context).colorScheme.primary) : c.foreground),
+      child: Icon(icon, size: 20, color: c.foreground),
     )));
   }
 }
@@ -1351,11 +1825,11 @@ class _UserCard extends StatelessWidget {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(prof.displayName, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.foreground), maxLines: 1, overflow: TextOverflow.ellipsis),
             Row(children: [
-              Text('@${prof.username}', style: TextStyle(fontSize: 11, color: c.mutedForeground)),
+              Flexible(child: Text('@${prof.username}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: c.mutedForeground))),
               Text(' • ', style: TextStyle(fontSize: 11, color: c.mutedForeground)),
               Icon(LucideIcons.mapPin, size: 11, color: c.mutedForeground),
               const SizedBox(width: 2),
-              Text('${user.distanceKm.toStringAsFixed(1)} km', style: TextStyle(fontSize: 11, color: c.mutedForeground)),
+              Text(user.distanceKm <= 0 ? '—' : '${user.distanceKm.toStringAsFixed(1)} km', style: TextStyle(fontSize: 11, color: c.mutedForeground)),
             ]),
           ])),
           GestureDetector(onTap: onNavigate, child: Container(
@@ -1370,23 +1844,7 @@ class _UserCard extends StatelessWidget {
 }
 
 // ─── User map marker ─────────────────────────────────────────────────────────
-class _UserMarker extends StatelessWidget {
-  final ProfileData profile;
-  final AlsamosColors c;
-  const _UserMarker({required this.profile, required this.c});
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: profile.isOnline ? Colors.green : c.mutedForeground, width: 3), color: c.card,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 8)]),
-      child: ClipOval(child: profile.avatarUrl != null
-        ? Image.network(profile.avatarUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => _fallback())
-        : _fallback()),
-    );
-  }
-  Widget _fallback() => Center(child: Text(profile.displayName.isNotEmpty ? profile.displayName[0] : '?',
-    style: TextStyle(color: c.foreground, fontWeight: FontWeight.bold, fontSize: 16)));
-}
+// ─── User card in sidebar lists ────────────────────────────────────────────────
 
 // ─── Destination pin ─────────────────────────────────────────────────────────
 class _DestinationPin extends StatefulWidget {
@@ -1462,38 +1920,6 @@ class _MapSelectionBanner extends StatelessWidget {
           decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
           child: const Icon(LucideIcons.x, size: 14, color: Colors.white),
         )),
-      ]),
-    );
-  }
-}
-
-// ─── Location permission banner (non-blocking, web 1:1) ──────────────────────
-class _LocationBanner extends StatelessWidget {
-  final VoidCallback onEnable;
-  const _LocationBanner({required this.onEnable});
-  @override
-  Widget build(BuildContext context) {
-    final c = AlsamosColors.of(context);
-    final primary = Theme.of(context).colorScheme.primary;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.card.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: c.border),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 12)],
-      ),
-      child: Row(children: [
-        Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: primary.withValues(alpha: 0.15), shape: BoxShape.circle),
-          child: Icon(LucideIcons.mapPin, color: primary, size: 20)),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-          Text('Joylashuvni yoqing', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.foreground)),
-          Text("To'liq funksiyalar uchun joylashuvni yoqing", style: TextStyle(fontSize: 12, color: c.mutedForeground)),
-        ])),
-        const SizedBox(width: 8),
-        FilledButton(onPressed: onEnable, style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8)),
-          child: const Text('Yoqish', style: TextStyle(fontSize: 13))),
       ]),
     );
   }
@@ -1588,23 +2014,23 @@ class _BatteryCard extends StatelessWidget {
   const _BatteryCard({required this.level, required this.c});
   @override
   Widget build(BuildContext context) {
-    final color = level < 20 ? Colors.red : level < 50 ? Colors.orange : Colors.green;
+    final batteryColor = level < 20 ? Colors.red : level < 50 ? Colors.orange : Colors.green;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.border)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(LucideIcons.battery, size: 16, color: color),
+          Icon(LucideIcons.battery, size: 16, color: batteryColor),
           const SizedBox(width: 8),
           Text('Batareya', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.foreground)),
           const Spacer(),
-          Text('$level%', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color)),
+          Text('$level%', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: batteryColor)),
         ]),
         const SizedBox(height: 10),
         ClipRRect(borderRadius: BorderRadius.circular(6), child: LinearProgressIndicator(
           value: level / 100, minHeight: 8,
           backgroundColor: c.muted,
-          valueColor: AlwaysStoppedAnimation<Color>(color),
+          valueColor: AlwaysStoppedAnimation<Color>(batteryColor),
         )),
       ]),
     );
@@ -1656,6 +2082,32 @@ class _SettingsRow extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: c.foreground))),
         Switch(value: value, onChanged: onChanged, activeTrackColor: Theme.of(context).colorScheme.primary),
+      ]),
+    );
+  }
+}
+
+// ─── Layer toggle row ─────────────────────────────────────────────────────────
+class _LayerToggle extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final ValueChanged<bool> onChanged;
+  final AlsamosColors c;
+  const _LayerToggle({required this.icon, required this.label, required this.active, required this.onChanged, required this.c});
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      decoration: BoxDecoration(color: c.background, borderRadius: BorderRadius.circular(8), border: Border.all(color: active ? primary.withValues(alpha: 0.3) : c.border)),
+      child: Row(children: [
+        Container(padding: const EdgeInsets.all(5), decoration: BoxDecoration(color: (active ? primary : c.muted).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
+          child: Icon(icon, size: 14, color: active ? primary : c.mutedForeground)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(label, style: TextStyle(fontSize: 12, color: c.foreground))),
+        Switch(value: active, onChanged: onChanged, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap, activeTrackColor: primary),
       ]),
     );
   }

@@ -5,12 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../../../shared/widgets/verified_badge.dart';
 
 // Telegram-style chat header — matches web messages/ChatHeader.tsx pixel-for-pixel.
 class ChatHeaderPro extends StatefulWidget {
   final String name;
+  final String? userId;
   final String? avatarUrl;
   final String chatType; // 'private' | 'group' | 'channel'
   final bool isVerified;
@@ -36,6 +37,7 @@ class ChatHeaderPro extends StatefulWidget {
   const ChatHeaderPro({
     super.key,
     required this.name,
+    this.userId,
     this.avatarUrl,
     this.chatType = 'private',
     this.isVerified = false,
@@ -184,39 +186,29 @@ class _ChatHeaderProState extends State<ChatHeaderPro>
                   clipBehavior: Clip.none,
                   children: [
                     // Avatar: web h-10 w-10 (40px)
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: gradient,
-                        color: gradient == null && icon != null
-                            ? _avatarBg(context)
-                            : null,
+                    if (icon != null)
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: gradient,
+                          color: _avatarBg(context),
+                        ),
+                        child: Icon(icon, color: Colors.white, size: 20),
+                      )
+                    else
+                      StoryAvatarRing(
+                        userId: widget.userId,
+                        avatarUrl: widget.avatarUrl,
+                        fallback: widget.name.isNotEmpty
+                            ? widget.name[0].toUpperCase()
+                            : '?',
+                        size: 34,
+                        ringPadding: 2.5,
+                        showOnline: widget.isOnline && !widget.isSelfChat,
                       ),
-                      child: icon != null
-                          ? Icon(icon, color: Colors.white, size: 20)
-                          : UserAvatar(
-                              avatarUrl: widget.avatarUrl,
-                              fallback: widget.name.isNotEmpty
-                                  ? widget.name[0].toUpperCase()
-                                  : '?',
-                              size: 40,
-                              backgroundColor: _avatarBg(context)),
-                    ),
-                    // Online indicator: web h-3 w-3 bg-green-500 border-2 border-card
-                    if (widget.isOnline && !widget.isSelfChat)
-                      Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                              width: 12,
-                              height: 12,
-                              decoration: BoxDecoration(
-                                  color: const Color(0xFF22C55E),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                      color: colors.card, width: 2)))),
+                    // Online indicator handled by StoryAvatarRing showOnline
                     // Self-chat indicator: web -bottom-0.5 -right-0.5 h-4 w-4 bg-card border-2 border-amber-500 + Bookmark filled
                     if (widget.isSelfChat)
                       Positioned(

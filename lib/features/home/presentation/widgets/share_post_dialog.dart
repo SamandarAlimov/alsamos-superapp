@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/widgets/app_toast.dart';
 
 /// Simple share post dialog for sharing post links
 class SharePostDialog extends ConsumerWidget {
@@ -101,12 +102,7 @@ class SharePostDialog extends ConsumerWidget {
                     IconButton(
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: shareUrl));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Havola nusxalandi'),
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
+                        AppToast.success(context, 'Havola nusxalandi');
                       },
                       icon: Icon(
                         LucideIcons.copy,

@@ -8,10 +8,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/widgets/state_views.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/mini_app_model.dart';
 import '../providers/miniapps_provider.dart';
 import 'mini_app_browser_page.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 
 /// Pixel-perfect Flutter port of web `MiniAppsPage.tsx` (927 lines).
 class MiniAppsPage extends ConsumerStatefulWidget {
@@ -75,9 +78,7 @@ class _MiniAppsPageState extends ConsumerState<MiniAppsPage> {
     if (ok == true) {
       await ref.read(miniAppsProvider.notifier).delete(app.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Mini app o'chirildi")),
-        );
+        AppToast.success(context, "Mini app o'chirildi");
       }
     }
   }
@@ -98,8 +99,10 @@ class _MiniAppsPageState extends ConsumerState<MiniAppsPage> {
         barrierColor: Colors.black.withValues(alpha: 0.7),
         builder: (_) => Dialog(
           backgroundColor: c.background.withValues(alpha: 0.95),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: _DetailSheetBody(
@@ -264,7 +267,7 @@ class _MiniAppsPageState extends ConsumerState<MiniAppsPage> {
                     if (state.isLoading)
                       const SliverFillRemaining(
                         hasScrollBody: false,
-                        child: Center(child: CircularProgressIndicator()),
+                        child: LoadingView(label: 'Mini apps yuklanmoqda...'),
                       )
                     else if (filtered.isEmpty)
                       SliverFillRemaining(
@@ -280,21 +283,26 @@ class _MiniAppsPageState extends ConsumerState<MiniAppsPage> {
                       SliverPadding(
                         padding: EdgeInsets.fromLTRB(hPad, 20, hPad, 96),
                         sliver: SliverGrid(
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: w < 640
-                                ? 3
-                                : (w < 768 ? 4 : (w < 1024 ? 5 : 6)),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: w < 360
+                                ? 2
+                                : (w < 640
+                                    ? 3
+                                    : (w < 768 ? 4 : (w < 1024 ? 5 : 6))),
                             mainAxisSpacing: w < 640 ? 8 : 12,
                             crossAxisSpacing: w < 640 ? 8 : 12,
                             childAspectRatio: 0.82,
                           ),
                           delegate: SliverChildBuilderDelegate(
-                            (_, i) => _AppTile(
-                              app: filtered[i],
-                              onTap: () => _showDetail(filtered[i]),
-                              c: c,
-                              primary: primary,
-                              compact: w < 640,
+                            (_, i) => RepaintBoundary(
+                              child: _AppTile(
+                                app: filtered[i],
+                                onTap: () => _showDetail(filtered[i]),
+                                c: c,
+                                primary: primary,
+                                compact: w < 640,
+                              ),
                             ),
                             childCount: filtered.length,
                           ),
@@ -374,8 +382,8 @@ class _Header extends StatelessWidget {
                   horizontal: w < 640 ? 12 : 14, vertical: 10),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
-              textStyle: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600),
+              textStyle:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               minimumSize: const Size(44, 40),
             ),
           ),
@@ -412,20 +420,17 @@ class _SearchField extends StatelessWidget {
         style: TextStyle(color: c.foreground, fontSize: 14),
         decoration: InputDecoration(
           hintText: 'Mini app qidirish...',
-          hintStyle:
-              TextStyle(color: c.mutedForeground, fontSize: 14),
+          hintStyle: TextStyle(color: c.mutedForeground, fontSize: 14),
           prefixIcon: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Icon(LucideIcons.search,
-                size: 16, color: c.mutedForeground),
+            child: Icon(LucideIcons.search, size: 16, color: c.mutedForeground),
           ),
           prefixIconConstraints:
               const BoxConstraints(minWidth: 0, minHeight: 0),
           suffixIcon: controller.text.isEmpty
               ? null
               : IconButton(
-                  icon: Icon(LucideIcons.x,
-                      size: 16, color: c.mutedForeground),
+                  icon: Icon(LucideIcons.x, size: 16, color: c.mutedForeground),
                   onPressed: onClear,
                 ),
           border: InputBorder.none,
@@ -475,14 +480,12 @@ class _CategoriesRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 onTap: () => onSelect(cat.id),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: active
-                          ? primary
-                          : c.border.withValues(alpha: 0.5),
+                      color: active ? primary : c.border.withValues(alpha: 0.5),
                     ),
                     boxShadow: active
                         ? [
@@ -566,8 +569,8 @@ class _EmptyState extends StatelessWidget {
                 style: OutlinedButton.styleFrom(
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 ),
               ),
             ],
@@ -626,8 +629,7 @@ class _AppTileState extends State<_AppTile> {
               color: _hover
                   ? widget.c.card.withValues(alpha: 0.7)
                   : widget.c.card.withValues(alpha: 0.4),
-              borderRadius:
-                  BorderRadius.circular(widget.compact ? 12 : 16),
+              borderRadius: BorderRadius.circular(widget.compact ? 12 : 16),
               border: Border.all(
                 color: _hover
                     ? widget.primary.withValues(alpha: 0.4)
@@ -652,8 +654,8 @@ class _AppTileState extends State<_AppTile> {
                   height: iconBox,
                   decoration: BoxDecoration(
                     color: widget.c.muted.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(
-                        widget.compact ? 12 : 16),
+                    borderRadius:
+                        BorderRadius.circular(widget.compact ? 12 : 16),
                     border: Border.all(
                         color: widget.c.border.withValues(alpha: 0.3)),
                   ),
@@ -774,8 +776,7 @@ class _DetailSheetBody extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: c.muted.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                      color: c.border.withValues(alpha: 0.3)),
+                  border: Border.all(color: c.border.withValues(alpha: 0.3)),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
@@ -785,13 +786,10 @@ class _DetailSheetBody extends StatelessWidget {
                           width: 48,
                           height: 48,
                           fit: BoxFit.cover,
-                          errorWidget: (_, __, ___) => Icon(
-                              LucideIcons.globe,
-                              size: 32,
-                              color: primary),
+                          errorWidget: (_, __, ___) =>
+                              Icon(LucideIcons.globe, size: 32, color: primary),
                         )
-                      : Icon(LucideIcons.globe,
-                          size: 32, color: primary),
+                      : Icon(LucideIcons.globe, size: 32, color: primary),
                 ),
               ),
               const SizedBox(width: 16),
@@ -810,8 +808,7 @@ class _DetailSheetBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      app.description == null ||
-                              app.description!.trim().isEmpty
+                      app.description == null || app.description!.trim().isEmpty
                           ? 'Tavsif mavjud emas'
                           : app.description!,
                       style: TextStyle(
@@ -833,8 +830,8 @@ class _DetailSheetBody extends StatelessWidget {
                     width: 36,
                     height: 36,
                     alignment: Alignment.center,
-                    child: Icon(LucideIcons.x,
-                        size: 18, color: c.mutedForeground),
+                    child:
+                        Icon(LucideIcons.x, size: 18, color: c.mutedForeground),
                   ),
                 ),
               ),
@@ -848,8 +845,7 @@ class _DetailSheetBody extends StatelessWidget {
               decoration: BoxDecoration(
                 color: c.muted.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(12),
-                border:
-                    Border.all(color: c.border.withValues(alpha: 0.3)),
+                border: Border.all(color: c.border.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [
@@ -891,8 +887,8 @@ class _DetailSheetBody extends StatelessWidget {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: c.muted.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(8),
@@ -958,8 +954,8 @@ class _DetailSheetBody extends StatelessWidget {
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16)),
-                textStyle: const TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.w700),
+                textStyle:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -976,8 +972,7 @@ class _DetailSheetBody extends StatelessWidget {
                       foregroundColor: c.foreground,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16)),
-                      side: BorderSide(
-                          color: c.border.withValues(alpha: 0.5)),
+                      side: BorderSide(color: c.border.withValues(alpha: 0.5)),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
@@ -1048,8 +1043,7 @@ class _StatCell extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             label,
-            style: TextStyle(
-                fontSize: 11, color: c.mutedForeground),
+            style: TextStyle(fontSize: 11, color: c.mutedForeground),
           ),
         ],
       ),
@@ -1079,8 +1073,7 @@ class _MiniAppFormDialog extends ConsumerStatefulWidget {
   final String userId;
 
   @override
-  ConsumerState<_MiniAppFormDialog> createState() =>
-      _MiniAppFormDialogState();
+  ConsumerState<_MiniAppFormDialog> createState() => _MiniAppFormDialogState();
 }
 
 class _MiniAppFormDialogState extends ConsumerState<_MiniAppFormDialog> {
@@ -1143,9 +1136,7 @@ class _MiniAppFormDialogState extends ConsumerState<_MiniAppFormDialog> {
     final name = nameCtrl.text.trim();
     final url = urlCtrl.text.trim();
     if (name.isEmpty || url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nom va URL kiritilishi shart')),
-      );
+      AppToast.error(context, 'Nom va URL kiritilishi shart');
       return;
     }
     setState(() => _busy = true);
@@ -1154,8 +1145,8 @@ class _MiniAppFormDialogState extends ConsumerState<_MiniAppFormDialog> {
           iconUrlCtrl.text.trim().isEmpty ? null : iconUrlCtrl.text.trim();
       if (_pickedIcon != null) {
         final repo = ref.read(miniAppsRepositoryProvider);
-        iconUrl = await repo.uploadIcon(
-            userId: widget.userId, file: _pickedIcon!);
+        iconUrl =
+            await repo.uploadIcon(userId: widget.userId, file: _pickedIcon!);
       } else if (_existingIconUrl != null && iconUrl == null) {
         iconUrl = _existingIconUrl;
       }
@@ -1183,19 +1174,13 @@ class _MiniAppFormDialogState extends ConsumerState<_MiniAppFormDialog> {
       }
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.editing == null
+        AppToast.success(context, widget.editing == null
                 ? 'Mini app yaratildi'
-                : 'Mini app saqlandi'),
-          ),
-        );
+                : 'Mini app saqlandi');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Xatolik: $e')),
-        );
+        AppToast.error(context, friendlyError(e));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -1211,8 +1196,7 @@ class _MiniAppFormDialogState extends ConsumerState<_MiniAppFormDialog> {
     return Dialog(
       backgroundColor: c.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      insetPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 448),
         child: SingleChildScrollView(
@@ -1235,8 +1219,8 @@ class _MiniAppFormDialogState extends ConsumerState<_MiniAppFormDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: Icon(LucideIcons.x,
-                        size: 18, color: c.mutedForeground),
+                    icon:
+                        Icon(LucideIcons.x, size: 18, color: c.mutedForeground),
                   ),
                 ],
               ),
@@ -1374,13 +1358,11 @@ class _AppTextField extends StatelessWidget {
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide:
-              BorderSide(color: c.border.withValues(alpha: 0.5)),
+          borderSide: BorderSide(color: c.border.withValues(alpha: 0.5)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide:
-              BorderSide(color: c.border.withValues(alpha: 0.5)),
+          borderSide: BorderSide(color: c.border.withValues(alpha: 0.5)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -1431,8 +1413,7 @@ class _IconPicker extends StatelessWidget {
               foregroundColor: c.foreground,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               side: BorderSide(color: c.border),
             ),
           ),
@@ -1447,8 +1428,7 @@ class _IconPicker extends StatelessWidget {
             height: 56,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
-              border:
-                  Border.all(color: c.border.withValues(alpha: 0.5)),
+              border: Border.all(color: c.border.withValues(alpha: 0.5)),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
@@ -1469,8 +1449,7 @@ class _IconPicker extends StatelessWidget {
               foregroundColor: c.foreground,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               side: BorderSide(color: c.border),
             ),
           ),
@@ -1498,8 +1477,7 @@ class _IconPicker extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               'PNG, JPG, SVG, ICO',
-              style: TextStyle(
-                  fontSize: 13, color: c.mutedForeground),
+              style: TextStyle(fontSize: 13, color: c.mutedForeground),
             ),
           ],
         ),
@@ -1531,8 +1509,8 @@ class _CategoryDropdown extends StatelessWidget {
         child: DropdownButton<String>(
           value: value,
           isExpanded: true,
-          icon: Icon(LucideIcons.chevronDown,
-              size: 16, color: c.mutedForeground),
+          icon:
+              Icon(LucideIcons.chevronDown, size: 16, color: c.mutedForeground),
           dropdownColor: c.card,
           style: TextStyle(fontSize: 14, color: c.foreground),
           items: miniAppCategories

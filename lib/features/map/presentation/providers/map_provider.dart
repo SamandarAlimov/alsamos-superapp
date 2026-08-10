@@ -6,44 +6,66 @@ import '../../data/map_repository.dart';
 
 final mapRepoProvider = Provider<MapRepository>((ref) => MapRepository());
 
-/// Recent + favorite saved places (kept in-memory; web stores in localStorage).
+/// Saved places synced with Supabase (saved_places + saved_place_lists).
 class SavedPlacesState {
   final List<SavedPlace> recent;
   final List<SavedPlace> favorites;
-  const SavedPlacesState({this.recent = const [], this.favorites = const []});
-  SavedPlacesState copyWith({List<SavedPlace>? recent, List<SavedPlace>? favorites}) =>
-      SavedPlacesState(recent: recent ?? this.recent, favorites: favorites ?? this.favorites);
+  final List<String> listNames;
+  final bool loading;
+  const SavedPlacesState({this.recent = const [], this.favorites = const [], this.listNames = const ['Sevimlilar', 'Uy', 'Ish'], this.loading = false});
+  SavedPlacesState copyWith({List<SavedPlace>? recent, List<SavedPlace>? favorites, List<String>? listNames, bool? loading}) =>
+      SavedPlacesState(recent: recent ?? this.recent, favorites: favorites ?? this.favorites, listNames: listNames ?? this.listNames, loading: loading ?? this.loading);
 }
 
 class SavedPlacesNotifier extends StateNotifier<SavedPlacesState> {
-  SavedPlacesNotifier() : super(const SavedPlacesState());
+  final MapRepository _repo;
+  SavedPlacesNotifier(this._repo) : super(const SavedPlacesState(loading: true)) {
+    _load();
+  }
 
-  void addRecent(SavedPlace place) {
+  Future<void> _load() async {
+    final places = await _repo.fetchSavedPlaces();
+    state = SavedPlacesState(
+      recent: places.where((p) => !p.isFavorite).take(10).toList(),
+      favorites: places.where((p) => p.isFavorite).toList(),
+    );
+  }
+
+  Future<void> addRecent(SavedPlace place) async {
     final filtered = state.recent.where((p) => p.lat != place.lat || p.lng != place.lng).toList();
     final updated = [place.copyWith(), ...filtered].take(10).toList();
     state = state.copyWith(recent: updated);
+    await _repo.savePlaceToSupabase(place);
   }
 
-  void toggleFavorite(SavedPlace place) {
+  Future<void> toggleFavorite(SavedPlace place) async {
     final exists = state.favorites.any((p) => p.id == place.id);
     if (exists) {
       state = state.copyWith(favorites: state.favorites.where((p) => p.id != place.id).toList());
+      await _repo.deleteSavedPlace(place.id);
     } else {
-      state = state.copyWith(favorites: [...state.favorites, place.copyWith(isFavorite: true)]);
+      final updated = place.copyWith(isFavorite: true);
+      state = state.copyWith(favorites: [...state.favorites, updated]);
+      await _repo.savePlaceToSupabase(SavedPlace(id: place.id, name: place.name, lat: place.lat, lng: place.lng, isFavorite: true));
     }
   }
 
   bool isFavorite(String id) => state.favorites.any((p) => p.id == id);
 
-  void clearRecent() => state = state.copyWith(recent: const []);
+  Future<void> clearRecent() async {
+    state = state.copyWith(recent: const []);
+  }
 
-  void deletePlace(String id) => state = state.copyWith(
-        recent: state.recent.where((p) => p.id != id).toList(),
-        favorites: state.favorites.where((p) => p.id != id).toList(),
-      );
+  Future<void> deletePlace(String id) async {
+    state = state.copyWith(
+      recent: state.recent.where((p) => p.id != id).toList(),
+      favorites: state.favorites.where((p) => p.id != id).toList(),
+    );
+    await _repo.deleteSavedPlace(id);
+  }
 }
 
-final savedPlacesProvider = StateNotifierProvider<SavedPlacesNotifier, SavedPlacesState>((ref) => SavedPlacesNotifier());
+final savedPlacesProvider = StateNotifierProvider<SavedPlacesNotifier, SavedPlacesState>((ref) => SavedPlacesNotifier(ref.read(mapRepoProvider)));
 
 /// Frequent places + daily routes (Supabase-backed) for the LocationHistory panel.
 class LocationHistoryState {

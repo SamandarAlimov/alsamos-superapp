@@ -1,29 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../app/providers/font_size_provider.dart';
 
 /// v44: A11y helpers — font scaling clamp, focus ring builder, semantics shortcut.
 
 /// Clamp text scale to avoid overflow on very large accessibility settings.
-/// Web parity: max font-size 1.4x (browser zoom + Settings combined).
-class A11yTextScaler extends StatelessWidget {
+/// Also applies the user-chosen font_size setting from AppearanceSettings.
+/// Web parity: clamp to 1.3x so system font scaling cannot break layouts.
+class A11yTextScaler extends ConsumerWidget {
   final Widget child;
-  final double min;
-  final double max;
-  const A11yTextScaler({
-    super.key,
-    required this.child,
-    this.min = 0.85,
-    this.max = 1.4,
-  });
+  const A11yTextScaler({super.key, required this.child});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userScale = ref.watch(fontScaleFactorProvider);
     final media = MediaQuery.of(context);
+    // Compose: user preference × accessibility setting, clamped to sane range.
+    final base = media.textScaler.scale(1.0); // system scale factor
+    final combined = (base * userScale).clamp(0.72, 1.3);
     return MediaQuery(
       data: media.copyWith(
-        textScaler: media.textScaler.clamp(
-          minScaleFactor: min,
-          maxScaleFactor: max,
-        ),
+        textScaler: TextScaler.linear(combined),
       ),
       child: child,
     );
@@ -78,7 +76,8 @@ bool hasWcagAaContrast(
   double luminance(Color c) => c.computeLuminance();
   final fg = luminance(foreground);
   final bg = luminance(background);
-  final ratio = (fg > bg ? (fg + 0.05) / (bg + 0.05) : (bg + 0.05) / (fg + 0.05));
+  final ratio =
+      (fg > bg ? (fg + 0.05) / (bg + 0.05) : (bg + 0.05) / (fg + 0.05));
   return largeText ? ratio >= 3.0 : ratio >= 4.5;
 }
 

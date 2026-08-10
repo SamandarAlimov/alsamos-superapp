@@ -9,8 +9,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../core/responsive/breakpoints.dart';
+import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/verified_badge.dart';
+import '../../../../shared/widgets/count_badge.dart' as shared_badges;
+import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../data/models/conversation_model.dart';
+import '../../data/models/message_model.dart';
 import '../../data/repositories/messages_repository.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/conversations_provider.dart';
@@ -30,7 +35,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
   String _query = '';
   Conversation? _selected;
   double _leftPanelWidth = 320.0;
-  static const _desktopBreakpoint = 900.0;
+  static const _desktopBreakpoint = Responsive.desktopMin;
 
   @override
   Widget build(BuildContext context) {
@@ -38,12 +43,15 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
     final w = MediaQuery.of(context).size.width;
     final isDesktop = w >= _desktopBreakpoint;
     if (isDesktop) {
+      final maxLeftPanel = (w * 0.42).clamp(320.0, 480.0).toDouble();
+      final leftPanelWidth =
+          _leftPanelWidth.clamp(280.0, maxLeftPanel).toDouble();
       return Scaffold(
         backgroundColor: c.background,
         body: SafeArea(
             child: Row(children: [
           SizedBox(
-            width: _leftPanelWidth,
+            width: leftPanelWidth,
             child: _LeftPanel(
               tab: _tab,
               query: _query,
@@ -59,13 +67,13 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
             cursor: SystemMouseCursors.resizeColumn,
             child: GestureDetector(
               onHorizontalDragUpdate: (d) => setState(() {
-                double nw = _leftPanelWidth + d.delta.dx;
+                double nw = leftPanelWidth + d.delta.dx;
                 if (nw < 100) {
                   nw = 72;
                 } else if (nw < 200) {
                   nw = 200;
                 }
-                _leftPanelWidth = nw.clamp(72.0, 480.0);
+                _leftPanelWidth = nw.clamp(72.0, maxLeftPanel).toDouble();
               }),
               child: Container(
                 width: 6,
@@ -109,10 +117,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage>
   Future<void> _openSelfChat() async {
     final userId = ref.read(authProvider).user?.id;
     if (userId == null) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(
-        content: Text('Saqlangan xabarlar...'),
-        duration: Duration(seconds: 1)));
+    AppToast.info(context, 'Saqlangan xabarlar...');
     final conv = await const MessagesRepository().getOrCreateSelfChat(userId);
     if (!mounted) return;
     if (conv == null) return;
@@ -167,19 +172,25 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     super.dispose();
   }
 
-  static const _tabs = [
-    ('private', 'Shaxsiy'),
-    ('groups', 'Guruhlar'),
-    ('channels', 'Kanallar'),
-    ('requests', "So'rovlar"),
-    ('archived', 'Arxiv'),
-  ];
+  List<(String, String)> _tabs() => [
+        ('private', 'Private'),
+        ('groups', 'Groups'),
+        ('channels', 'Channels'),
+        ('requests', 'Requests'),
+        ('archived', 'Archived'),
+      ];
 
-  int _countForTab(List<Conversation> items, String tab) {
-    if (tab == 'requests') return 0;
+  int _countForTab(
+      List<Conversation> items, String tab, List<ChatFolder> folders) {
     return items.where((cv) {
       if (tab == 'archived') return cv.isArchived;
       if (cv.isArchived) return false;
+      if (tab == 'requests') return false;
+      if (tab.startsWith('folder:')) {
+        final id = tab.substring(7);
+        final folder = folders.where((f) => f.id == id).firstOrNull;
+        return folder?.matches(cv) ?? false;
+      }
       return tab == 'private'
           ? cv.type == 'private'
           : tab == 'groups'
@@ -187,7 +198,10 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
               : tab == 'channels'
                   ? cv.type == 'channel'
                   : true;
-    }).length;
+    }).fold<int>(0, (sum, cv) {
+      if (cv.isMutedEffective) return sum;
+      return sum + cv.visibleUnreadCount + (cv.manuallyUnread ? 1 : 0);
+    });
   }
 
   @override
@@ -195,28 +209,41 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     final c = AlsamosColors.of(context);
     final theme = Theme.of(context);
     final convState = ref.watch(conversationsProvider);
+    final folders = ref.watch(chatFoldersProvider).valueOrNull ?? const [];
+    final tabs = _tabs();
     final allConvs = convState.valueOrNull ?? [];
     final counts = {
-      for (final tab in _tabs) tab.$1: _countForTab(allConvs, tab.$1)
+      for (final tab in tabs) tab.$1: _countForTab(allConvs, tab.$1, folders)
     };
     final convs = allConvs.where((cv) {
       if (widget.tab == 'archived') return cv.isArchived;
-      if (widget.tab == 'requests') return false;
-      final typeMatch = widget.tab == 'private'
-          ? cv.type == 'private'
-          : widget.tab == 'groups'
-              ? cv.type == 'group'
-              : widget.tab == 'channels'
-                  ? cv.type == 'channel'
-                  : true;
-      if (!typeMatch) return false;
       if (cv.isArchived) return false;
+      if (widget.tab == 'requests') return false;
+      if (widget.tab.startsWith('folder:')) {
+        final id = widget.tab.substring(7);
+        final folder = folders.where((f) => f.id == id).firstOrNull;
+        if (folder == null || !folder.matches(cv)) return false;
+      } else {
+        final typeMatch = widget.tab == 'private'
+            ? cv.type == 'private'
+            : widget.tab == 'groups'
+                ? cv.type == 'group'
+                : widget.tab == 'channels'
+                    ? cv.type == 'channel'
+                    : true;
+        if (!typeMatch) return false;
+      }
       final name = cv.title.toLowerCase();
       return widget.query.isEmpty || name.contains(widget.query.toLowerCase());
     }).toList()
       ..sort((a, b) {
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
+        if (a.isPinned && b.isPinned) {
+          final po =
+              (a.pinnedOrder ?? 1 << 30).compareTo(b.pinnedOrder ?? 1 << 30);
+          if (po != 0) return po;
+        }
         return b.lastMessageAt.compareTo(a.lastMessageAt);
       });
 
@@ -294,9 +321,22 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
                 onTap: () => _showNewChatDialog(context),
                 c: c),
           ]),
+          if (widget.query.trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _showGlobalMessageSearch(
+                  context,
+                  widget.query.trim(),
+                  allConvs,
+                ),
+                icon: const Icon(LucideIcons.search, size: 16),
+                label: Text('"${widget.query.trim()}" xabarlar ichidan izlash'),
+              ),
+            ),
           const SizedBox(height: 12),
           _MessagesSegmentedTabs(
-            tabs: _tabs,
+            tabs: tabs,
             current: widget.tab,
             counts: counts,
             onChanged: widget.onTabChange,
@@ -354,6 +394,34 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     );
   }
 
+  Future<void> _showGlobalMessageSearch(
+    BuildContext context,
+    String initialQuery,
+    List<Conversation> conversations,
+  ) async {
+    final userId = ref.read(authProvider).user?.id;
+    if (userId == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _GlobalMessageSearchSheet(
+        userId: userId,
+        initialQuery: initialQuery,
+        conversations: conversations,
+        onOpen: (message) {
+          final conv = conversations
+              .where((item) => item.id == message.conversationId)
+              .firstOrNull;
+          if (conv == null) return;
+          pendingMessageHighlights[conv.id] = message.id;
+          Navigator.pop(ctx);
+          widget.onSelect(conv);
+        },
+      ),
+    );
+  }
+
   // ignore: unused_element
   Future<void> _clearMessagesCache() async {
     final ok = await showDialog<bool>(
@@ -387,13 +455,181 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
     }
     if (!mounted) return;
     await ref.read(conversationsProvider.notifier).load();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Messages cache tozalandi')),
-    );
+    AppToast.success(context, 'Messages cache tozalandi');
   }
 }
 
 // ─── Chat List Item ──────────────────────────────────────────────────────────
+class _GlobalMessageSearchSheet extends ConsumerStatefulWidget {
+  const _GlobalMessageSearchSheet({
+    required this.userId,
+    required this.initialQuery,
+    required this.conversations,
+    required this.onOpen,
+  });
+
+  final String userId;
+  final String initialQuery;
+  final List<Conversation> conversations;
+  final ValueChanged<Message> onOpen;
+
+  @override
+  ConsumerState<_GlobalMessageSearchSheet> createState() =>
+      _GlobalMessageSearchSheetState();
+}
+
+class _GlobalMessageSearchSheetState
+    extends ConsumerState<_GlobalMessageSearchSheet> {
+  late final TextEditingController _query;
+  String? _filter;
+  Future<List<Message>>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _query = TextEditingController(text: widget.initialQuery);
+    _search();
+  }
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  void _search() {
+    final q = _query.text.trim();
+    if (q.isEmpty) return;
+    setState(() {
+      _future = ref.read(messagesRepositoryProvider).globalMessageSearch(
+            userId: widget.userId,
+            query: q,
+            mediaType: _filter,
+          );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.82,
+      minChildSize: 0.45,
+      maxChildSize: 0.96,
+      builder: (_, controller) => Container(
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(children: [
+          Row(children: [
+            const Icon(LucideIcons.search),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('Global xabar qidiruvi',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            ),
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(LucideIcons.x),
+            ),
+          ]),
+          TextField(
+            controller: _query,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => _search(),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(LucideIcons.search),
+              suffixIcon: IconButton(
+                onPressed: _search,
+                icon: const Icon(LucideIcons.arrowRight),
+              ),
+              hintText: 'Xabar, #hashtag yoki havola izlash',
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 38,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final item in const [
+                  (null, 'Hammasi'),
+                  ('image', 'Media'),
+                  ('file', 'Fayllar'),
+                  ('link', 'Linklar'),
+                  ('audio', 'Audio'),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: Text(item.$2),
+                      selected: _filter == item.$1,
+                      onSelected: (_) {
+                        setState(() => _filter = item.$1);
+                        _search();
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: FutureBuilder<List<Message>>(
+              future: _future,
+              builder: (_, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final results = snap.data ?? const [];
+                if (results.isEmpty) {
+                  return Center(
+                    child: Text('Natija yo‘q',
+                        style: TextStyle(color: c.mutedForeground)),
+                  );
+                }
+                return ListView.separated(
+                  controller: controller,
+                  itemCount: results.length,
+                  separatorBuilder: (_, __) => Divider(color: c.border),
+                  itemBuilder: (_, i) {
+                    final m = results[i];
+                    final conv = widget.conversations
+                        .where((item) => item.id == m.conversationId)
+                        .firstOrNull;
+                    return ListTile(
+                      leading: Icon(
+                        m.mediaType == null
+                            ? LucideIcons.messageCircle
+                            : LucideIcons.paperclip,
+                      ),
+                      title: Text(conv?.title ?? 'Suhbat',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                        m.content?.trim().isNotEmpty == true
+                            ? m.content!.trim()
+                            : (m.mediaType ?? 'media'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Text(DateFormat('dd.MM').format(m.createdAt)),
+                      onTap: () => widget.onOpen(m),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 class _MessagesSegmentedTabs extends StatelessWidget {
   final List<(String, String)> tabs;
   final String current;
@@ -412,38 +648,41 @@ class _MessagesSegmentedTabs extends StatelessWidget {
     final c = AlsamosColors.of(context);
 
     return SizedBox(
-      height: 40,
-      child: LayoutBuilder(builder: (context, constraints) {
-        final minWidth = tabs.length * 76.0;
-        final useScrollable = constraints.maxWidth < minWidth;
-        final content = SizedBox(
-          width: useScrollable ? minWidth : constraints.maxWidth,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(
-                  bottom: BorderSide(color: c.border.withValues(alpha: 0.45))),
-            ),
-            child: Row(children: [
-              for (final tab in tabs)
-                Expanded(
-                  child: _MessagesSegmentButton(
+      height: 48,
+      width: double.infinity,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: c.card.withValues(alpha: 0.74),
+            borderRadius: BorderRadius.circular(23),
+            border: Border.all(color: c.border.withValues(alpha: 0.34)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              children: [
+                for (final tab in tabs)
+                  _MessagesSegmentButton(
                     label: tab.$2,
                     count: counts[tab.$1] ?? 0,
                     selected: tab.$1 == current,
                     onTap: () => onChanged(tab.$1),
                   ),
-                ),
-            ]),
+              ],
+            ),
           ),
-        );
-
-        if (!useScrollable) return content;
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: content,
-        );
-      }),
+        ),
+      ),
     );
   }
 }
@@ -465,83 +704,65 @@ class _MessagesSegmentButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final theme = Theme.of(context);
-    final textColor = selected ? theme.colorScheme.primary : c.mutedForeground;
-    final showCount = count > 0;
+    final textColor = selected ? c.foreground : c.mutedForeground;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: selected ? null : onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Stack(children: [
-          Center(
-            child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 160),
-              curve: Curves.easeOut,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 13,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                letterSpacing: 0,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                      child: Text(label,
-                          maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 160),
-                    transitionBuilder: (child, animation) =>
-                        ScaleTransition(scale: animation, child: child),
-                    child: showCount
-                        ? Container(
-                            key: ValueKey('$label$count$selected'),
-                            margin: const EdgeInsets.only(left: 5),
-                            constraints: const BoxConstraints(
-                                minWidth: 18, minHeight: 18),
-                            padding: const EdgeInsets.symmetric(horizontal: 5),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? theme.colorScheme.primary
-                                  : c.mutedForeground.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(9),
-                            ),
-                            child: Text(
-                              count > 99 ? '99+' : '$count',
-                              style: TextStyle(
-                                color: selected
-                                    ? theme.colorScheme.onPrimary
-                                    : c.mutedForeground,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w800,
-                                height: 1,
-                              ),
-                            ),
-                          )
-                        : const SizedBox.shrink(key: ValueKey('empty')),
+    return Padding(
+      padding: const EdgeInsets.only(left: 1, right: 1),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: selected ? null : onTap,
+          borderRadius: BorderRadius.circular(20),
+          hoverColor: c.muted.withValues(alpha: 0.46),
+          splashColor: theme.colorScheme.primary.withValues(alpha: 0.08),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            height: 38,
+            padding: const EdgeInsets.symmetric(horizontal: 13),
+            constraints: const BoxConstraints(minWidth: 76),
+            decoration: BoxDecoration(
+              color: selected
+                  ? c.background.withValues(alpha: 0.92)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(19),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.07),
+                        blurRadius: 14,
+                        offset: const Offset(0, 7),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    letterSpacing: 0,
+                  ),
+                  child: Text(label, maxLines: 1, softWrap: false),
+                ),
+                if (count > 0) ...[
+                  const SizedBox(width: 6),
+                  shared_badges.CountBadge(
+                    count: count,
+                    height: 16,
+                    subdued: !selected,
+                    color: selected ? theme.colorScheme.primary : null,
                   ),
                 ],
-              ),
+              ],
             ),
           ),
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            left: selected ? 8 : 22,
-            right: selected ? 8 : 22,
-            bottom: 0,
-            height: selected ? 2 : 0,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary,
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ),
-        ]),
+        ),
       ),
     );
   }
@@ -652,7 +873,8 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
         !isSelf &&
         otherId != null &&
         ref.watch(isUserOnlineProvider(otherId));
-    final unread = conv.unreadCount > 0;
+    final unread = conv.visibleUnreadCount > 0 || conv.manuallyUnread;
+    final mentionCount = conv.mentionCount;
 
     if (widget.isCompact) {
       return Tooltip(
@@ -671,31 +893,25 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
               alignment: Alignment.center,
               child: Stack(clipBehavior: Clip.none, children: [
                 _Avatar(conv: conv, size: 44, online: online),
-                if (unread)
+                if (unread || mentionCount > 0)
                   Positioned(
                     right: -6,
                     top: -6,
                     child: ScaleTransition(
                       scale: _pulseAnim,
-                      child: Container(
-                        constraints:
-                            const BoxConstraints(minWidth: 18, minHeight: 18),
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        decoration: BoxDecoration(
-                            color: theme.colorScheme.primary,
-                            borderRadius: BorderRadius.circular(9),
-                            border:
-                                Border.all(color: c.background, width: 1.5)),
-                        child: Text(
-                            unread
-                                ? '${conv.unreadCount > 99 ? "99+" : conv.unreadCount}'
-                                : '',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: theme.colorScheme.onPrimary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold)),
-                      ),
+                      child: mentionCount > 0
+                          ? shared_badges.CountBadge(
+                              count: 1,
+                              label: '@',
+                              height: 18,
+                              color: const Color(0xFFFF2D55),
+                            )
+                          : shared_badges.CountBadge(
+                              count: conv.visibleUnreadCount,
+                              height: 18,
+                              color: theme.colorScheme.primary,
+                              subdued: conv.isMutedEffective,
+                            ),
                     ),
                   ),
               ]),
@@ -705,102 +921,114 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
       );
     }
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onSecondaryTapDown: (d) => _showMenu(context, d.globalPosition),
-        onLongPressStart: (d) => _showMenu(context, d.globalPosition),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          color: widget.selected
-              ? theme.colorScheme.primary.withValues(alpha: 0.12)
-              : _hover
-                  ? c.muted.withValues(alpha: 0.5)
-                  : Colors.transparent,
-          child: InkWell(
-            onTap: widget.onTap,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                  border: Border(
-                      bottom:
-                          BorderSide(color: c.border.withValues(alpha: 0.2)))),
-              child: Row(children: [
-                _Avatar(conv: conv, size: 48, online: online),
-                const SizedBox(width: 10),
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Row(children: [
-                        Expanded(
-                            child: Row(children: [
-                          Flexible(
-                              child: Text(
-                                  isSelf ? 'Saqlangan xabarlar' : conv.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      fontWeight: unread
-                                          ? FontWeight.w700
-                                          : FontWeight.w600,
-                                      fontSize: 14))),
-                          if (conv.isVerified == true) ...[
-                            const SizedBox(width: 3),
-                            const VerifiedBadge(size: 13)
-                          ],
-                          if (conv.isPinned) ...[
-                            const SizedBox(width: 3),
-                            Icon(LucideIcons.pin,
-                                size: 12, color: c.mutedForeground)
-                          ],
-                          if (conv.isMuted) ...[
-                            const SizedBox(width: 3),
-                            Icon(LucideIcons.volumeX,
-                                size: 12, color: c.mutedForeground)
-                          ],
-                        ])),
-                        Text(_fmt(conv.lastMessageAt),
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: unread
-                                    ? theme.colorScheme.primary
-                                    : c.mutedForeground)),
-                      ]),
-                      const SizedBox(height: 2),
-                      Row(children: [
-                        Expanded(
-                            child:
-                                _LastMessage(conv: conv, c: c, unread: unread)),
-                        if (unread) const SizedBox(width: 6),
-                        if (unread)
-                          ScaleTransition(
-                              scale: _pulseAnim,
-                              child: Container(
-                                constraints: const BoxConstraints(
-                                    minWidth: 20, minHeight: 20),
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 5),
-                                decoration: BoxDecoration(
-                                  color: conv.isMuted
-                                      ? c.mutedForeground
-                                      : theme.colorScheme.primary,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
+    return Dismissible(
+      key: ValueKey('chat-row-${conv.id}-${conv.isArchived}'),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (_) async {
+        final notifier = ref.read(conversationsProvider.notifier);
+        conv.isArchived
+            ? await notifier.unarchive(conv.id)
+            : await notifier.archive(conv.id);
+        return false;
+      },
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: theme.colorScheme.primary,
+        child: Icon(
+          conv.isArchived ? LucideIcons.archiveRestore : LucideIcons.archive,
+          color: theme.colorScheme.onPrimary,
+        ),
+      ),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onSecondaryTapDown: (d) => _showMenu(context, d.globalPosition),
+          onLongPressStart: (d) => _showMenu(context, d.globalPosition),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            color: widget.selected
+                ? theme.colorScheme.primary.withValues(alpha: 0.12)
+                : _hover
+                    ? c.muted.withValues(alpha: 0.5)
+                    : Colors.transparent,
+            child: InkWell(
+              onTap: widget.onTap,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                    border: Border(
+                        bottom: BorderSide(
+                            color: c.border.withValues(alpha: 0.2)))),
+                child: Row(children: [
+                  _Avatar(conv: conv, size: 48, online: online),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Row(children: [
+                          Expanded(
+                              child: Row(children: [
+                            Flexible(
                                 child: Text(
-                                    conv.unreadCount > 99
-                                        ? '99+'
-                                        : '${conv.unreadCount}',
-                                    textAlign: TextAlign.center,
+                                    isSelf ? 'Saqlangan xabarlar' : conv.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold)),
-                              )),
-                      ]),
-                    ])),
-              ]),
+                                        fontWeight: unread
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
+                                        fontSize: 14))),
+                            if (conv.isVerified == true) ...[
+                              const SizedBox(width: 3),
+                              const VerifiedBadge(size: 13)
+                            ],
+                            if (conv.isPinned) ...[
+                              const SizedBox(width: 3),
+                              Icon(LucideIcons.pin,
+                                  size: 12, color: c.mutedForeground)
+                            ],
+                            if (conv.isMuted) ...[
+                              const SizedBox(width: 3),
+                              Icon(LucideIcons.volumeX,
+                                  size: 12, color: c.mutedForeground)
+                            ],
+                          ])),
+                          Text(_fmt(conv.lastMessageAt),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: unread
+                                      ? theme.colorScheme.primary
+                                      : c.mutedForeground)),
+                        ]),
+                        const SizedBox(height: 2),
+                        Row(children: [
+                          Expanded(
+                              child: _LastMessage(
+                                  conv: conv, c: c, unread: unread)),
+                          if (mentionCount > 0) ...[
+                            const SizedBox(width: 6),
+                            shared_badges.CountBadge(
+                              count: 1,
+                              label: '@',
+                              color: const Color(0xFFFF2D55),
+                            ),
+                          ],
+                          if (conv.visibleUnreadCount > 0) ...[
+                            const SizedBox(width: 6),
+                            shared_badges.CountBadge(
+                              count: conv.visibleUnreadCount,
+                              color: theme.colorScheme.primary,
+                              subdued: conv.isMutedEffective,
+                            ),
+                          ],
+                        ]),
+                      ])),
+                ]),
+              ),
             ),
           ),
         ),
@@ -824,13 +1052,14 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
     HapticFeedback.lightImpact();
     final conv = widget.conversation;
     final notifier = ref.read(conversationsProvider.notifier);
+    final unread = conv.visibleUnreadCount > 0 || conv.manuallyUnread;
 
     final overlay =
         Navigator.of(context).overlay?.context.findRenderObject() as RenderBox?;
     final overlaySize = overlay?.size ?? MediaQuery.sizeOf(context);
     final anchor = overlay?.globalToLocal(pos) ?? pos;
     const menuWidth = 280.0;
-    const menuHeight = 304.0;
+    const menuHeight = 336.0;
     final panelBox = context.findRenderObject() as RenderBox?;
     final panelTopLeft = panelBox?.localToGlobal(Offset.zero) ?? Offset.zero;
     final panelSize = panelBox?.size ?? overlaySize;
@@ -867,20 +1096,37 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
           ]),
         ),
         PopupMenuItem(
-          onTap: () => notifier.toggleMute(conv.id),
+          onTap: () {
+            if (conv.isMutedEffective) {
+              notifier.unmute(conv.id);
+            } else {
+              Future.delayed(
+                const Duration(milliseconds: 80),
+                () => _showMuteDurationSheet(context, notifier, conv.id),
+              );
+            }
+          },
           child: Row(children: [
-            Icon(conv.isMuted ? LucideIcons.volume2 : LucideIcons.volumeX,
+            Icon(
+                conv.isMutedEffective
+                    ? LucideIcons.volume2
+                    : LucideIcons.volumeX,
                 size: 18),
             const SizedBox(width: 12),
-            Text(conv.isMuted ? 'Ovozni yoqish' : 'Ovozni o\'chiring')
+            Text(conv.isMutedEffective ? 'Ovozni yoqish' : 'Mute')
           ]),
         ),
         PopupMenuItem(
-          onTap: () => notifier.markAsRead(conv.id),
+          onTap: () => unread
+              ? notifier.markAsRead(conv.id)
+              : notifier.markAsUnread(conv.id),
           child: Row(children: [
-            const Icon(LucideIcons.checkCheck, size: 18),
+            Icon(unread ? LucideIcons.checkCheck : LucideIcons.circle,
+                size: 18),
             const SizedBox(width: 12),
-            const Text('O\'qilgan deb belgilash')
+            Text(unread
+                ? 'O\'qilgan deb belgilash'
+                : 'O\'qilmagan deb belgilash')
           ]),
         ),
         if (!conv.isArchived)
@@ -932,6 +1178,43 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
       ],
     );
   }
+
+  void _showMuteDurationSheet(
+    BuildContext context,
+    ConversationsNotifier notifier,
+    String conversationId,
+  ) {
+    final c = AlsamosColors.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: c.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          _muteTile(ctx, '1 soat',
+              () => notifier.setMute(conversationId, const Duration(hours: 1))),
+          _muteTile(ctx, '8 soat',
+              () => notifier.setMute(conversationId, const Duration(hours: 8))),
+          _muteTile(ctx, '2 kun',
+              () => notifier.setMute(conversationId, const Duration(days: 2))),
+          _muteTile(
+              ctx, 'Doimiy', () => notifier.setMute(conversationId, null)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _muteTile(BuildContext context, String label, VoidCallback action) =>
+      ListTile(
+        leading: const Icon(LucideIcons.bellOff, size: 18),
+        title: Text(label),
+        onTap: () {
+          Navigator.pop(context);
+          action();
+        },
+      );
 }
 
 // ─── Avatar widget ────────────────────────────────────────────────────────────
@@ -950,40 +1233,46 @@ class _Avatar extends StatelessWidget {
     final avatarUrl = conv.type == 'private'
         ? conv.otherParticipant?.avatarUrl
         : conv.avatarUrl;
-    Widget avatar = avatarUrl != null && avatarUrl.isNotEmpty
-        ? CircleAvatar(
-            radius: size / 2, backgroundImage: NetworkImage(avatarUrl))
-        : CircleAvatar(
-            radius: size / 2,
-            backgroundColor: theme.colorScheme.primary,
-            child: Icon(
-              isSelf
-                  ? LucideIcons.bookmark
-                  : isGroup
-                      ? LucideIcons.users
-                      : isChannel
-                          ? LucideIcons.megaphone
-                          : null,
-              size: size * 0.42,
-              color: Colors.white,
-            ),
-          );
-    if (avatarUrl == null || avatarUrl.isEmpty) {
-      if (!isSelf && !isGroup && !isChannel) {
-        final name = conv.title;
+    Widget avatar;
+    if (!isSelf && !isGroup && !isChannel) {
+      avatar = StoryAvatarRing(
+        userId: conv.otherParticipant?.id,
+        avatarUrl: avatarUrl,
+        fallback: conv.title.isNotEmpty ? conv.title[0].toUpperCase() : '?',
+        size: size,
+        backgroundColor: theme.colorScheme.primary,
+      );
+    } else {
+      if (avatarUrl != null && avatarUrl.isNotEmpty) {
+        avatar = StoryAvatarRing(
+          userId: null,
+          avatarUrl: avatarUrl,
+          fallback: conv.title.isNotEmpty ? conv.title[0].toUpperCase() : '?',
+          size: size,
+          backgroundColor: theme.colorScheme.primary,
+        );
+      } else {
         avatar = CircleAvatar(
           radius: size / 2,
           backgroundColor: theme.colorScheme.primary,
-          child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: size * 0.38,
-                  fontWeight: FontWeight.w600)),
+          child: Icon(
+            isSelf
+                ? LucideIcons.bookmark
+                : isGroup
+                    ? LucideIcons.users
+                    : LucideIcons.megaphone,
+            size: size * 0.42,
+            color: Colors.white,
+          ),
         );
       }
     }
     return Stack(clipBehavior: Clip.none, children: [
-      SizedBox(width: size, height: size, child: avatar),
+      SizedBox(
+        width: size + 8,
+        height: size + 8,
+        child: Center(child: avatar),
+      ),
       if (online)
         Positioned(
             right: 1,
@@ -1123,17 +1412,29 @@ class _HeaderBtn extends StatelessWidget {
       message: tooltip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
-          width: 36,
-          height: 36,
+          width: 44,
+          height: 44,
           margin: const EdgeInsets.only(left: 4),
           decoration: BoxDecoration(
             color: isPrimary ? theme.colorScheme.primary : c.muted,
-            shape: BoxShape.circle,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isPrimary
+                  ? theme.colorScheme.primary.withValues(alpha: 0.48)
+                  : c.border.withValues(alpha: 0.46),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isPrimary ? 0.09 : 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
           child: Icon(icon,
-              size: 16,
+              size: 18,
               color: isPrimary ? theme.colorScheme.onPrimary : c.foreground),
         ),
       ),

@@ -4,7 +4,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../app/theme/app_theme.dart';
-import '../../../../shared/widgets/user_avatar.dart';
+import '../../../../shared/stories/story_avatar_ring.dart';
 
 class GroupReadReceiptEntry {
   final String userId;
@@ -85,7 +85,13 @@ class _GroupReadReceiptsState extends State<GroupReadReceipts> {
             final e = _entries[i];
             final name = e.displayName ?? e.username ?? 'User';
             return ListTile(
-              leading: UserAvatar(avatarUrl: e.avatarUrl, fallback: name[0].toUpperCase(), size: 38, backgroundColor: primary),
+              leading: StoryAvatarRing(
+                userId: e.userId,
+                avatarUrl: e.avatarUrl,
+                fallback: name[0].toUpperCase(),
+                size: 38,
+                backgroundColor: primary,
+              ),
               title: Text(name, style: const TextStyle(fontSize: 14)),
               trailing: Text(DateFormat.Hm().format(e.readAt), style: TextStyle(fontSize: 11, color: colors.mutedForeground)),
             );
