@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../../core/data/base_repository.dart';
@@ -8,6 +10,8 @@ import '../models/post_model.dart';
 /// joined with `profiles`, handles like/unlike and pagination.
 class PostsRepository extends BaseRepository {
   static const _pageSize = 10;
+  static const _primaryQueryTimeout = Duration(seconds: 8);
+  static const _fallbackQueryTimeout = Duration(seconds: 12);
   final SupabaseDataSource _db;
 
   const PostsRepository({SupabaseDataSource db = const SupabaseDataSource()})
@@ -24,14 +28,7 @@ class PostsRepository extends BaseRepository {
       guard('fetchPosts', () async {
         final from = page * _pageSize;
         final to = from + _pageSize - 1;
-        final data = await _db
-            .table('posts')
-            .select(_selectQuery)
-            .eq('visibility', 'public')
-            .order('is_pinned', ascending: false)
-            .order('created_at', ascending: false)
-            .range(from, to)
-            .timeout(const Duration(seconds: 10));
+        final data = await _fetchPublicPostRows(from: from, to: to);
 
         final userId = _db.auth.currentUser?.id;
         var posts = (data as List)
@@ -89,6 +86,87 @@ class PostsRepository extends BaseRepository {
         }
         return posts;
       });
+
+  Future<List<Map<String, dynamic>>> _fetchPublicPostRows({
+    required int from,
+    required int to,
+  }) async {
+    try {
+      final rows = await _db
+          .table('posts')
+          .select(_selectQuery)
+          .eq('visibility', 'public')
+          .order('is_pinned', ascending: false)
+          .order('created_at', ascending: false)
+          .range(from, to)
+          .timeout(_primaryQueryTimeout);
+      return _mapRows(rows);
+    } on TimeoutException catch (error) {
+      debugPrint(
+        '[PostsRepository] rich public feed query timed out; '
+        'retrying without profile embed: $error',
+      );
+      return _fetchPublicPostRowsWithoutEmbed(from: from, to: to);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchPublicPostRowsWithoutEmbed({
+    required int from,
+    required int to,
+  }) async {
+    final rows = await _db
+        .table('posts')
+        .select('*')
+        .eq('visibility', 'public')
+        .order('is_pinned', ascending: false)
+        .order('created_at', ascending: false)
+        .range(from, to)
+        .timeout(_fallbackQueryTimeout);
+    return _hydratePostProfiles(_mapRows(rows));
+  }
+
+  Future<List<Map<String, dynamic>>> _hydratePostProfiles(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final userIds = rows
+        .map((row) => row['user_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (userIds.isEmpty) return rows;
+
+    try {
+      final profileRows = await _db
+          .table('profiles')
+          .select('id, username, display_name, avatar_url, is_verified')
+          .inFilter('id', userIds)
+          .timeout(_fallbackQueryTimeout);
+      final profilesById = {
+        for (final profile in _mapRows(profileRows))
+          if (profile['id'] != null) profile['id'].toString(): profile,
+      };
+      return [
+        for (final row in rows)
+          {
+            ...row,
+            if (profilesById[row['user_id']?.toString()] != null)
+              'profile': profilesById[row['user_id']?.toString()],
+          },
+      ];
+    } catch (error) {
+      debugPrint('[PostsRepository] profile fallback hydrate skipped: $error');
+      return rows;
+    }
+  }
+
+  List<Map<String, dynamic>> _mapRows(Object? rows) {
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
 
   Future<List<Post>> fetchTrendingPublicPosts({int limit = 8}) =>
       guard('fetchTrendingPublicPosts', () async {

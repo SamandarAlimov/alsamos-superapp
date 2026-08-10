@@ -130,27 +130,7 @@ class MessagesRepository {
         }
       }
 
-      if (lastMsgMap.isEmpty) {
-        for (var i = 0; i < ids.length; i += 50) {
-          final chunk = ids.sublist(i, (i + 50).clamp(0, ids.length));
-          final rows = await supabase
-              .rpc('get_last_messages', params: {
-                'p_conversation_ids': chunk,
-              })
-              .timeout(const Duration(seconds: 5))
-              .onError((_, __) => <dynamic>[]);
-          if (rows is List) {
-            for (final row in rows) {
-              final cid = row['conversation_id'] as String?;
-              if (cid == null) continue;
-              lastMsgMap.putIfAbsent(cid, () => row['content'] as String?);
-            }
-          }
-        }
-        if (lastMsgMap.isEmpty) {
-          lastMsgMap.addAll(await _fetchLastMessagesWithoutRpc(ids));
-        }
-      }
+      await _fillMissingLastMessages(ids, lastMsgMap);
 
       final result = <Conversation>[];
       for (final conv in convos) {
@@ -225,6 +205,47 @@ class MessagesRepository {
     }
   }
 
+  Future<void> _fillMissingLastMessages(
+    List<String> ids,
+    Map<String, String?> lastMsgMap,
+  ) async {
+    var missingIds = _missingLastMessageIds(ids, lastMsgMap);
+    if (missingIds.isEmpty) return;
+
+    for (var i = 0; i < missingIds.length; i += 50) {
+      final chunk = missingIds.sublist(i, (i + 50).clamp(0, missingIds.length));
+      final rows = await supabase
+          .rpc('get_last_messages', params: {
+            'p_conversation_ids': chunk,
+          })
+          .timeout(const Duration(seconds: 5))
+          .onError((_, __) => <dynamic>[]);
+      if (rows is List) {
+        for (final row in rows) {
+          final cid = row['conversation_id'] as String?;
+          if (cid == null) continue;
+          final content = row['content'] as String?;
+          if (content == null || content.trim().isEmpty) continue;
+          lastMsgMap[cid] = content;
+        }
+      }
+    }
+
+    missingIds = _missingLastMessageIds(ids, lastMsgMap);
+    if (missingIds.isNotEmpty) {
+      lastMsgMap.addAll(await _fetchLastMessagesWithoutRpc(missingIds));
+    }
+  }
+
+  List<String> _missingLastMessageIds(
+    List<String> ids,
+    Map<String, String?> lastMsgMap,
+  ) =>
+      ids.where((id) {
+        final value = lastMsgMap[id];
+        return value == null || value.trim().isEmpty;
+      }).toList(growable: false);
+
   Future<Map<String, String?>> _fetchLastMessagesWithoutRpc(
       List<String> conversationIds) async {
     final byConversation = <String, String?>{};
@@ -291,13 +312,7 @@ class MessagesRepository {
   Future<List<Message>> fetchMessages(
       String conversationId, String? userId) async {
     try {
-      final data = await supabase
-          .from('messages')
-          .select(
-              '*, sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)')
-          .eq('conversation_id', conversationId)
-          .order('created_at', ascending: true)
-          .timeout(const Duration(seconds: 10));
+      final data = await _fetchMessageRows(conversationId);
 
       final msgs = await _hydratePrivateMediaUrls(await _hydrateThumbnailCache(
         data.map<Message>((m) => Message.fromMap(m)).toList(),
@@ -312,6 +327,76 @@ class MessagesRepository {
       debugPrint('[MessagesRepo] Stack trace: $st');
       rethrow;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchMessageRows(
+    String conversationId,
+  ) async {
+    try {
+      final rows = await supabase
+          .from('messages')
+          .select(
+              '*, sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)')
+          .eq('conversation_id', conversationId)
+          .order('created_at', ascending: true)
+          .timeout(const Duration(seconds: 8));
+      return _mapRows(rows);
+    } on TimeoutException catch (error) {
+      debugPrint(
+        '[MessagesRepo] rich messages query timed out; '
+        'retrying without sender embed: $error',
+      );
+      final rows = await supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .order('created_at', ascending: true)
+          .timeout(const Duration(seconds: 12));
+      return _hydrateMessageSenders(_mapRows(rows));
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _hydrateMessageSenders(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final senderIds = rows
+        .map((row) => row['sender_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (senderIds.isEmpty) return rows;
+
+    try {
+      final profileRows = await supabase
+          .from('profiles')
+          .select('id, username, display_name, avatar_url')
+          .inFilter('id', senderIds)
+          .timeout(const Duration(seconds: 12));
+      final profilesById = {
+        for (final profile in _mapRows(profileRows))
+          if (profile['id'] != null) profile['id'].toString(): profile,
+      };
+      return [
+        for (final row in rows)
+          {
+            ...row,
+            if (profilesById[row['sender_id']?.toString()] != null)
+              'sender': profilesById[row['sender_id']?.toString()],
+          },
+      ];
+    } catch (error) {
+      debugPrint('[MessagesRepo] sender fallback hydrate skipped: $error');
+      return rows;
+    }
+  }
+
+  List<Map<String, dynamic>> _mapRows(Object? rows) {
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
   }
 
   Future<List<Message>> _hydrateThumbnailCache(List<Message> messages) async {
