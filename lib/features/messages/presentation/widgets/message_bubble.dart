@@ -68,7 +68,6 @@ class MessageBubble extends ConsumerWidget {
       this.reactions = const [],
       this.onToggleReaction,
       this.onReactionSummaryTap,
-
       this.onPollVote,
       this.onTranslate,
       this.onTranscribe,
@@ -575,23 +574,6 @@ class MessageBubble extends ConsumerWidget {
                                   muted: isMine
                                       ? fg.withValues(alpha: 0.72)
                                       : c.mutedForeground,
-                                ),
-                              if ((message.content?.isNotEmpty ?? false) &&
-                                  onTranslate != null)
-                                _TinyAction(
-                                  icon: LucideIcons.languages,
-                                  label: 'Tarjima',
-                                  foreground: fg,
-                                  onTap: onTranslate!,
-                                ),
-                              if ((message.mediaType == 'voice' ||
-                                      message.mediaType == 'audio') &&
-                                  onTranscribe != null)
-                                _TinyAction(
-                                  icon: LucideIcons.fileAudio,
-                                  label: 'Matnga',
-                                  foreground: fg,
-                                  onTap: onTranscribe!,
                                 ),
                             ],
                           ),
@@ -1440,46 +1422,6 @@ class _InlineInsight extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      );
-}
-
-class _TinyAction extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color foreground;
-  final VoidCallback onTap;
-  const _TinyAction({
-    required this.icon,
-    required this.label,
-    required this.foreground,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(99),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 13, color: foreground.withValues(alpha: 0.78)),
-                const SizedBox(width: 4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: foreground.withValues(alpha: 0.78),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       );
 }
