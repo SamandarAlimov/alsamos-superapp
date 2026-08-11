@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../app/theme/app_theme.dart';
+import '../communication/emoji/animated_emoji.dart';
 
 class ReactionGroup {
   final String emoji;
@@ -76,7 +77,7 @@ class MessageReactionChips extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(r.emoji, style: const TextStyle(fontSize: 12)),
+                    AnimatedEmoji(emoji: r.emoji, size: 14),
                     const SizedBox(width: 3),
                     Text(
                       '${r.count}',
@@ -115,6 +116,15 @@ class MessageReactionChips extends StatelessWidget {
 /// v34: uzun bosish reaksiya tanlash bar'i (Telegram/Instagram uslubida).
 /// O'zi `OverlayEntry` ko'rinishida chiqariladi (`MessageReactionsOverlay.show`).
 class MessageReactionsOverlay {
+  static const List<String> animatedDefaultEmojis = [
+    '\u{2764}\u{FE0F}',
+    '\u{1F602}',
+    '\u{1F62E}',
+    '\u{1F622}',
+    '\u{1F620}',
+    '\u{1F44D}',
+  ];
+
   static const List<String> defaultEmojis = [
     '❤️',
     '😂',
@@ -136,7 +146,7 @@ class MessageReactionsOverlay {
     hide();
     final overlay = Overlay.of(context);
     final size = MediaQuery.of(context).size;
-    final list = emojis ?? defaultEmojis;
+    final list = emojis ?? animatedDefaultEmojis;
     // Bar kengligi: 6 ta 36px emoji + paddings + plus tugma
     const barHeight = 48.0;
     final barWidth = list.length * 38.0 + 16 + (onAddMore != null ? 38 : 0);
@@ -238,7 +248,7 @@ class _ReactionBar extends StatelessWidget {
                   height: 36,
                   margin: const EdgeInsets.symmetric(horizontal: 1),
                   alignment: Alignment.center,
-                  child: Text(e, style: const TextStyle(fontSize: 24)),
+                  child: AnimatedEmoji(emoji: e, size: 30),
                 ),
               ),
             if (onAddMore != null)

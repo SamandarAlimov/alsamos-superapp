@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../app/theme/app_theme.dart';
+import '../../../../shared/communication/emoji/animated_emoji.dart';
 import '../../../../shared/widgets/message_reactions_bar.dart';
 import '../../data/models/message_model.dart';
 import '../../data/models/message_interaction_model.dart' as mi;
@@ -11,34 +12,34 @@ final _timeFmt = DateFormat('HH:mm');
 
 final _emojiPattern = RegExp(
   r'(?:'
-  r'[\u{1F1E0}-\u{1F1FF}]{2}'                       // flag sequences
+  r'[\u{1F1E0}-\u{1F1FF}]{2}' // flag sequences
   r'|[\u{0023}\u{002A}\u{0030}-\u{0039}]\u{FE0F}?\u{20E3}' // keycap
-  r'|[\u{1F600}-\u{1F64F}]'                          // emoticons
-  r'|[\u{1F300}-\u{1F5FF}]'                          // misc symbols
-  r'|[\u{1F680}-\u{1F6FF}]'                          // transport
-  r'|[\u{1F700}-\u{1F77F}]'                          // alchemical
-  r'|[\u{1F780}-\u{1F7FF}]'                          // geometric extended
-  r'|[\u{1F800}-\u{1F8FF}]'                          // supplemental arrows
-  r'|[\u{1F900}-\u{1F9FF}]'                          // supplemental symbols
-  r'|[\u{1FA00}-\u{1FA6F}]'                          // chess symbols
-  r'|[\u{1FA70}-\u{1FAFF}]'                          // symbols extended-A
-  r'|[\u{2600}-\u{26FF}]'                            // misc symbols
-  r'|[\u{2700}-\u{27BF}]'                            // dingbats
-  r'|[\u{2300}-\u{23FF}]'                            // misc technical
-  r'|[\u{2B05}-\u{2B07}]'                            // arrows
-  r'|[\u{2B1B}-\u{2B1C}]'                            // squares
-  r'|[\u{2B50}]'                                     // star
-  r'|[\u{2B55}]'                                     // circle
-  r'|[\u{3030}]'                                     // wavy dash
-  r'|[\u{303D}]'                                     // part alternation mark
-  r'|[\u{3297}]'                                     // circled ideograph congratulation
-  r'|[\u{3299}]'                                     // circled ideograph secret
-  r'|[\u{00A9}\u{00AE}]'                             // copyright/registered
-  r'|[\u{200D}]'                                     // ZWJ
-  r'|[\u{FE0F}]'                                     // variation selector
-  r'|[\u{20E3}]'                                     // combining enclosing keycap
-  r'|[\u{E0020}-\u{E007F}]'                          // tags
-  r'|[\u{1F3FB}-\u{1F3FF}]'                          // skin tone modifiers
+  r'|[\u{1F600}-\u{1F64F}]' // emoticons
+  r'|[\u{1F300}-\u{1F5FF}]' // misc symbols
+  r'|[\u{1F680}-\u{1F6FF}]' // transport
+  r'|[\u{1F700}-\u{1F77F}]' // alchemical
+  r'|[\u{1F780}-\u{1F7FF}]' // geometric extended
+  r'|[\u{1F800}-\u{1F8FF}]' // supplemental arrows
+  r'|[\u{1F900}-\u{1F9FF}]' // supplemental symbols
+  r'|[\u{1FA00}-\u{1FA6F}]' // chess symbols
+  r'|[\u{1FA70}-\u{1FAFF}]' // symbols extended-A
+  r'|[\u{2600}-\u{26FF}]' // misc symbols
+  r'|[\u{2700}-\u{27BF}]' // dingbats
+  r'|[\u{2300}-\u{23FF}]' // misc technical
+  r'|[\u{2B05}-\u{2B07}]' // arrows
+  r'|[\u{2B1B}-\u{2B1C}]' // squares
+  r'|[\u{2B50}]' // star
+  r'|[\u{2B55}]' // circle
+  r'|[\u{3030}]' // wavy dash
+  r'|[\u{303D}]' // part alternation mark
+  r'|[\u{3297}]' // circled ideograph congratulation
+  r'|[\u{3299}]' // circled ideograph secret
+  r'|[\u{00A9}\u{00AE}]' // copyright/registered
+  r'|[\u{200D}]' // ZWJ
+  r'|[\u{FE0F}]' // variation selector
+  r'|[\u{20E3}]' // combining enclosing keycap
+  r'|[\u{E0020}-\u{E007F}]' // tags
+  r'|[\u{1F3FB}-\u{1F3FF}]' // skin tone modifiers
   r')',
   unicode: true,
 );
@@ -72,6 +73,15 @@ int countEmojis(String text) {
   final stripped = text.replaceAll(RegExp(r'\s'), '');
   if (stripped.isEmpty) return 0;
   return _emojiSequence.allMatches(stripped).length;
+}
+
+List<String> emojiSequences(String text) {
+  final stripped = text.replaceAll(RegExp(r'\s'), '');
+  if (stripped.isEmpty) return const [];
+  return _emojiSequence
+      .allMatches(stripped)
+      .map((match) => match.group(0)!)
+      .toList(growable: false);
 }
 
 class StandaloneEmojiMessage extends StatefulWidget {
@@ -109,25 +119,30 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
     );
     _scaleAnim = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(begin: 0.0, end: 1.12).chain(CurveTween(curve: Curves.easeOutBack)),
+        tween: Tween(begin: 0.0, end: 1.12)
+            .chain(CurveTween(curve: Curves.easeOutBack)),
         weight: 60,
       ),
       TweenSequenceItem(
-        tween: Tween(begin: 1.12, end: 1.0).chain(CurveTween(curve: Curves.easeInOut)),
+        tween: Tween(begin: 1.12, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
         weight: 40,
       ),
     ]).animate(_animCtrl);
     _bounceAnim = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween(begin: 0.0, end: -4.0).chain(CurveTween(curve: Curves.easeOut)),
+        tween: Tween(begin: 0.0, end: -4.0)
+            .chain(CurveTween(curve: Curves.easeOut)),
         weight: 30,
       ),
       TweenSequenceItem(
-        tween: Tween(begin: -4.0, end: 2.0).chain(CurveTween(curve: Curves.easeInOut)),
+        tween: Tween(begin: -4.0, end: 2.0)
+            .chain(CurveTween(curve: Curves.easeInOut)),
         weight: 35,
       ),
       TweenSequenceItem(
-        tween: Tween(begin: 2.0, end: 0.0).chain(CurveTween(curve: Curves.easeIn)),
+        tween:
+            Tween(begin: 2.0, end: 0.0).chain(CurveTween(curve: Curves.easeIn)),
         weight: 35,
       ),
     ]).animate(_animCtrl);
@@ -153,7 +168,8 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
   Widget build(BuildContext context) {
     final c = AlsamosColors.of(context);
     final text = widget.message.content ?? '';
-    final emojiCount = countEmojis(text);
+    final emojis = emojiSequences(text);
+    final emojiCount = emojis.isEmpty ? countEmojis(text) : emojis.length;
     final fontSize = _emojiSize(emojiCount);
 
     return GestureDetector(
@@ -194,13 +210,18 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
                           ),
                         );
                       },
-                      child: Text(
-                        text.trim(),
-                        style: TextStyle(
-                          fontSize: fontSize,
-                          height: 1.2,
-                          letterSpacing: 2,
-                        ),
+                      child: Wrap(
+                        alignment: widget.isMine
+                            ? WrapAlignment.end
+                            : WrapAlignment.start,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: emojiCount > 2 ? 2 : 4,
+                        runSpacing: 0,
+                        children: [
+                          for (final emoji
+                              in emojis.isEmpty ? [text.trim()] : emojis)
+                            AnimatedEmoji(emoji: emoji, size: fontSize),
+                        ],
                       ),
                     ),
                   ),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/app_theme.dart';
+import 'animated_emoji.dart';
 import 'emoji_manager.dart';
 
 enum EmojiPickerStyle { sheet, inline, compact }
@@ -182,7 +183,8 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
           _manager.toggleFavorite(emojis[i]);
         },
         child: Center(
-            child: Text(emojis[i], style: const TextStyle(fontSize: 26))),
+          child: AnimatedEmoji(emoji: emojis[i], size: 30),
+        ),
       ),
     );
   }
