@@ -284,32 +284,37 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: c.border.withValues(alpha: 0.5)),
               ),
-              child: TextField(
-                controller: _searchCtrl,
-                onChanged: widget.onQueryChange,
-                style: TextStyle(fontSize: 14, color: c.foreground),
-                decoration: InputDecoration(
-                  hintText: 'Izlash...',
-                  hintStyle: TextStyle(color: c.mutedForeground, fontSize: 14),
-                  prefixIcon: Icon(LucideIcons.search,
-                      size: 18, color: c.mutedForeground),
-                  suffixIcon: widget.query.isNotEmpty
-                      ? IconButton(
-                          icon: Icon(LucideIcons.x,
-                              size: 16, color: c.mutedForeground),
-                          onPressed: () {
-                            _searchCtrl.clear();
-                            widget.onQueryChange('');
-                          },
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  disabledBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  focusedErrorBorder: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
+              clipBehavior: Clip.antiAlias,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: TextField(
+                  controller: _searchCtrl,
+                  onChanged: widget.onQueryChange,
+                  style: TextStyle(fontSize: 14, color: c.foreground),
+                  decoration: InputDecoration(
+                    hintText: 'Izlash...',
+                    hintStyle:
+                        TextStyle(color: c.mutedForeground, fontSize: 14),
+                    prefixIcon: Icon(LucideIcons.search,
+                        size: 18, color: c.mutedForeground),
+                    suffixIcon: widget.query.isNotEmpty
+                        ? IconButton(
+                            icon: Icon(LucideIcons.x,
+                                size: 16, color: c.mutedForeground),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              widget.onQueryChange('');
+                            },
+                          )
+                        : null,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
                 ),
               ),
             )),
@@ -715,6 +720,8 @@ class _MessagesSegmentButton extends StatelessWidget {
       padding: const EdgeInsets.only(left: 1, right: 1),
       child: Material(
         color: Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: selected ? null : onTap,
           borderRadius: BorderRadius.circular(20),
@@ -888,38 +895,46 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
         child: GestureDetector(
           onSecondaryTapDown: (d) => _showMenu(context, d.globalPosition),
           onLongPressStart: (d) => _showMenu(context, d.globalPosition),
-          child: InkWell(
-            onTap: widget.onTap,
-            child: Container(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            child: Material(
               color: widget.selected
                   ? theme.colorScheme.primary.withValues(alpha: 0.15)
-                  : null,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              alignment: Alignment.center,
-              child: Stack(clipBehavior: Clip.none, children: [
-                _Avatar(conv: conv, size: 44, online: online),
-                if (unread || mentionCount > 0)
-                  Positioned(
-                    right: -6,
-                    top: -6,
-                    child: ScaleTransition(
-                      scale: _pulseAnim,
-                      child: mentionCount > 0
-                          ? shared_badges.CountBadge(
-                              count: 1,
-                              label: '@',
-                              height: 18,
-                              color: const Color(0xFFFF2D55),
-                            )
-                          : shared_badges.CountBadge(
-                              count: conv.visibleUnreadCount,
-                              height: 18,
-                              color: theme.colorScheme.primary,
-                              subdued: conv.isMutedEffective,
-                            ),
-                    ),
-                  ),
-              ]),
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(18),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: widget.onTap,
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  alignment: Alignment.center,
+                  child: Stack(clipBehavior: Clip.none, children: [
+                    _Avatar(conv: conv, size: 44, online: online),
+                    if (unread || mentionCount > 0)
+                      Positioned(
+                        right: -6,
+                        top: -6,
+                        child: ScaleTransition(
+                          scale: _pulseAnim,
+                          child: mentionCount > 0
+                              ? shared_badges.CountBadge(
+                                  count: 1,
+                                  label: '@',
+                                  height: 18,
+                                  color: const Color(0xFFFF2D55),
+                                )
+                              : shared_badges.CountBadge(
+                                  count: conv.visibleUnreadCount,
+                                  height: 18,
+                                  color: theme.colorScheme.primary,
+                                  subdued: conv.isMutedEffective,
+                                ),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
             ),
           ),
         ),
@@ -951,88 +966,109 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
         child: GestureDetector(
           onSecondaryTapDown: (d) => _showMenu(context, d.globalPosition),
           onLongPressStart: (d) => _showMenu(context, d.globalPosition),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            color: widget.selected
-                ? theme.colorScheme.primary.withValues(alpha: 0.12)
-                : _hover
-                    ? c.muted.withValues(alpha: 0.5)
-                    : Colors.transparent,
-            child: InkWell(
-              onTap: widget.onTap,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                    border: Border(
-                        bottom: BorderSide(
-                            color: c.border.withValues(alpha: 0.2)))),
-                child: Row(children: [
-                  _Avatar(conv: conv, size: 48, online: online),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        Row(children: [
-                          Expanded(
-                              child: Row(children: [
-                            Flexible(
-                                child: Text(
-                                    isSelf ? 'Saqlangan xabarlar' : conv.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        fontWeight: unread
-                                            ? FontWeight.w700
-                                            : FontWeight.w600,
-                                        fontSize: 14))),
-                            if (conv.isVerified == true) ...[
-                              const SizedBox(width: 3),
-                              const VerifiedBadge(size: 13)
-                            ],
-                            if (conv.isPinned) ...[
-                              const SizedBox(width: 3),
-                              Icon(LucideIcons.pin,
-                                  size: 12, color: c.mutedForeground)
-                            ],
-                            if (conv.isMuted) ...[
-                              const SizedBox(width: 3),
-                              Icon(LucideIcons.volumeX,
-                                  size: 12, color: c.mutedForeground)
-                            ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOutCubic,
+              decoration: BoxDecoration(
+                color: widget.selected
+                    ? theme.colorScheme.primary.withValues(alpha: 0.12)
+                    : _hover
+                        ? c.muted.withValues(alpha: 0.5)
+                        : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: widget.onTap,
+                  borderRadius: BorderRadius.circular(18),
+                  hoverColor: Colors.transparent,
+                  highlightColor:
+                      theme.colorScheme.primary.withValues(alpha: 0.06),
+                  splashColor:
+                      theme.colorScheme.primary.withValues(alpha: 0.08),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                        border: Border(
+                            bottom: BorderSide(
+                                color: c.border.withValues(alpha: 0.2)))),
+                    child: Row(children: [
+                      _Avatar(conv: conv, size: 48, online: online),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Row(children: [
+                              Expanded(
+                                  child: Row(children: [
+                                Flexible(
+                                    child: Text(
+                                        isSelf
+                                            ? 'Saqlangan xabarlar'
+                                            : conv.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            fontWeight: unread
+                                                ? FontWeight.w700
+                                                : FontWeight.w600,
+                                            fontSize: 14))),
+                                if (conv.isVerified == true) ...[
+                                  const SizedBox(width: 3),
+                                  const VerifiedBadge(size: 13)
+                                ],
+                                if (conv.isPinned) ...[
+                                  const SizedBox(width: 3),
+                                  Icon(LucideIcons.pin,
+                                      size: 12, color: c.mutedForeground)
+                                ],
+                                if (conv.isMuted) ...[
+                                  const SizedBox(width: 3),
+                                  Icon(LucideIcons.volumeX,
+                                      size: 12, color: c.mutedForeground)
+                                ],
+                              ])),
+                              Text(_fmt(conv.lastMessageAt),
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: unread
+                                          ? theme.colorScheme.primary
+                                          : c.mutedForeground)),
+                            ]),
+                            const SizedBox(height: 2),
+                            Row(children: [
+                              Expanded(
+                                  child: _LastMessage(
+                                      conv: conv, c: c, unread: unread)),
+                              if (mentionCount > 0) ...[
+                                const SizedBox(width: 6),
+                                shared_badges.CountBadge(
+                                  count: 1,
+                                  label: '@',
+                                  color: const Color(0xFFFF2D55),
+                                ),
+                              ],
+                              if (conv.visibleUnreadCount > 0) ...[
+                                const SizedBox(width: 6),
+                                shared_badges.CountBadge(
+                                  count: conv.visibleUnreadCount,
+                                  color: theme.colorScheme.primary,
+                                  subdued: conv.isMutedEffective,
+                                ),
+                              ],
+                            ]),
                           ])),
-                          Text(_fmt(conv.lastMessageAt),
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: unread
-                                      ? theme.colorScheme.primary
-                                      : c.mutedForeground)),
-                        ]),
-                        const SizedBox(height: 2),
-                        Row(children: [
-                          Expanded(
-                              child: _LastMessage(
-                                  conv: conv, c: c, unread: unread)),
-                          if (mentionCount > 0) ...[
-                            const SizedBox(width: 6),
-                            shared_badges.CountBadge(
-                              count: 1,
-                              label: '@',
-                              color: const Color(0xFFFF2D55),
-                            ),
-                          ],
-                          if (conv.visibleUnreadCount > 0) ...[
-                            const SizedBox(width: 6),
-                            shared_badges.CountBadge(
-                              count: conv.visibleUnreadCount,
-                              color: theme.colorScheme.primary,
-                              subdued: conv.isMutedEffective,
-                            ),
-                          ],
-                        ]),
-                      ])),
-                ]),
+                    ]),
+                  ),
+                ),
               ),
             ),
           ),
