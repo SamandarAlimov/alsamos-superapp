@@ -124,6 +124,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
   late final MessagesNotifier _messagesNotifier;
   final Map<String, _UploadTask> _uploads = {};
   String? _savedTagFilter;
+  bool _edgeSwipeActive = false;
+  double _edgeSwipeProgress = 0;
+  bool _nextUnreadNavigationQueued = false;
 
   @override
   void initState() {
@@ -163,6 +166,79 @@ class _ChatPageState extends ConsumerState<ChatPage>
     if (shouldShow != _showScrollToBottom) {
       setState(() => _showScrollToBottom = shouldShow);
     }
+  }
+
+  bool _canStartBackSwipe(DragStartDetails details) {
+    if (widget.embedded || _isSelectionMode) return false;
+    if (_focusNode.hasFocus) return false;
+    return details.localPosition.dx <= 36;
+  }
+
+  void _handleBackSwipeStart(DragStartDetails details) {
+    if (!_canStartBackSwipe(details)) return;
+    setState(() {
+      _edgeSwipeActive = true;
+      _edgeSwipeProgress = 0;
+    });
+  }
+
+  void _handleBackSwipeUpdate(DragUpdateDetails details) {
+    if (!_edgeSwipeActive) return;
+    final next = (_edgeSwipeProgress + (details.primaryDelta ?? 0))
+        .clamp(0.0, 140.0)
+        .toDouble();
+    if (next != _edgeSwipeProgress) {
+      setState(() => _edgeSwipeProgress = next);
+    }
+  }
+
+  void _handleBackSwipeEnd([DragEndDetails? details]) {
+    if (!_edgeSwipeActive) return;
+    final shouldPop = _edgeSwipeProgress >= 72;
+    setState(() {
+      _edgeSwipeActive = false;
+      _edgeSwipeProgress = 0;
+    });
+    if (shouldPop) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  Conversation? _nextUnreadChannel(List<Conversation> conversations) {
+    if (conversations.isEmpty) return null;
+    final channels = conversations
+        .where((conversation) =>
+            conversation.type == 'channel' && !conversation.isArchived)
+        .toList();
+    if (channels.isEmpty) return null;
+    final currentIndex = channels
+        .indexWhere((conversation) => conversation.id == widget.conversationId);
+    final ordered = <Conversation>[
+      if (currentIndex >= 0) ...channels.skip(currentIndex + 1),
+      if (currentIndex >= 0) ...channels.take(currentIndex),
+      if (currentIndex < 0) ...channels,
+    ];
+    for (final conversation in ordered) {
+      if (conversation.hasUnread && !conversation.isMutedEffective) {
+        return conversation;
+      }
+    }
+    return null;
+  }
+
+  void _openNextUnreadChannel(Conversation conversation) {
+    if (!mounted || _nextUnreadNavigationQueued) return;
+    _nextUnreadNavigationQueued = true;
+    ref
+        .read(conversationsProvider.notifier)
+        .markReadLocally(widget.conversationId);
+    context
+        .push('/messages/${conversation.id}', extra: conversation)
+        .whenComplete(
+      () {
+        if (mounted) _nextUnreadNavigationQueued = false;
+      },
+    );
   }
 
   // ignore: unused_element
@@ -2352,11 +2428,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final theme = Theme.of(context);
     final userId = ref.watch(authProvider).user?.id;
     final state = ref.watch(messagesProvider(widget.conversationId));
+    final conversations =
+        ref.watch(conversationsProvider).valueOrNull ?? const <Conversation>[];
     final showDeleted =
         ref.watch(showDeletedMessagesProvider).valueOrNull ?? false;
-    final conv = widget.conversation;
+    final conv = widget.conversation ??
+        conversations
+            .where((conversation) => conversation.id == widget.conversationId)
+            .firstOrNull;
     final isGroup = conv?.type == 'group';
     final isChannel = conv?.type == 'channel';
+    final nextUnreadChannel =
+        isChannel ? _nextUnreadChannel(conversations) : null;
     final isSelf = conv?.isSelfChat ?? false;
     final otherId = conv?.otherParticipant?.id;
     final online = conv?.type == 'private' &&
@@ -2419,541 +2502,603 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
     return Scaffold(
       backgroundColor: c.background,
-      body: Stack(children: [
-        ChatWallpaper(conversationId: widget.conversationId),
-        Column(children: [
-          // === ChatHeader or Selection Toolbar ===
-          _isSelectionMode
-              ? _SelectionToolbar(
-                  count: _selectedMessages.length,
-                  topInset: topInset,
-                  onClose: _exitSelectionMode,
-                  onForward:
-                      _selectedMessages.isEmpty ? null : _forwardSelected,
-                  onDelete: _selectedMessages.isEmpty ? null : _deleteSelected,
-                )
-              : Container(
-                  height: headerHeight,
-                  padding: EdgeInsets.fromLTRB(8, topInset, 8, 0),
-                  decoration: BoxDecoration(
-                      color: c.card,
-                      border: Border(bottom: BorderSide(color: c.border))),
-                  child: Row(children: [
-                    if (!widget.embedded)
-                      IconButton(
-                          icon: const Icon(LucideIcons.arrowLeft, size: 22),
-                          onPressed: () => Navigator.of(context).maybePop())
-                    else
-                      const SizedBox(width: 12),
-                    Expanded(
-                      child: InkWell(
-                        onTap: () {
-                          if (conv?.type == 'private' &&
-                              conv?.otherParticipant != null) {
-                            final usernameOrId =
-                                conv!.otherParticipant!.username ??
-                                    conv.otherParticipant!.id;
-                            context.push('/user/$usernameOrId');
-                          } else if (conv != null &&
-                              (conv.type == 'group' ||
-                                  conv.type == 'channel')) {
-                            showModalBottomSheet(
-                              context: context,
-                              isScrollControlled: true,
-                              backgroundColor: Colors.transparent,
-                              builder: (ctx) => _GroupProfileSheet(conv: conv),
-                            );
-                          }
-                        },
-                        child: Row(
-                          children: [
-                            _headerAvatar(conv, isGroup, isChannel, isSelf,
-                                online, c, theme),
-                            const SizedBox(width: 10),
-                            Expanded(
-                                child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                  Row(children: [
-                                    Flexible(
-                                        child: Text(
-                                      isSelf
-                                          ? 'Saqlangan xabarlar'
-                                          : (conv?.title ?? 'Suhbat'),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600),
-                                    )),
-                                    if (conv?.isVerified == true) ...[
-                                      const SizedBox(width: 4),
-                                      const VerifiedBadge(size: 14)
-                                    ],
-                                  ]),
-                                  Text(
-                                      state.isTyping
-                                          ? typingText()
-                                          : statusText(),
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: state.isTyping
-                                              ? theme.colorScheme.primary
-                                              : c.mutedForeground)),
-                                ])),
-                          ],
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: _handleBackSwipeStart,
+        onHorizontalDragUpdate: _handleBackSwipeUpdate,
+        onHorizontalDragEnd: _handleBackSwipeEnd,
+        onHorizontalDragCancel: () => _handleBackSwipeEnd(),
+        child: Stack(children: [
+          ChatWallpaper(conversationId: widget.conversationId),
+          Column(children: [
+            // === ChatHeader or Selection Toolbar ===
+            _isSelectionMode
+                ? _SelectionToolbar(
+                    count: _selectedMessages.length,
+                    topInset: topInset,
+                    onClose: _exitSelectionMode,
+                    onForward:
+                        _selectedMessages.isEmpty ? null : _forwardSelected,
+                    onDelete:
+                        _selectedMessages.isEmpty ? null : _deleteSelected,
+                  )
+                : Container(
+                    height: headerHeight,
+                    padding: EdgeInsets.fromLTRB(8, topInset, 8, 0),
+                    decoration: BoxDecoration(
+                        color: c.card,
+                        border: Border(bottom: BorderSide(color: c.border))),
+                    child: Row(children: [
+                      if (!widget.embedded)
+                        IconButton(
+                            icon: const Icon(LucideIcons.arrowLeft, size: 22),
+                            onPressed: () => Navigator.of(context).maybePop())
+                      else
+                        const SizedBox(width: 12),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () {
+                            if (conv?.type == 'private' &&
+                                conv?.otherParticipant != null) {
+                              final usernameOrId =
+                                  conv!.otherParticipant!.username ??
+                                      conv.otherParticipant!.id;
+                              context.push('/user/$usernameOrId');
+                            } else if (conv != null &&
+                                (conv.type == 'group' ||
+                                    conv.type == 'channel')) {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                backgroundColor: Colors.transparent,
+                                builder: (ctx) =>
+                                    _GroupProfileSheet(conv: conv),
+                              );
+                            }
+                          },
+                          child: Row(
+                            children: [
+                              _headerAvatar(conv, isGroup, isChannel, isSelf,
+                                  online, c, theme),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                    Row(children: [
+                                      Flexible(
+                                          child: Text(
+                                        isSelf
+                                            ? 'Saqlangan xabarlar'
+                                            : (conv?.title ?? 'Suhbat'),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600),
+                                      )),
+                                      if (conv?.isVerified == true) ...[
+                                        const SizedBox(width: 4),
+                                        const VerifiedBadge(size: 14)
+                                      ],
+                                    ]),
+                                    Text(
+                                        state.isTyping
+                                            ? typingText()
+                                            : statusText(),
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: state.isTyping
+                                                ? theme.colorScheme.primary
+                                                : c.mutedForeground)),
+                                  ])),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(LucideIcons.phone, size: 20),
-                      tooltip: "Audio qo'ng'iroq",
-                      onPressed: () => _startCall(type: 'audio'),
-                    ),
-                    IconButton(
-                      icon: const Icon(LucideIcons.video, size: 20),
-                      tooltip: 'Video qo\'ng\'iroq',
-                      onPressed: () => _startCall(type: 'video'),
-                    ),
-                    PopupMenuButton<String>(
-                      icon: const Icon(LucideIcons.moreVertical, size: 20),
-                      color: c.card,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                      elevation: 8,
-                      onSelected: (val) => _handleChatMenuAction(val, c),
-                      itemBuilder: (ctx) => [
-                        PopupMenuItem(
-                            value: 'search',
-                            child: Row(children: [
-                              Icon(LucideIcons.search,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Izlash')
-                            ])),
-                        PopupMenuItem(
-                            value: 'pin',
-                            child: Row(children: [
-                              Icon(
-                                  conv?.isPinned == true
-                                      ? LucideIcons.pinOff
-                                      : LucideIcons.pin,
-                                  size: 18,
-                                  color: c.foreground),
-                              const SizedBox(width: 12),
-                              Text(conv?.isPinned == true
-                                  ? "Pin'ni olib tashlash"
-                                  : "Pin qilish")
-                            ])),
-                        PopupMenuItem(
-                            value: 'mute',
-                            child: Row(children: [
-                              Icon(
-                                  conv?.isMuted == true
-                                      ? LucideIcons.bell
-                                      : LucideIcons.bellOff,
-                                  size: 18,
-                                  color: c.foreground),
-                              const SizedBox(width: 12),
-                              Text(conv?.isMuted == true
-                                  ? "Ovozni yoqish"
-                                  : "Ovozni o'chirish")
-                            ])),
-                        PopupMenuItem(
-                            value: 'read',
-                            child: Row(children: [
-                              Icon(LucideIcons.checkCheck,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text("O'qilgan deb belgilash")
-                            ])),
-                        PopupMenuItem(
-                            value: 'unread',
-                            child: Row(children: [
-                              Icon(LucideIcons.mailOpen,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text("O'qilmagan deb belgilash")
-                            ])),
-                        PopupMenuItem(
-                            value: 'manage',
-                            child: Row(children: [
-                              Icon(LucideIcons.shieldCheck,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Boshqaruv')
-                            ])),
-                        PopupMenuItem(
-                            value: 'export',
-                            child: Row(children: [
-                              Icon(LucideIcons.download,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Ma’lumotlarni eksport')
-                            ])),
-                        PopupMenuItem(
-                            value: 'scheduled',
-                            child: Row(children: [
-                              Icon(LucideIcons.clock,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Rejalashtirilgan xabarlar')
-                            ])),
-                        PopupMenuItem(
-                            value: 'archive',
-                            child: Row(children: [
-                              Icon(LucideIcons.archive,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Arxivga')
-                            ])),
-                        PopupMenuItem(
-                            value: 'locations',
-                            child: Row(children: [
-                              Icon(LucideIcons.mapPin,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Joylashuvlar tarixi')
-                            ])),
-                        PopupMenuItem(
-                            value: 'wallpaper',
-                            child: Row(children: [
-                              Icon(LucideIcons.image,
-                                  size: 18, color: c.foreground),
-                              const SizedBox(width: 12),
-                              const Text('Fon rasmini o‘zgartirish')
-                            ])),
-                        const PopupMenuDivider(),
-                        PopupMenuItem(
-                            value: 'delete',
-                            child: Row(children: [
-                              const Icon(LucideIcons.trash2,
-                                  size: 18, color: Colors.red),
-                              const SizedBox(width: 12),
-                              const Text("Suhbatni o'chirish",
-                                  style: TextStyle(color: Colors.red))
-                            ])),
-                      ],
-                    ),
-                  ]),
-                ),
-          if (_showMessageSearch)
-            MessageSearchInConversation(
-              key: ValueKey(_messageSearchInitialQuery),
-              initialQuery: _messageSearchInitialQuery,
-              messages: msgs
-                  .where(
-                      (m) => !m.isDeleted && (m.content?.isNotEmpty ?? false))
-                  .map((m) => InConversationMessage(
-                        id: m.id,
-                        content: m.content ?? '',
-                        createdAt: m.createdAt,
-                      ))
-                  .toList(),
-              onHighlight: (id) => _scrollToMessage(id, msgs),
-              onClose: () => setState(() {
-                _showMessageSearch = false;
-                _messageSearchInitialQuery = '';
-              }),
-            ),
-          if (isSelf)
-            _SavedTagFilterBar(
-              selected: _savedTagFilter,
-              onChanged: (tag) => setState(() => _savedTagFilter = tag),
-            ),
-          // === Pinned messages bar (web: PinnedMessagesBar between ChatHeader and list) ===
-          // v37: real provider — `pinned_messages` Supabase table via pinnedMessagesProvider.
-          Consumer(
-            builder: (ctx, ref2, _) {
-              final asyncPinned =
-                  ref2.watch(pinnedMessagesProvider(widget.conversationId));
-              return asyncPinned.when(
-                data: (items) => PinnedMessagesBar(
-                  pinnedMessages: items,
-                  onUnpin: (pinnedRowId) async {
-                    await ref2
-                        .read(messagesRepositoryProvider)
-                        .unpinMessage(pinnedRowId);
-                    // Refresh after unpin
-                    // ignore: unused_result
-                    ref2.refresh(pinnedMessagesProvider(widget.conversationId));
-                  },
-                  onUnpinAll: () async {
-                    await ref2
-                        .read(messagesRepositoryProvider)
-                        .unpinAllMessages(widget.conversationId);
-                    // ignore: unused_result
-                    ref2.refresh(pinnedMessagesProvider(widget.conversationId));
-                  },
-                  onScrollTo: (messageId) {
-                    _scrollToMessage(messageId, msgs);
-                  },
-                ),
-                loading: () => const SizedBox.shrink(),
-                error: (_, __) => const SizedBox.shrink(),
-              );
-            },
-          ),
-          if (_uploads.isNotEmpty)
-            _UploadQueueBar(
-              tasks: _uploads.values.toList(),
-              onCancel: _cancelUpload,
-              onRetry: (id) {
-                final task = _uploads[id];
-                if (task == null) return;
-                setState(() => _uploads.remove(id));
-                task.retry();
+                      IconButton(
+                        icon: const Icon(LucideIcons.phone, size: 20),
+                        tooltip: "Audio qo'ng'iroq",
+                        onPressed: () => _startCall(type: 'audio'),
+                      ),
+                      IconButton(
+                        icon: const Icon(LucideIcons.video, size: 20),
+                        tooltip: 'Video qo\'ng\'iroq',
+                        onPressed: () => _startCall(type: 'video'),
+                      ),
+                      PopupMenuButton<String>(
+                        icon: const Icon(LucideIcons.moreVertical, size: 20),
+                        color: c.card,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                        elevation: 8,
+                        onSelected: (val) => _handleChatMenuAction(val, c),
+                        itemBuilder: (ctx) => [
+                          PopupMenuItem(
+                              value: 'search',
+                              child: Row(children: [
+                                Icon(LucideIcons.search,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Izlash')
+                              ])),
+                          PopupMenuItem(
+                              value: 'pin',
+                              child: Row(children: [
+                                Icon(
+                                    conv?.isPinned == true
+                                        ? LucideIcons.pinOff
+                                        : LucideIcons.pin,
+                                    size: 18,
+                                    color: c.foreground),
+                                const SizedBox(width: 12),
+                                Text(conv?.isPinned == true
+                                    ? "Pin'ni olib tashlash"
+                                    : "Pin qilish")
+                              ])),
+                          PopupMenuItem(
+                              value: 'mute',
+                              child: Row(children: [
+                                Icon(
+                                    conv?.isMuted == true
+                                        ? LucideIcons.bell
+                                        : LucideIcons.bellOff,
+                                    size: 18,
+                                    color: c.foreground),
+                                const SizedBox(width: 12),
+                                Text(conv?.isMuted == true
+                                    ? "Ovozni yoqish"
+                                    : "Ovozni o'chirish")
+                              ])),
+                          PopupMenuItem(
+                              value: 'read',
+                              child: Row(children: [
+                                Icon(LucideIcons.checkCheck,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text("O'qilgan deb belgilash")
+                              ])),
+                          PopupMenuItem(
+                              value: 'unread',
+                              child: Row(children: [
+                                Icon(LucideIcons.mailOpen,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text("O'qilmagan deb belgilash")
+                              ])),
+                          PopupMenuItem(
+                              value: 'manage',
+                              child: Row(children: [
+                                Icon(LucideIcons.shieldCheck,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Boshqaruv')
+                              ])),
+                          PopupMenuItem(
+                              value: 'export',
+                              child: Row(children: [
+                                Icon(LucideIcons.download,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Ma’lumotlarni eksport')
+                              ])),
+                          PopupMenuItem(
+                              value: 'scheduled',
+                              child: Row(children: [
+                                Icon(LucideIcons.clock,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Rejalashtirilgan xabarlar')
+                              ])),
+                          PopupMenuItem(
+                              value: 'archive',
+                              child: Row(children: [
+                                Icon(LucideIcons.archive,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Arxivga')
+                              ])),
+                          PopupMenuItem(
+                              value: 'locations',
+                              child: Row(children: [
+                                Icon(LucideIcons.mapPin,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Joylashuvlar tarixi')
+                              ])),
+                          PopupMenuItem(
+                              value: 'wallpaper',
+                              child: Row(children: [
+                                Icon(LucideIcons.image,
+                                    size: 18, color: c.foreground),
+                                const SizedBox(width: 12),
+                                const Text('Fon rasmini o‘zgartirish')
+                              ])),
+                          const PopupMenuDivider(),
+                          PopupMenuItem(
+                              value: 'delete',
+                              child: Row(children: [
+                                const Icon(LucideIcons.trash2,
+                                    size: 18, color: Colors.red),
+                                const SizedBox(width: 12),
+                                const Text("Suhbatni o'chirish",
+                                    style: TextStyle(color: Colors.red))
+                              ])),
+                        ],
+                      ),
+                    ]),
+                  ),
+            if (_showMessageSearch)
+              MessageSearchInConversation(
+                key: ValueKey(_messageSearchInitialQuery),
+                initialQuery: _messageSearchInitialQuery,
+                messages: msgs
+                    .where(
+                        (m) => !m.isDeleted && (m.content?.isNotEmpty ?? false))
+                    .map((m) => InConversationMessage(
+                          id: m.id,
+                          content: m.content ?? '',
+                          createdAt: m.createdAt,
+                        ))
+                    .toList(),
+                onHighlight: (id) => _scrollToMessage(id, msgs),
+                onClose: () => setState(() {
+                  _showMessageSearch = false;
+                  _messageSearchInitialQuery = '';
+                }),
+              ),
+            if (isSelf)
+              _SavedTagFilterBar(
+                selected: _savedTagFilter,
+                onChanged: (tag) => setState(() => _savedTagFilter = tag),
+              ),
+            // === Pinned messages bar (web: PinnedMessagesBar between ChatHeader and list) ===
+            // v37: real provider — `pinned_messages` Supabase table via pinnedMessagesProvider.
+            Consumer(
+              builder: (ctx, ref2, _) {
+                final asyncPinned =
+                    ref2.watch(pinnedMessagesProvider(widget.conversationId));
+                return asyncPinned.when(
+                  data: (items) => PinnedMessagesBar(
+                    pinnedMessages: items,
+                    onUnpin: (pinnedRowId) async {
+                      await ref2
+                          .read(messagesRepositoryProvider)
+                          .unpinMessage(pinnedRowId);
+                      // Refresh after unpin
+                      // ignore: unused_result
+                      ref2.refresh(
+                          pinnedMessagesProvider(widget.conversationId));
+                    },
+                    onUnpinAll: () async {
+                      await ref2
+                          .read(messagesRepositoryProvider)
+                          .unpinAllMessages(widget.conversationId);
+                      // ignore: unused_result
+                      ref2.refresh(
+                          pinnedMessagesProvider(widget.conversationId));
+                    },
+                    onScrollTo: (messageId) {
+                      _scrollToMessage(messageId, msgs);
+                    },
+                  ),
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                );
               },
             ),
-          // === Messages list with scroll-to-bottom button ===
-          Expanded(
-            child: Stack(
-              children: [
-                // Messages list
-                state.isLoading
-                    ? Center(
-                        child:
-                            Column(mainAxisSize: MainAxisSize.min, children: [
-                        CircularProgressIndicator(
-                            color: theme.colorScheme.primary),
-                        const SizedBox(height: 16),
-                        Text('Xabarlar yuklanmoqda...',
-                            style: TextStyle(
-                                color: c.mutedForeground, fontSize: 14)),
-                      ]))
-                    : msgs.isEmpty
-                        ? _EmptyState(c: c)
-                        : Builder(builder: (_) {
-                            final msgsById = {for (final m in msgs) m.id: m};
-                            return ListView.builder(
-                              controller: _scrollController,
-                              reverse: true,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
-                              itemCount: msgs.length,
-                              itemBuilder: (_, i) {
-                                final idx = msgs.length - 1 - i;
-                                final m = msgs[idx];
-                                final isMine = m.senderId == userId;
-                                // ignore: unused_local_variable
-                                final next = idx + 1 < msgs.length
-                                    ? msgs[idx + 1]
-                                    : null;
-                                final prev =
-                                    idx - 1 >= 0 ? msgs[idx - 1] : null;
-                                final replyMessage = m.replyToId == null
-                                    ? null
-                                    : msgsById[m.replyToId];
-                                Offset tapPosition = Offset.zero;
-                                // Date divider when day changes.
-                                final showDayDivider = prev == null ||
-                                    _isDifferentDay(
-                                        prev.createdAt, m.createdAt);
-                                return Column(
-                                    crossAxisAlignment: isMine
-                                        ? CrossAxisAlignment.end
-                                        : CrossAxisAlignment.start,
-                                    children: [
-                                      if (showDayDivider)
-                                        _DayDivider(
-                                            label: _dayLabel(m.createdAt),
-                                            c: c),
-                                      GestureDetector(
-                                        onTapDown: (d) =>
-                                            tapPosition = d.globalPosition,
-                                        onTap: _isSelectionMode
-                                            ? () =>
-                                                _toggleMessageSelection(m.id)
-                                            : () => _onLongPress(
-                                                m, isMine, tapPosition),
-                                        onSecondaryTapDown: (d) =>
-                                            _isSelectionMode
-                                                ? null
-                                                : _onLongPress(m, isMine,
-                                                    d.globalPosition),
-                                        child: Stack(
-                                          children: [
-                                            GestureDetector(
-                                              behavior:
-                                                  HitTestBehavior.translucent,
-                                              child: AnimatedContainer(
-                                                duration: const Duration(
-                                                    milliseconds: 220),
-                                                curve: Curves.easeOutCubic,
-                                                decoration: BoxDecoration(
-                                                  color:
-                                                      _highlightedMessageId ==
-                                                              m.id
-                                                          ? theme.colorScheme
-                                                              .primary
-                                                              .withValues(
-                                                                  alpha: 0.12)
-                                                          : Colors.transparent,
-                                                  borderRadius:
-                                                      BorderRadius.circular(14),
-                                                ),
-                                                child: MessageBubble(
-                                                  message: m,
-                                                  isMine: isMine,
-                                                  replyMessage: replyMessage,
-                                                  onCommentTap: (conv?.type ==
-                                                              'channel' &&
-                                                          conv?.linkedGroupId !=
-                                                              null)
-                                                      ? () =>
-                                                          _openDiscussionForMessage(
-                                                              m, conv!)
-                                                      : null,
-                                                  onHashtagTap:
-                                                      _openHashtagSearch,
-                                                  onMediaPlaybackRequested:
-                                                      null,
-                                                  onReplyPreviewTap:
-                                                      m.replyToId == null
+            if (_uploads.isNotEmpty)
+              _UploadQueueBar(
+                tasks: _uploads.values.toList(),
+                onCancel: _cancelUpload,
+                onRetry: (id) {
+                  final task = _uploads[id];
+                  if (task == null) return;
+                  setState(() => _uploads.remove(id));
+                  task.retry();
+                },
+              ),
+            // === Messages list with scroll-to-bottom button ===
+            Expanded(
+              child: Stack(
+                children: [
+                  // Messages list
+                  state.isLoading
+                      ? Center(
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                          CircularProgressIndicator(
+                              color: theme.colorScheme.primary),
+                          const SizedBox(height: 16),
+                          Text('Xabarlar yuklanmoqda...',
+                              style: TextStyle(
+                                  color: c.mutedForeground, fontSize: 14)),
+                        ]))
+                      : msgs.isEmpty
+                          ? _EmptyState(c: c)
+                          : Builder(builder: (_) {
+                              final msgsById = {for (final m in msgs) m.id: m};
+                              return NotificationListener<
+                                  OverscrollNotification>(
+                                onNotification: (notification) {
+                                  final target = nextUnreadChannel;
+                                  if (target == null ||
+                                      _nextUnreadNavigationQueued ||
+                                      !_scrollController.hasClients) {
+                                    return false;
+                                  }
+                                  final atBottom =
+                                      _scrollController.position.pixels <= 12;
+                                  if (atBottom &&
+                                      notification.overscroll < -14) {
+                                    _openNextUnreadChannel(target);
+                                    return true;
+                                  }
+                                  return false;
+                                },
+                                child: ListView.builder(
+                                  controller: _scrollController,
+                                  reverse: true,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  itemCount: msgs.length,
+                                  itemBuilder: (_, i) {
+                                    final idx = msgs.length - 1 - i;
+                                    final m = msgs[idx];
+                                    final isMine = m.senderId == userId;
+                                    // ignore: unused_local_variable
+                                    final next = idx + 1 < msgs.length
+                                        ? msgs[idx + 1]
+                                        : null;
+                                    final prev =
+                                        idx - 1 >= 0 ? msgs[idx - 1] : null;
+                                    final replyMessage = m.replyToId == null
+                                        ? null
+                                        : msgsById[m.replyToId];
+                                    Offset tapPosition = Offset.zero;
+                                    // Date divider when day changes.
+                                    final showDayDivider = prev == null ||
+                                        _isDifferentDay(
+                                            prev.createdAt, m.createdAt);
+                                    return Column(
+                                        crossAxisAlignment: isMine
+                                            ? CrossAxisAlignment.end
+                                            : CrossAxisAlignment.start,
+                                        children: [
+                                          if (showDayDivider)
+                                            _DayDivider(
+                                                label: _dayLabel(m.createdAt),
+                                                c: c),
+                                          GestureDetector(
+                                            onTapDown: (d) =>
+                                                tapPosition = d.globalPosition,
+                                            onTap: _isSelectionMode
+                                                ? () => _toggleMessageSelection(
+                                                    m.id)
+                                                : () => _onLongPress(
+                                                    m, isMine, tapPosition),
+                                            onSecondaryTapDown: (d) =>
+                                                _isSelectionMode
+                                                    ? null
+                                                    : _onLongPress(m, isMine,
+                                                        d.globalPosition),
+                                            child: Stack(
+                                              children: [
+                                                GestureDetector(
+                                                  behavior: HitTestBehavior
+                                                      .translucent,
+                                                  child: AnimatedContainer(
+                                                    duration: const Duration(
+                                                        milliseconds: 220),
+                                                    curve: Curves.easeOutCubic,
+                                                    decoration: BoxDecoration(
+                                                      color:
+                                                          _highlightedMessageId ==
+                                                                  m.id
+                                                              ? theme
+                                                                  .colorScheme
+                                                                  .primary
+                                                                  .withValues(
+                                                                      alpha:
+                                                                          0.12)
+                                                              : Colors
+                                                                  .transparent,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              14),
+                                                    ),
+                                                    child: MessageBubble(
+                                                      message: m,
+                                                      isMine: isMine,
+                                                      replyMessage:
+                                                          replyMessage,
+                                                      onCommentTap: (conv
+                                                                      ?.type ==
+                                                                  'channel' &&
+                                                              conv?.linkedGroupId !=
+                                                                  null)
+                                                          ? () =>
+                                                              _openDiscussionForMessage(
+                                                                  m, conv!)
+                                                          : null,
+                                                      onHashtagTap:
+                                                          _openHashtagSearch,
+                                                      onMediaPlaybackRequested:
+                                                          null,
+                                                      onReplyPreviewTap: m
+                                                                  .replyToId ==
+                                                              null
                                                           ? null
                                                           : () =>
                                                               _scrollToMessage(
                                                                 m.replyToId!,
                                                                 msgs,
                                                               ),
-                                                  reactions:
-                                                      state.reactions[m.id] ??
-                                                          const [],
-                                                  onToggleReaction: (emoji) =>
-                                                      _onReact(m, emoji),
-                                                  onReactionSummaryTap:
-                                                      _showReactionUsers,
-                                                  onPollVote: (optionId) => ref
-                                                      .read(messagesProvider(
-                                                              widget
-                                                                  .conversationId)
-                                                          .notifier)
-                                                      .votePoll(m.id, optionId),
-                                                  onTranslate: () => ref
-                                                      .read(messagesProvider(
-                                                              widget
-                                                                  .conversationId)
-                                                          .notifier)
-                                                      .translate(m.id),
-                                                  onTranscribe: () => ref
-                                                      .read(messagesProvider(
-                                                              widget
-                                                                  .conversationId)
-                                                          .notifier)
-                                                      .transcribe(m.id),
-                                                  onStopLiveLocation: m
-                                                                  .mediaType ==
-                                                              'live_location' &&
-                                                          isMine
-                                                      ? () => ref
+                                                      reactions:
+                                                          state.reactions[
+                                                                  m.id] ??
+                                                              const [],
+                                                      onToggleReaction:
+                                                          (emoji) => _onReact(
+                                                              m, emoji),
+                                                      onReactionSummaryTap:
+                                                          _showReactionUsers,
+                                                      onPollVote: (optionId) => ref
                                                           .read(messagesProvider(
                                                                   widget
                                                                       .conversationId)
                                                               .notifier)
-                                                          .stopLiveLocation(
-                                                              m.id)
-                                                      : null,
-                                                  onCallTap: (type) =>
-                                                      _startCall(
-                                                    type: type == CallType.video
-                                                        ? 'video'
-                                                        : 'audio',
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                            // Selection checkbox (web isSelected indicator)
-                                            if (_isSelectionMode)
-                                              Positioned(
-                                                left: isMine ? null : 8,
-                                                right: isMine ? 8 : null,
-                                                top: 8,
-                                                child: Container(
-                                                  width: 24,
-                                                  height: 24,
-                                                  decoration: BoxDecoration(
-                                                    color: _selectedMessages
-                                                            .contains(m.id)
-                                                        ? theme
-                                                            .colorScheme.primary
-                                                        : c.card,
-                                                    shape: BoxShape.circle,
-                                                    border: Border.all(
-                                                      color: _selectedMessages
-                                                              .contains(m.id)
-                                                          ? theme.colorScheme
-                                                              .primary
-                                                          : c.border,
-                                                      width: 2,
+                                                          .votePoll(
+                                                              m.id, optionId),
+                                                      onTranslate: () => ref
+                                                          .read(messagesProvider(
+                                                                  widget
+                                                                      .conversationId)
+                                                              .notifier)
+                                                          .translate(m.id),
+                                                      onTranscribe: () => ref
+                                                          .read(messagesProvider(
+                                                                  widget
+                                                                      .conversationId)
+                                                              .notifier)
+                                                          .transcribe(m.id),
+                                                      onStopLiveLocation: m
+                                                                      .mediaType ==
+                                                                  'live_location' &&
+                                                              isMine
+                                                          ? () => ref
+                                                              .read(messagesProvider(
+                                                                      widget
+                                                                          .conversationId)
+                                                                  .notifier)
+                                                              .stopLiveLocation(
+                                                                  m.id)
+                                                          : null,
+                                                      onCallTap: (type) =>
+                                                          _startCall(
+                                                        type: type ==
+                                                                CallType.video
+                                                            ? 'video'
+                                                            : 'audio',
+                                                      ),
                                                     ),
                                                   ),
-                                                  child: _selectedMessages
-                                                          .contains(m.id)
-                                                      ? Icon(
-                                                          LucideIcons.check,
-                                                          size: 16,
-                                                          color: theme
-                                                              .colorScheme
-                                                              .onPrimary,
-                                                        )
-                                                      : null,
                                                 ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                    ]);
-                              },
-                            );
-                          }),
-                // === Scroll-to-bottom FAB ===
-                // Web: `absolute bottom-4 right-4 z-20 h-11 w-11 rounded-full bg-card border border-border shadow-lg ... transition-all active:scale-95`
-                if (_showScrollToBottom)
-                  Positioned(
-                    right: 16,
-                    bottom: 16,
-                    child: _ScrollToBottomFab(
-                      unreadCount: widget.conversation?.unreadCount ?? 0,
-                      onTap: () {
-                        _scrollController.animateTo(
-                          0,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeOut,
-                        );
-                      },
+                                                // Selection checkbox (web isSelected indicator)
+                                                if (_isSelectionMode)
+                                                  Positioned(
+                                                    left: isMine ? null : 8,
+                                                    right: isMine ? 8 : null,
+                                                    top: 8,
+                                                    child: Container(
+                                                      width: 24,
+                                                      height: 24,
+                                                      decoration: BoxDecoration(
+                                                        color: _selectedMessages
+                                                                .contains(m.id)
+                                                            ? theme.colorScheme
+                                                                .primary
+                                                            : c.card,
+                                                        shape: BoxShape.circle,
+                                                        border: Border.all(
+                                                          color: _selectedMessages
+                                                                  .contains(
+                                                                      m.id)
+                                                              ? theme
+                                                                  .colorScheme
+                                                                  .primary
+                                                              : c.border,
+                                                          width: 2,
+                                                        ),
+                                                      ),
+                                                      child: _selectedMessages
+                                                              .contains(m.id)
+                                                          ? Icon(
+                                                              LucideIcons.check,
+                                                              size: 16,
+                                                              color: theme
+                                                                  .colorScheme
+                                                                  .onPrimary,
+                                                            )
+                                                          : null,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ]);
+                                  },
+                                ),
+                              );
+                            }),
+                  if (nextUnreadChannel != null &&
+                      !_showScrollToBottom &&
+                      !state.isLoading)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 18,
+                      child: Center(
+                        child: _NextUnreadChannelPill(
+                          conversation: nextUnreadChannel,
+                          onTap: () => _openNextUnreadChannel(
+                            nextUnreadChannel,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-              ],
+                  // === Scroll-to-bottom FAB ===
+                  // Web: `absolute bottom-4 right-4 z-20 h-11 w-11 rounded-full bg-card border border-border shadow-lg ... transition-all active:scale-95`
+                  if (_showScrollToBottom)
+                    Positioned(
+                      right: 16,
+                      bottom: 16,
+                      child: _ScrollToBottomFab(
+                        unreadCount: conv?.unreadCount ?? 0,
+                        onTap: () {
+                          _scrollController.animateTo(
+                            0,
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeOut,
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          // === Reply / Editing preview ===
-          if (replyMsg != null)
-            _ReplyPreview(
-                message: replyMsg,
-                onCancel: () => ref
-                    .read(messagesProvider(widget.conversationId).notifier)
-                    .setReplyTo(null),
-                c: c,
-                theme: theme),
-          if (editingMsg != null)
-            _EditingPreview(
-                message: editingMsg,
-                onCancel: () {
-                  ref
+            // === Reply / Editing preview ===
+            if (replyMsg != null)
+              _ReplyPreview(
+                  message: replyMsg,
+                  onCancel: () => ref
                       .read(messagesProvider(widget.conversationId).notifier)
-                      .setEditing(null);
-                  _controller.clear();
-                },
-                c: c,
-                theme: theme),
-          // === Voice/Video recording UI ===
-          if (_recordingMedia) _mediaRecorderBar(c, theme),
-          // === Composer ===
-          if (!_recordingMedia) _composer(c, theme),
+                      .setReplyTo(null),
+                  c: c,
+                  theme: theme),
+            if (editingMsg != null)
+              _EditingPreview(
+                  message: editingMsg,
+                  onCancel: () {
+                    ref
+                        .read(messagesProvider(widget.conversationId).notifier)
+                        .setEditing(null);
+                    _controller.clear();
+                  },
+                  c: c,
+                  theme: theme),
+            // === Voice/Video recording UI ===
+            if (_recordingMedia) _mediaRecorderBar(c, theme),
+            // === Composer ===
+            if (!_recordingMedia) _composer(c, theme),
+          ]),
+          if (_edgeSwipeActive)
+            _BackSwipeCue(progress: _edgeSwipeProgress / 72),
         ]),
-      ]),
+      ),
     );
   }
 
@@ -3726,6 +3871,180 @@ class _EmptyState extends StatelessWidget {
 // =====================================================================
 // _ScrollToBottomFab — mirrors web `<button class="absolute bottom-4 right-4 z-20 h-11 w-11 rounded-full bg-card border border-border shadow-lg ... transition-all active:scale-95">`
 // =====================================================================
+class _BackSwipeCue extends StatelessWidget {
+  final double progress;
+  const _BackSwipeCue({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    final value = progress.clamp(0.0, 1.0);
+    return Positioned(
+      left: 12 + (value * 12),
+      top: MediaQuery.sizeOf(context).height * 0.5 - 26,
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          opacity: value,
+          duration: const Duration(milliseconds: 80),
+          child: Transform.scale(
+            scale: 0.88 + (value * 0.18),
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: c.card.withValues(alpha: 0.92),
+                shape: BoxShape.circle,
+                border: Border.all(color: c.border),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x22000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Icon(
+                LucideIcons.arrowLeft,
+                size: 24,
+                color: c.foreground,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NextUnreadChannelPill extends StatefulWidget {
+  final Conversation conversation;
+  final VoidCallback onTap;
+
+  const _NextUnreadChannelPill({
+    required this.conversation,
+    required this.onTap,
+  });
+
+  @override
+  State<_NextUnreadChannelPill> createState() => _NextUnreadChannelPillState();
+}
+
+class _NextUnreadChannelPillState extends State<_NextUnreadChannelPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AlsamosColors.of(context);
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: widget.onTap,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 360),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: c.card.withValues(alpha: 0.94),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: c.border),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1F000000),
+                blurRadius: 18,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) => Transform.translate(
+                  offset: Offset(0, -2 * _controller.value),
+                  child: child,
+                ),
+                child: Icon(
+                  LucideIcons.arrowUp,
+                  size: 17,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  "Keyingi o'qilmagan kanal",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.foreground,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  widget.conversation.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.mutedForeground,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (widget.conversation.visibleUnreadCount > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  constraints: const BoxConstraints(minWidth: 20),
+                  height: 20,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    widget.conversation.visibleUnreadCount > 99
+                        ? '99+'
+                        : '${widget.conversation.visibleUnreadCount}',
+                    style: TextStyle(
+                      color: theme.colorScheme.onPrimary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ScrollToBottomFab extends StatefulWidget {
   final int unreadCount;
   final VoidCallback onTap;
