@@ -1261,7 +1261,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final size = overlayBox?.size ?? MediaQuery.sizeOf(context);
     final localAnchor = overlayBox?.globalToLocal(anchor) ?? anchor;
     const menuWidth = 236.0;
-    final reactionWidth = size.width < 356 ? size.width - 20 : 336.0;
+    final reactionWidth = (size.width - 20).clamp(220.0, 336.0).toDouble();
     const reactionHeight = 58.0;
     final menuHeight =
         (38.0 + actions.length * 34.0 + 14.0).clamp(160.0, size.height * 0.58);
@@ -1295,10 +1295,20 @@ class _ChatPageState extends ConsumerState<ChatPage>
         Positioned(
           left: reactionLeft,
           top: reactionTop,
+          width: reactionWidth,
           child: _MessageReactionMenuBar(
             onReact: (emoji) {
               onReact(emoji);
               close();
+            },
+            onMore: () {
+              close();
+              Future<void>.microtask(() async {
+                if (!mounted) return;
+                final emoji = await EmojiPickerSheet.show(context);
+                if (emoji == null || emoji.isEmpty) return;
+                onReact(emoji);
+              });
             },
           ),
         ),
@@ -3971,7 +3981,11 @@ class _MessageMenuAction {
 
 class _MessageReactionMenuBar extends StatelessWidget {
   final ValueChanged<String> onReact;
-  const _MessageReactionMenuBar({required this.onReact});
+  final VoidCallback onMore;
+  const _MessageReactionMenuBar({
+    required this.onReact,
+    required this.onMore,
+  });
 
   static const _emojis = [
     '\u{1F44D}',
@@ -4007,42 +4021,50 @@ class _MessageReactionMenuBar extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                for (final emoji in _emojis)
-                  InkWell(
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      onReact(emoji);
-                    },
-                    borderRadius: BorderRadius.circular(24),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 140),
-                      curve: Curves.easeOutCubic,
-                      width: 42,
-                      height: 42,
-                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: c.muted.withValues(alpha: 0.45),
-                        shape: BoxShape.circle,
-                      ),
-                      child: AnimatedEmoji(
-                        emoji: emoji,
-                        size: 34,
-                        replayOnTap: false,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  for (final emoji in _emojis)
+                    InkWell(
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        onReact(emoji);
+                      },
+                      borderRadius: BorderRadius.circular(24),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        curve: Curves.easeOutCubic,
+                        width: 42,
+                        height: 42,
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: c.muted.withValues(alpha: 0.45),
+                          shape: BoxShape.circle,
+                        ),
+                        child: AnimatedEmoji(
+                          emoji: emoji,
+                          size: 34,
+                          replayOnTap: false,
+                        ),
                       ),
                     ),
+                  InkWell(
+                    onTap: onMore,
+                    borderRadius: BorderRadius.circular(24),
+                    child: Container(
+                      width: 42,
+                      height: 42,
+                      margin: const EdgeInsets.only(left: 2),
+                      decoration:
+                          BoxDecoration(color: c.muted, shape: BoxShape.circle),
+                      child: Icon(LucideIcons.plus,
+                          size: 18, color: c.mutedForeground),
+                    ),
                   ),
-                Container(
-                  width: 42,
-                  height: 42,
-                  margin: const EdgeInsets.only(left: 2),
-                  decoration:
-                      BoxDecoration(color: c.muted, shape: BoxShape.circle),
-                  child: Icon(LucideIcons.plus,
-                      size: 18, color: c.mutedForeground),
-                ),
-              ]),
+                ]),
+              ),
             ),
           ),
         ),
