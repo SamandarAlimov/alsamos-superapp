@@ -245,6 +245,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
     );
     state = state
         .copyWith(messages: [...state.messages, optimistic], replyToId: null);
+    _updateConversationPreview(state.messages);
     await _localStore.upsertMessage(optimistic);
     await _localStore.enqueue(optimistic);
     await _syncAllOutboxes();
@@ -640,6 +641,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
           _processed.add(real.id);
           final updated = _mergeMessages(state.messages, [real]);
           state = state.copyWith(messages: updated);
+          _updateConversationPreview(updated);
           await _localStore.deleteMessage(item.localId);
           await _localStore.upsertMessage(real);
           await _localStore.removeOutbox(item.localId);
