@@ -18,11 +18,12 @@ import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize sqflite FFI for desktop platforms (Windows/Linux/macOS)
-  if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.windows ||
-      defaultTargetPlatform == TargetPlatform.linux ||
-      defaultTargetPlatform == TargetPlatform.macOS)) {
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.macOS)) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
@@ -33,11 +34,12 @@ Future<void> main() async {
   );
   JustAudioMediaKit.ensureInitialized(
     linux: !kIsWeb && defaultTargetPlatform == TargetPlatform.linux,
-    windows: false,
+    windows: !kIsWeb && defaultTargetPlatform == TargetPlatform.windows,
   );
 
   // Global Flutter framework error handler
   FlutterError.onError = (FlutterErrorDetails details) {
+    if (_shouldIgnoreFrameworkNoise(details.exception)) return;
     FlutterError.presentError(details);
     crashReporting.record(details.exception, details.stack,
         context: 'FlutterError');
@@ -48,6 +50,7 @@ Future<void> main() async {
 
   // Global isolate / platform error handler (uncaught async errors)
   PlatformDispatcher.instance.onError = (error, stack) {
+    if (_shouldIgnoreFrameworkNoise(error)) return true;
     crashReporting.record(error, stack, context: 'PlatformDispatcher');
     if (kDebugMode) {
       debugPrint('PlatformError: $error\n$stack');
@@ -66,6 +69,14 @@ Future<void> main() async {
   }
 
   runApp(const ProviderScope(child: AlsamosApp()));
+}
+
+bool _shouldIgnoreFrameworkNoise(Object error) {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) return false;
+  final message = error.toString();
+  return message.contains('raw_keyboard.dart') &&
+      message.contains('Attempted to send a key down event') &&
+      message.contains('keysPressed');
 }
 
 Future<void> _initializeFirebase() async {
