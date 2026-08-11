@@ -1989,7 +1989,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
           : null;
 
       await ref.read(messagesProvider(widget.conversationId).notifier).send(
-        '📍 $label\n${pos.latitude},${pos.longitude}',
+        '$label\n${pos.latitude},${pos.longitude}',
         mediaType: live ? 'live_location' : 'location',
         metadata: {
           if (expiresAt != null)
@@ -2123,7 +2123,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       if (picked == null || !mounted) return;
       final label = picked.address ?? 'Tanlangan joy';
       await ref.read(messagesProvider(widget.conversationId).notifier).send(
-        '📍 $label\n${picked.latitude},${picked.longitude}',
+        '$label\n${picked.latitude},${picked.longitude}',
         mediaType: 'location',
         metadata: {
           'location_label': label,
@@ -2227,7 +2227,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                     () => ComposerExtras.showPollCreator(context,
                             onCreate: (q, opts) {
                           final pollText =
-                              '\ud83d\udcca $q\n${opts.map((o) => '○ $o').join('\n')}';
+                              "$q\n${opts.map((o) => '- $o').join('\n')}";
                           ref
                               .read(messagesProvider(widget.conversationId)
                                   .notifier)
