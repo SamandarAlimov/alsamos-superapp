@@ -360,9 +360,9 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet>
                         .clamp(6, 10);
                 return GridView.builder(
                   padding: EdgeInsets.fromLTRB(
-                    widget.reactionMode ? 14 : 8,
-                    widget.reactionMode ? 14 : 8,
-                    widget.reactionMode ? 14 : 8,
+                    widget.reactionMode ? 18 : 8,
+                    widget.reactionMode ? 16 : 8,
+                    widget.reactionMode ? 18 : 8,
                     24,
                   ),
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -379,19 +379,13 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet>
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 140),
                         curve: Curves.easeOutCubic,
-                        decoration: BoxDecoration(
-                          color: widget.reactionMode
-                              ? AlsamosColors.of(context)
-                                  .muted
-                                  .withValues(alpha: 0.36)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
+                        decoration:
+                            const BoxDecoration(color: Colors.transparent),
                         child: Center(
                           child: widget.reactionMode
                               ? AnimatedEmoji(
                                   emoji: emoji,
-                                  size: 46,
+                                  size: 40,
                                   animate: false,
                                   replayOnTap: false,
                                 )

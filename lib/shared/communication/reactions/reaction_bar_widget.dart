@@ -109,9 +109,9 @@ class ReactionBarWidget extends StatelessWidget {
         height: 54,
         padding: const EdgeInsets.symmetric(horizontal: 7),
         decoration: BoxDecoration(
-          color: c.card.withValues(alpha: 0.96),
+          color: c.card.withValues(alpha: 0.94),
           borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: c.border.withValues(alpha: 0.7)),
+          border: Border.all(color: c.border.withValues(alpha: 0.46)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.16),
@@ -136,17 +136,15 @@ class ReactionBarWidget extends StatelessWidget {
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 140),
                     curve: Curves.easeOutCubic,
-                    width: 46,
+                    width: 48,
                     height: 46,
                     margin: const EdgeInsets.symmetric(horizontal: 2),
                     alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: c.muted.withValues(alpha: 0.45),
-                      shape: BoxShape.circle,
-                    ),
+                    decoration: const BoxDecoration(shape: BoxShape.circle),
                     child: AnimatedEmoji(
                       emoji: e,
-                      size: 38,
+                      size: 34,
+                      animate: false,
                       replayOnTap: false,
                     ),
                   ),
@@ -156,12 +154,12 @@ class ReactionBarWidget extends StatelessWidget {
                   onTap: onAddMore,
                   borderRadius: BorderRadius.circular(20),
                   child: Container(
-                    width: 46,
+                    width: 48,
                     height: 46,
                     margin: const EdgeInsets.symmetric(horizontal: 2),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: c.muted,
+                      color: c.muted.withValues(alpha: 0.62),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(

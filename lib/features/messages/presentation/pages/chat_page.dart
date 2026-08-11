@@ -4543,9 +4543,9 @@ class _MessageReactionMenuBar extends StatelessWidget {
               height: 54,
               padding: const EdgeInsets.symmetric(horizontal: 7),
               decoration: BoxDecoration(
-                color: c.card.withValues(alpha: 0.96),
+                color: c.card.withValues(alpha: 0.94),
                 borderRadius: BorderRadius.circular(29),
-                border: Border.all(color: c.border.withValues(alpha: 0.65)),
+                border: Border.all(color: c.border.withValues(alpha: 0.46)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.16),
@@ -4568,17 +4568,15 @@ class _MessageReactionMenuBar extends StatelessWidget {
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 140),
                         curve: Curves.easeOutCubic,
-                        width: 46,
+                        width: 48,
                         height: 46,
                         margin: const EdgeInsets.symmetric(horizontal: 2),
                         alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: c.muted.withValues(alpha: 0.45),
-                          shape: BoxShape.circle,
-                        ),
+                        decoration: const BoxDecoration(shape: BoxShape.circle),
                         child: AnimatedEmoji(
                           emoji: emoji,
-                          size: 38,
+                          size: 34,
+                          animate: false,
                           replayOnTap: false,
                         ),
                       ),
@@ -4587,11 +4585,13 @@ class _MessageReactionMenuBar extends StatelessWidget {
                     onTap: onMore,
                     borderRadius: BorderRadius.circular(24),
                     child: Container(
-                      width: 46,
+                      width: 48,
                       height: 46,
                       margin: const EdgeInsets.only(left: 2),
-                      decoration:
-                          BoxDecoration(color: c.muted, shape: BoxShape.circle),
+                      decoration: BoxDecoration(
+                        color: c.muted.withValues(alpha: 0.62),
+                        shape: BoxShape.circle,
+                      ),
                       child: Icon(LucideIcons.chevronDown,
                           size: 18, color: c.mutedForeground),
                     ),

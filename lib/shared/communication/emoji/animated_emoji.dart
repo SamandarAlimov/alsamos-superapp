@@ -187,14 +187,12 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.animate) return _textFallback();
+
     final asset = _asset;
     if (asset == null) {
       AnimatedEmojiAssets.logMissing(widget.emoji);
-      return Text(
-        widget.emoji,
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: widget.size, height: 1),
-      );
+      return _textFallback();
     }
 
     final lottie = SizedBox.square(
@@ -237,6 +235,14 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
       behavior: HitTestBehavior.translucent,
       onTap: _playOnce,
       child: lottie,
+    );
+  }
+
+  Widget _textFallback() {
+    return Text(
+      widget.emoji,
+      textAlign: TextAlign.center,
+      style: TextStyle(fontSize: widget.size, height: 1),
     );
   }
 }
