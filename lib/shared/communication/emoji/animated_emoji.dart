@@ -1,7 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:lottie/lottie.dart';
 
+import 'emoji_animation_renderer.dart';
+import 'emoji_asset.dart';
 import 'emoji_asset_provider.dart';
 
 class AnimatedEmojiAssets {
@@ -10,10 +11,14 @@ class AnimatedEmojiAssets {
   static final Set<String> _loggedMissing = <String>{};
 
   static String? assetFor(String emoji) {
-    return AlsamosAnimatedEmojiEngine.resolve(emoji)?.assetPath;
+    return resolve(emoji)?.assetPath;
   }
 
-  static bool hasAsset(String emoji) => assetFor(emoji) != null;
+  static EmojiAsset? resolve(String emoji) {
+    return AlsamosAnimatedEmojiEngine.resolve(emoji);
+  }
+
+  static bool hasAsset(String emoji) => resolve(emoji) != null;
 
   static void logMissing(String emoji) {
     if (!kDebugMode || _loggedMissing.contains(emoji)) return;
@@ -28,6 +33,7 @@ class AnimatedEmoji extends StatefulWidget {
   final bool animate;
   final BoxFit fit;
   final bool replayOnTap;
+  final String? playbackKey;
   final double restingProgress;
 
   const AnimatedEmoji({
@@ -37,6 +43,7 @@ class AnimatedEmoji extends StatefulWidget {
     this.animate = true,
     this.fit = BoxFit.contain,
     this.replayOnTap = true,
+    this.playbackKey,
     this.restingProgress = 1,
   });
 
@@ -44,28 +51,44 @@ class AnimatedEmoji extends StatefulWidget {
   State<AnimatedEmoji> createState() => _AnimatedEmojiState();
 }
 
+enum EmojiPlaybackState {
+  initial,
+  visible,
+  playing,
+  completed,
+  static,
+}
+
 class _AnimatedEmojiState extends State<AnimatedEmoji>
     with SingleTickerProviderStateMixin {
+  static const int _maxSeenPlaybackKeys = 512;
+  static final Set<String> _seenPlaybackKeys = <String>{};
+  static final List<String> _seenPlaybackOrder = <String>[];
+
   late final AnimationController _controller;
-  String? _asset;
-  bool _shouldAutoPlay = true;
+  EmojiAsset? _asset;
+  EmojiPlaybackState _playbackState = EmojiPlaybackState.initial;
+  String? _loadedAssetPath;
+  int _playGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this);
-    _asset = AnimatedEmojiAssets.assetFor(widget.emoji);
+    _asset = AnimatedEmojiAssets.resolve(widget.emoji);
   }
 
   @override
   void didUpdateWidget(covariant AnimatedEmoji oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.emoji != widget.emoji) {
-      _asset = AnimatedEmojiAssets.assetFor(widget.emoji);
-      _shouldAutoPlay = true;
-      _controller
-        ..stop()
-        ..reset();
+    if (oldWidget.emoji != widget.emoji ||
+        oldWidget.playbackKey != widget.playbackKey) {
+      _asset = AnimatedEmojiAssets.resolve(widget.emoji);
+      _loadedAssetPath = null;
+      _playbackState = EmojiPlaybackState.initial;
+      _playGeneration++;
+      _controller.stop();
+      _controller.reset();
     }
   }
 
@@ -76,19 +99,28 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
   }
 
   void _playOnce() {
-    if (!_canAnimate) return;
-    _controller
-      ..stop()
-      ..reset()
-      ..forward();
+    if (!_canAnimate) {
+      _showRestingFrame();
+      return;
+    }
+    final generation = ++_playGeneration;
+    _setPlaybackState(EmojiPlaybackState.playing);
+    _controller.stop();
+    _controller.reset();
+    _controller.forward().whenCompleteOrCancel(() {
+      if (!mounted || generation != _playGeneration) return;
+      _setPlaybackState(EmojiPlaybackState.completed);
+      _showRestingFrame(setStaticState: true);
+    });
   }
 
-  void _showRestingFrame() {
+  void _showRestingFrame({bool setStaticState = true}) {
     if (!mounted) return;
     final progress = widget.restingProgress.clamp(0.0, 1.0).toDouble();
     _controller
       ..stop()
       ..value = progress;
+    if (setStaticState) _setPlaybackState(EmojiPlaybackState.static);
   }
 
   bool get _canAnimate => widget.animate && !_reduceMotion;
@@ -99,64 +131,95 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
         mediaQuery?.accessibleNavigation == true;
   }
 
+  String get _stablePlaybackKey {
+    final asset = _asset;
+    if (widget.playbackKey case final key?) return key;
+    if (asset == null) return widget.emoji;
+    return '${asset.source.name}:${asset.id}:${asset.emoji}';
+  }
+
+  bool _hasSeenPlaybackKey(String key) => _seenPlaybackKeys.contains(key);
+
+  void _markPlaybackKeySeen(String key) {
+    if (!_seenPlaybackKeys.add(key)) return;
+    _seenPlaybackOrder.add(key);
+    while (_seenPlaybackOrder.length > _maxSeenPlaybackKeys) {
+      _seenPlaybackKeys.remove(_seenPlaybackOrder.removeAt(0));
+    }
+  }
+
+  void _setPlaybackState(EmojiPlaybackState state) {
+    if (_playbackState == state) return;
+    _playbackState = state;
+  }
+
+  void _handleLoaded(EmojiAsset asset, Duration duration) {
+    _controller.duration = duration;
+    if (_loadedAssetPath == asset.assetPath &&
+        _playbackState != EmojiPlaybackState.initial) {
+      return;
+    }
+
+    _loadedAssetPath = asset.assetPath;
+    _setPlaybackState(EmojiPlaybackState.visible);
+    if (!_canAnimate) {
+      _showRestingFrame();
+      return;
+    }
+
+    final key = _stablePlaybackKey;
+    if (_hasSeenPlaybackKey(key)) {
+      _showRestingFrame();
+      return;
+    }
+
+    _markPlaybackKeySeen(key);
+    _playOnce();
+  }
+
+  void _logRenderError(EmojiAsset asset, Object error) {
+    if (!kDebugMode) return;
+    debugPrint('[AnimatedEmoji] Failed to load ${asset.assetPath}: $error');
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!widget.animate) return _textFallback();
-
     final asset = _asset;
     if (asset == null) {
       AnimatedEmojiAssets.logMissing(widget.emoji);
       return _textFallback();
     }
 
-    final lottie = SizedBox.square(
-      dimension: widget.size,
-      child: RepaintBoundary(
-        child: Lottie.asset(
-          asset,
-          controller: _controller,
-          animate: false,
-          repeat: false,
-          fit: widget.fit,
-          frameRate: FrameRate.composition,
-          onLoaded: (composition) {
-            _controller.duration = composition.duration;
-            if (_canAnimate && _shouldAutoPlay) {
-              _shouldAutoPlay = false;
-              _playOnce();
-            } else {
-              _shouldAutoPlay = false;
-              _showRestingFrame();
-            }
-          },
-          errorBuilder: (_, error, __) {
-            if (kDebugMode) {
-              debugPrint('[AnimatedEmoji] Failed to load $asset: $error');
-            }
-            return Text(
-              widget.emoji,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: widget.size, height: 1),
-            );
-          },
-        ),
-      ),
+    final renderer = EmojiAnimationRenderers.resolve(asset);
+    if (renderer == null) return _textFallback();
+
+    final rendered = renderer.build(
+      asset: asset,
+      controller: _controller,
+      size: widget.size,
+      fit: widget.fit,
+      fallback: _textFallback(),
+      onLoaded: (duration) => _handleLoaded(asset, duration),
+      onError: (error) => _logRenderError(asset, error),
     );
 
-    if (!widget.replayOnTap) return lottie;
+    if (!widget.replayOnTap || !_canAnimate) return rendered;
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: _playOnce,
-      child: lottie,
+      child: rendered,
     );
   }
 
   Widget _textFallback() {
-    return Text(
-      widget.emoji,
-      textAlign: TextAlign.center,
-      style: TextStyle(fontSize: widget.size, height: 1),
+    return Semantics(
+      label: widget.emoji,
+      child: Text(
+        widget.emoji,
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: widget.size, height: 1),
+      ),
     );
   }
 }

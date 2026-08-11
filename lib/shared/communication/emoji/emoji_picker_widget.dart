@@ -183,7 +183,12 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
           _manager.toggleFavorite(emojis[i]);
         },
         child: Center(
-          child: AnimatedEmoji(emoji: emojis[i], size: 30),
+          child: AnimatedEmoji(
+            emoji: emojis[i],
+            size: 30,
+            animate: false,
+            replayOnTap: false,
+          ),
         ),
       ),
     );

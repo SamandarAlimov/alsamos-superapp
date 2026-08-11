@@ -223,6 +223,8 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
                             AnimatedEmoji(
                               emoji: emoji,
                               size: fontSize,
+                              playbackKey:
+                                  'message:${widget.message.id}:$emoji',
                               restingProgress: 1,
                             ),
                         ],

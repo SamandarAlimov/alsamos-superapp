@@ -52,6 +52,7 @@ class _ReactionBurstOverlayState extends State<ReactionBurstOverlay>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final List<_Particle> _particles;
+  late final String _playbackKey;
 
   @override
   void initState() {
@@ -61,6 +62,8 @@ class _ReactionBurstOverlayState extends State<ReactionBurstOverlay>
       duration: widget.duration,
     );
     _particles = _generateParticles();
+    _playbackKey =
+        'reaction-burst:${widget.emoji}:${DateTime.now().microsecondsSinceEpoch}';
     _controller.forward().then((_) {
       widget.onComplete?.call();
     });
@@ -139,6 +142,7 @@ class _ReactionBurstOverlayState extends State<ReactionBurstOverlay>
                   child: AnimatedEmoji(
                     emoji: widget.emoji,
                     size: widget.particleSize * 2,
+                    playbackKey: _playbackKey,
                     replayOnTap: false,
                   ),
                 ),
