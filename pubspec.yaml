@@ -144,4 +144,6 @@ flutter:
     - assets/wallpapers/
     - assets/data/
     - assets/stickers/
+    - assets/animated_emoji/alsamos/
+    - assets/animated_emoji/licensed/
     - assets/animated_emoji/noto/

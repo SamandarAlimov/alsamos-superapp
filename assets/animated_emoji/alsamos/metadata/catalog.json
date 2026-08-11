@@ -1,0 +1,16 @@
+{
+  "pack": {
+    "name": "Alsamos Premium Animated Emoji",
+    "provider": "alsamos",
+    "ownership": "alsamos",
+    "source": "Alsamos original artwork",
+    "license": "proprietary",
+    "copyrightHolder": "Alsamos",
+    "commercialUse": true,
+    "redistribution": "alsamos-products-only",
+    "modification": "alsamos-products-only",
+    "attributionRequired": false,
+    "version": 1
+  },
+  "entries": []
+}

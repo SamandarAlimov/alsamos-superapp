@@ -1,5 +1,6 @@
 import 'animated_emoji_catalog.dart';
 import 'emoji_asset.dart';
+import 'emoji_pack_catalog.dart';
 import 'emoji_registry.dart';
 
 abstract class EmojiAssetProvider {
@@ -56,27 +57,31 @@ class CompositeEmojiAssetProvider implements EmojiAssetProvider {
   }
 }
 
+class CatalogEmojiAssetProvider implements EmojiAssetProvider {
+  final List<EmojiAssetCatalogEntry> entries;
+
+  const CatalogEmojiAssetProvider(this.entries);
+
+  @override
+  EmojiAsset? resolve(EmojiRegistryEntry entry) {
+    for (final candidate in entry.assetKeyCandidates) {
+      for (final catalogEntry in entries) {
+        if (catalogEntry.key == candidate ||
+            catalogEntry.fallbackKey == candidate) {
+          return catalogEntry.toAsset();
+        }
+      }
+    }
+    return null;
+  }
+}
+
 class AlsamosAnimatedEmojiEngine {
   AlsamosAnimatedEmojiEngine._();
 
-  static const Set<String> _alsamosAssetKeys = <String>{};
-  static const Set<String> _licensedAssetKeys = <String>{};
-
   static const EmojiAssetProvider _provider = CompositeEmojiAssetProvider([
-    PrefixEmojiAssetProvider(
-      source: EmojiAssetSource.alsamos,
-      assetPrefix: 'assets/animated_emoji/alsamos',
-      availableKeys: _alsamosAssetKeys,
-      fps: 60,
-      loop: false,
-    ),
-    PrefixEmojiAssetProvider(
-      source: EmojiAssetSource.licensed,
-      assetPrefix: 'assets/animated_emoji/licensed',
-      availableKeys: _licensedAssetKeys,
-      fps: 60,
-      loop: false,
-    ),
+    CatalogEmojiAssetProvider(alsamosEmojiAssetCatalog),
+    CatalogEmojiAssetProvider(licensedEmojiAssetCatalog),
     PrefixEmojiAssetProvider(
       source: EmojiAssetSource.noto,
       assetPrefix: 'assets/animated_emoji/noto',
