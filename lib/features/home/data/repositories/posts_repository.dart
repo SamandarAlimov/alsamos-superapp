@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/data/base_repository.dart';
 import '../../../../core/data/supabase_data_source.dart';
 import '../models/post_model.dart';
@@ -104,6 +106,12 @@ class PostsRepository extends BaseRepository {
     } on TimeoutException catch (error) {
       debugPrint(
         '[PostsRepository] rich public feed query timed out; '
+        'retrying with anonymous public client: $error',
+      );
+      return _fetchPublicPostRowsWithAnonymousClient(from: from, to: to);
+    } catch (error) {
+      debugPrint(
+        '[PostsRepository] rich public feed query failed; '
         'retrying without profile embed: $error',
       );
       return _fetchPublicPostRowsWithoutEmbed(from: from, to: to);
@@ -125,7 +133,40 @@ class PostsRepository extends BaseRepository {
     return _hydratePostProfiles(_mapRows(rows));
   }
 
+  Future<List<Map<String, dynamic>>> _fetchPublicPostRowsWithAnonymousClient({
+    required int from,
+    required int to,
+  }) async {
+    final publicClient = SupabaseClient(
+      ApiConstants.supabaseUrl,
+      ApiConstants.supabaseAnonKey,
+      authOptions: const AuthClientOptions(
+        autoRefreshToken: false,
+      ),
+    );
+    try {
+      final rows = await publicClient
+          .from('posts')
+          .select('*')
+          .eq('visibility', 'public')
+          .order('is_pinned', ascending: false)
+          .order('created_at', ascending: false)
+          .range(from, to)
+          .timeout(_fallbackQueryTimeout);
+      return _hydratePostProfilesWithClient(publicClient, _mapRows(rows));
+    } finally {
+      await publicClient.dispose();
+    }
+  }
+
   Future<List<Map<String, dynamic>>> _hydratePostProfiles(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    return _hydratePostProfilesWithClient(_db.client, rows);
+  }
+
+  Future<List<Map<String, dynamic>>> _hydratePostProfilesWithClient(
+    SupabaseClient client,
     List<Map<String, dynamic>> rows,
   ) async {
     final userIds = rows
@@ -137,8 +178,8 @@ class PostsRepository extends BaseRepository {
     if (userIds.isEmpty) return rows;
 
     try {
-      final profileRows = await _db
-          .table('profiles')
+      final profileRows = await client
+          .from('profiles')
           .select('id, username, display_name, avatar_url, is_verified')
           .inFilter('id', userIds)
           .timeout(_fallbackQueryTimeout);
