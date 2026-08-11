@@ -114,6 +114,7 @@ class AnimatedEmoji extends StatefulWidget {
   final bool animate;
   final BoxFit fit;
   final bool replayOnTap;
+  final double restingProgress;
 
   const AnimatedEmoji({
     super.key,
@@ -122,6 +123,7 @@ class AnimatedEmoji extends StatefulWidget {
     this.animate = true,
     this.fit = BoxFit.contain,
     this.replayOnTap = true,
+    this.restingProgress = 1,
   });
 
   @override
@@ -167,6 +169,14 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
       ..forward();
   }
 
+  void _showRestingFrame() {
+    if (!mounted) return;
+    final progress = widget.restingProgress.clamp(0.0, 1.0).toDouble();
+    _controller
+      ..stop()
+      ..value = progress;
+  }
+
   bool get _canAnimate => widget.animate && !_reduceMotion;
 
   bool get _reduceMotion {
@@ -199,9 +209,12 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
           frameRate: FrameRate.composition,
           onLoaded: (composition) {
             _controller.duration = composition.duration;
-            if (_shouldAutoPlay) {
+            if (_canAnimate && _shouldAutoPlay) {
               _shouldAutoPlay = false;
               _playOnce();
+            } else {
+              _shouldAutoPlay = false;
+              _showRestingFrame();
             }
           },
           errorBuilder: (_, error, __) {

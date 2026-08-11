@@ -79,7 +79,8 @@ class ReactionChipsWidget extends StatelessWidget {
                           children: [
                             AnimatedEmoji(
                               emoji: r.emoji,
-                              size: 14,
+                              size: 18,
+                              animate: false,
                               replayOnTap: false,
                             ),
                             const SizedBox(width: 3),
@@ -108,8 +109,11 @@ class ReactionChipsWidget extends StatelessWidget {
                   color: c.muted,
                   shape: BoxShape.circle,
                 ),
-                child:
-                    Icon(LucideIcons.plus, size: 12, color: c.mutedForeground),
+                child: Icon(
+                  LucideIcons.chevronDown,
+                  size: 13,
+                  color: c.mutedForeground,
+                ),
               ),
             ),
         ],

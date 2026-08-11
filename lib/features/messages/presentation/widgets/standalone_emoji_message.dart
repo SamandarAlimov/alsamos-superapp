@@ -220,7 +220,11 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
                         children: [
                           for (final emoji
                               in emojis.isEmpty ? [text.trim()] : emojis)
-                            AnimatedEmoji(emoji: emoji, size: fontSize),
+                            AnimatedEmoji(
+                              emoji: emoji,
+                              size: fontSize,
+                              restingProgress: 1,
+                            ),
                         ],
                       ),
                     ),
@@ -289,11 +293,11 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
   }
 
   double _emojiSize(int count) {
-    if (count == 1) return 64;
-    if (count == 2) return 52;
-    if (count == 3) return 44;
-    if (count <= 5) return 36;
-    return 28;
+    if (count == 1) return 82;
+    if (count == 2) return 66;
+    if (count == 3) return 56;
+    if (count <= 5) return 44;
+    return 34;
   }
 }
 

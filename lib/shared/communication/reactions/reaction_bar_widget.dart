@@ -35,7 +35,7 @@ class ReactionBarWidget extends StatelessWidget {
     final list = emojis ?? ReactionManager.quickReactions;
     const barHeight = 58.0;
     final naturalBarWidth =
-        list.length * 46.0 + 18 + (onAddMore != null ? 46 : 0);
+        list.length * 50.0 + 18 + (onAddMore != null ? 50 : 0);
     final barWidth =
         naturalBarWidth > size.width - 16 ? size.width - 16 : naturalBarWidth;
     double left = anchor.dx - barWidth / 2;
@@ -136,8 +136,8 @@ class ReactionBarWidget extends StatelessWidget {
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 140),
                     curve: Curves.easeOutCubic,
-                    width: 42,
-                    height: 42,
+                    width: 46,
+                    height: 46,
                     margin: const EdgeInsets.symmetric(horizontal: 2),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
@@ -146,7 +146,7 @@ class ReactionBarWidget extends StatelessWidget {
                     ),
                     child: AnimatedEmoji(
                       emoji: e,
-                      size: 34,
+                      size: 38,
                       replayOnTap: false,
                     ),
                   ),
@@ -156,8 +156,8 @@ class ReactionBarWidget extends StatelessWidget {
                   onTap: onAddMore,
                   borderRadius: BorderRadius.circular(20),
                   child: Container(
-                    width: 42,
-                    height: 42,
+                    width: 46,
+                    height: 46,
                     margin: const EdgeInsets.symmetric(horizontal: 2),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(

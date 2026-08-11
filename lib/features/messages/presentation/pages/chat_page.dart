@@ -1408,7 +1408,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final size = overlayBox?.size ?? MediaQuery.sizeOf(context);
     final localAnchor = overlayBox?.globalToLocal(anchor) ?? anchor;
     const menuWidth = 236.0;
-    final reactionWidth = (size.width - 20).clamp(220.0, 336.0).toDouble();
+    final reactionWidth = (size.width - 20).clamp(240.0, 360.0).toDouble();
     const reactionHeight = 58.0;
     final menuHeight =
         (38.0 + actions.length * 34.0 + 14.0).clamp(160.0, size.height * 0.58);
@@ -4568,8 +4568,8 @@ class _MessageReactionMenuBar extends StatelessWidget {
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 140),
                         curve: Curves.easeOutCubic,
-                        width: 42,
-                        height: 42,
+                        width: 46,
+                        height: 46,
                         margin: const EdgeInsets.symmetric(horizontal: 2),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
@@ -4578,7 +4578,7 @@ class _MessageReactionMenuBar extends StatelessWidget {
                         ),
                         child: AnimatedEmoji(
                           emoji: emoji,
-                          size: 34,
+                          size: 38,
                           replayOnTap: false,
                         ),
                       ),
@@ -4587,8 +4587,8 @@ class _MessageReactionMenuBar extends StatelessWidget {
                     onTap: onMore,
                     borderRadius: BorderRadius.circular(24),
                     child: Container(
-                      width: 42,
-                      height: 42,
+                      width: 46,
+                      height: 46,
                       margin: const EdgeInsets.only(left: 2),
                       decoration:
                           BoxDecoration(color: c.muted, shape: BoxShape.circle),

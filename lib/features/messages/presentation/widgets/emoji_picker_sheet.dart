@@ -391,7 +391,8 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet>
                           child: widget.reactionMode
                               ? AnimatedEmoji(
                                   emoji: emoji,
-                                  size: 40,
+                                  size: 46,
+                                  animate: false,
                                   replayOnTap: false,
                                 )
                               : Text(
