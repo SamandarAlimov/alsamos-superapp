@@ -24,7 +24,10 @@ import '../../../../shared/services/camera_capability.dart';
 // Telegram-style message composer — matches web messages/MessageInput.tsx behavior.
 class MessageInput extends ConsumerStatefulWidget {
   final String conversationId;
-  final Future<void> Function(String text, {List<String>? mediaUrls, String? mediaType, DateTime? scheduledFor}) onSend;
+  final Future<void> Function(String text,
+      {List<String>? mediaUrls,
+      String? mediaType,
+      DateTime? scheduledFor}) onSend;
   final void Function(bool)? onTyping;
   final String? replyingTo;
   final VoidCallback? onCancelReply;
@@ -32,7 +35,17 @@ class MessageInput extends ConsumerStatefulWidget {
   final String? editingInitial;
   final VoidCallback? onCancelEdit;
   final void Function(MediaAttachment)? onMediaSend;
-  const MessageInput({super.key, required this.conversationId, required this.onSend, this.onTyping, this.replyingTo, this.onCancelReply, this.editingMessageId, this.editingInitial, this.onCancelEdit, this.onMediaSend});
+  const MessageInput(
+      {super.key,
+      required this.conversationId,
+      required this.onSend,
+      this.onTyping,
+      this.replyingTo,
+      this.onCancelReply,
+      this.editingMessageId,
+      this.editingInitial,
+      this.onCancelEdit,
+      this.onMediaSend});
 
   @override
   ConsumerState<MessageInput> createState() => _MessageInputState();
@@ -68,7 +81,8 @@ class _MessageInputState extends ConsumerState<MessageInput> {
   @override
   void didUpdateWidget(covariant MessageInput old) {
     super.didUpdateWidget(old);
-    if (widget.editingMessageId != old.editingMessageId && widget.editingInitial != null) {
+    if (widget.editingMessageId != old.editingMessageId &&
+        widget.editingInitial != null) {
       _ctrl.text = widget.editingInitial ?? '';
       _ctrl.selection = TextSelection.collapsed(offset: _ctrl.text.length);
       _focus.requestFocus();
@@ -88,27 +102,34 @@ class _MessageInputState extends ConsumerState<MessageInput> {
   void _onChanged() {
     final text = _ctrl.text;
     final selection = _ctrl.selection.baseOffset;
-    if (selection < 0) { _hidePopovers(); return; }
+    if (selection < 0) {
+      _hidePopovers();
+      return;
+    }
     final before = text.substring(0, selection);
     final lastAt = before.lastIndexOf('@');
     final lastHash = before.lastIndexOf('#');
     final lastSpace = before.lastIndexOf(' ');
     if (mounted) {
       setState(() {
-      if (lastAt > lastSpace && lastAt != -1) {
-        _queryFragment = before.substring(lastAt + 1);
-        _showMentionPopover = true; _showHashtagPopover = false;
-      } else if (lastHash > lastSpace && lastHash != -1) {
-        _queryFragment = before.substring(lastHash + 1);
-        _showHashtagPopover = true; _showMentionPopover = false;
-      } else {
-        _showMentionPopover = false; _showHashtagPopover = false;
-      }
-    });
+        if (lastAt > lastSpace && lastAt != -1) {
+          _queryFragment = before.substring(lastAt + 1);
+          _showMentionPopover = true;
+          _showHashtagPopover = false;
+        } else if (lastHash > lastSpace && lastHash != -1) {
+          _queryFragment = before.substring(lastHash + 1);
+          _showHashtagPopover = true;
+          _showMentionPopover = false;
+        } else {
+          _showMentionPopover = false;
+          _showHashtagPopover = false;
+        }
+      });
     }
     widget.onTyping?.call(text.trim().isNotEmpty);
     _typingTimer?.cancel();
-    _typingTimer = Timer(const Duration(seconds: 2), () => widget.onTyping?.call(false));
+    _typingTimer =
+        Timer(const Duration(seconds: 2), () => widget.onTyping?.call(false));
   }
 
   void _hidePopovers() {
@@ -124,7 +145,8 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     final after = _ctrl.text.substring(sel);
     final newText = before + inserted + after;
     _ctrl.text = newText;
-    _ctrl.selection = TextSelection.collapsed(offset: (before + inserted).length);
+    _ctrl.selection =
+        TextSelection.collapsed(offset: (before + inserted).length);
     _focus.requestFocus();
   }
 
@@ -146,7 +168,9 @@ class _MessageInputState extends ConsumerState<MessageInput> {
       effectiveSource = ImageSource.gallery;
     }
     final picker = ImagePicker();
-    final file = video ? await picker.pickVideo(source: effectiveSource) : await picker.pickImage(source: effectiveSource, imageQuality: 85);
+    final file = video
+        ? await picker.pickVideo(source: effectiveSource)
+        : await picker.pickImage(source: effectiveSource, imageQuality: 85);
     if (file == null) return;
     if (mounted) setState(() => _isUploading = true);
     try {
@@ -156,7 +180,8 @@ class _MessageInputState extends ConsumerState<MessageInput> {
       final bytes = await file.readAsBytes();
       await supa.storage.from('chat-media').uploadBinary(path, bytes);
       final url = supa.storage.from('chat-media').getPublicUrl(path);
-      await widget.onSend(_ctrl.text.trim(), mediaUrls: [url], mediaType: video ? 'video' : 'image');
+      await widget.onSend(_ctrl.text.trim(),
+          mediaUrls: [url], mediaType: video ? 'video' : 'image');
       _ctrl.clear();
     } catch (e) {
       if (mounted) AppToast.error(context, friendlyError(e));
@@ -248,14 +273,57 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     showModalBottomSheet(
       context: context,
       backgroundColor: colors.card,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (sheetCtx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        ListTile(leading: const Icon(LucideIcons.image, color: Color(0xFF22C55E)), title: const Text('Photo'), onTap: () { Navigator.pop(sheetCtx); _pickAndUpload(ImageSource.gallery); }),
-        ListTile(leading: const Icon(LucideIcons.camera, color: Color(0xFFEAB308)), title: const Text('Camera'), onTap: () { Navigator.pop(sheetCtx); _pickAndUpload(ImageSource.camera); }),
-        ListTile(leading: const Icon(LucideIcons.video, color: Color(0xFF3B82F6)), title: const Text('Video'), onTap: () { Navigator.pop(sheetCtx); _pickAndUpload(ImageSource.gallery, video: true); }),
-        ListTile(leading: const Icon(LucideIcons.gift, color: Color(0xFFEC4899)), title: const Text('GIF'), onTap: () { Navigator.pop(sheetCtx); GifPickerSheet.show(context, (url) => widget.onSend('', mediaUrls: [url], mediaType: 'gif')); }),
-        ListTile(leading: const Icon(LucideIcons.circle, color: Color(0xFF06B6D4)), title: const Text('Video xabar'), onTap: () { Navigator.pop(sheetCtx); _recordVideoNote(); }),
-        ListTile(leading: const Icon(LucideIcons.clock, color: Color(0xFF8B5CF6)), title: const Text('Schedule message'), onTap: () { Navigator.pop(sheetCtx); ScheduleMessageDialog.show(context, messagePreview: _ctrl.text, onSchedule: (when) => _send(scheduledFor: when)); }),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (sheetCtx) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+            leading: const Icon(LucideIcons.image, color: Color(0xFF22C55E)),
+            title: const Text('Photo'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _pickAndUpload(ImageSource.gallery);
+            }),
+        ListTile(
+            leading: const Icon(LucideIcons.camera, color: Color(0xFFEAB308)),
+            title: const Text('Camera'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _pickAndUpload(ImageSource.camera);
+            }),
+        ListTile(
+            leading: const Icon(LucideIcons.video, color: Color(0xFF3B82F6)),
+            title: const Text('Video'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _pickAndUpload(ImageSource.gallery, video: true);
+            }),
+        ListTile(
+            leading: const Icon(LucideIcons.gift, color: Color(0xFFEC4899)),
+            title: const Text('GIF'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              GifPickerSheet.show(
+                  context,
+                  (url) =>
+                      widget.onSend('', mediaUrls: [url], mediaType: 'gif'));
+            }),
+        ListTile(
+            leading: const Icon(LucideIcons.circle, color: Color(0xFF06B6D4)),
+            title: const Text('Video xabar'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _recordVideoNote();
+            }),
+        ListTile(
+            leading: const Icon(LucideIcons.clock, color: Color(0xFF8B5CF6)),
+            title: const Text('Schedule message'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              ScheduleMessageDialog.show(context,
+                  messagePreview: _ctrl.text,
+                  onSchedule: (when) => _send(scheduledFor: when));
+            }),
       ])),
     );
   }
@@ -282,8 +350,7 @@ class _MessageInputState extends ConsumerState<MessageInput> {
             decoration: BoxDecoration(
                 color: colors.muted.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(10),
-                border: Border(
-                    left: BorderSide(color: primary, width: 2))),
+                border: Border(left: BorderSide(color: primary, width: 2))),
             child: Row(children: [
               // Web: NO Reply icon — only sender_name + content
               Expanded(
@@ -331,8 +398,8 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                 borderRadius: BorderRadius.circular(10),
                 // Amber-500 for editing (web pattern)
                 border: Border(
-                    left: BorderSide(
-                        color: const Color(0xFFF59E0B), width: 2))),
+                    left:
+                        BorderSide(color: const Color(0xFFF59E0B), width: 2))),
             child: Row(children: [
               const Icon(LucideIcons.pencil,
                   size: 14, color: Color(0xFFF59E0B)),
@@ -363,20 +430,32 @@ class _MessageInputState extends ConsumerState<MessageInput> {
         if (_showMentionPopover && _queryFragment.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(bottom: 4),
-            decoration: BoxDecoration(color: colors.card, borderRadius: BorderRadius.circular(8), border: Border.all(color: colors.border)),
-            child: MentionAutocomplete(query: _queryFragment, onSelect: (u) {
-              _insertAtCursor('$u  ', replaceLastWith: _queryFragment.length);
-              _hidePopovers();
-            }),
+            decoration: BoxDecoration(
+                color: colors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colors.border)),
+            child: MentionAutocomplete(
+                query: _queryFragment,
+                onSelect: (u) {
+                  _insertAtCursor('$u  ',
+                      replaceLastWith: _queryFragment.length);
+                  _hidePopovers();
+                }),
           ),
         if (_showHashtagPopover && _queryFragment.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(bottom: 4),
-            decoration: BoxDecoration(color: colors.card, borderRadius: BorderRadius.circular(8), border: Border.all(color: colors.border)),
-            child: HashtagAutocomplete(query: _queryFragment, onSelect: (t) {
-              _insertAtCursor('$t ', replaceLastWith: _queryFragment.length);
-              _hidePopovers();
-            }),
+            decoration: BoxDecoration(
+                color: colors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colors.border)),
+            child: HashtagAutocomplete(
+                query: _queryFragment,
+                onSelect: (t) {
+                  _insertAtCursor('$t ',
+                      replaceLastWith: _queryFragment.length);
+                  _hidePopovers();
+                }),
           ),
         // Web: <div className="flex items-end gap-2">
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -407,15 +486,12 @@ class _MessageInputState extends ConsumerState<MessageInput> {
               decoration: BoxDecoration(
                   color: colors.muted.withValues(alpha: 0.5),
                   // Web: rounded-2xl (16px)
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: colors.border)),
+                  borderRadius: BorderRadius.circular(16)),
               padding: const EdgeInsets.symmetric(
                   // Web: px-4 py-2.5 pr-12 (room for emoji icon on right)
                   horizontal: 16,
                   vertical: 6),
-              child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
+              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Expanded(
                   child: TextField(
                     controller: _ctrl,
@@ -427,6 +503,11 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                     decoration: const InputDecoration(
                       hintText: 'Message',
                       border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      errorBorder: InputBorder.none,
+                      focusedErrorBorder: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(vertical: 8),
                       isDense: true,
                     ),
@@ -441,8 +522,13 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                     constraints:
                         const BoxConstraints(minWidth: 32, minHeight: 32),
                     icon: Icon(
-                        _showExpressionPanel ? LucideIcons.keyboard : LucideIcons.smile,
-                        size: 18, color: _showExpressionPanel ? primary : colors.mutedForeground),
+                        _showExpressionPanel
+                            ? LucideIcons.keyboard
+                            : LucideIcons.smile,
+                        size: 18,
+                        color: _showExpressionPanel
+                            ? primary
+                            : colors.mutedForeground),
                     onPressed: _toggleExpressionPanel,
                   ),
                 ),
@@ -470,10 +556,8 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                       onSchedule: (when) => _send(scheduledFor: when),
                     );
                   },
-                  child: Icon(
-                      isEditing ? LucideIcons.check : LucideIcons.send,
-                      color: Colors.white,
-                      size: 20),
+                  child: Icon(isEditing ? LucideIcons.check : LucideIcons.send,
+                      color: Colors.white, size: 20),
                 ),
               ),
             )
@@ -490,13 +574,16 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: _isRecordingVoice ? Colors.red.withValues(alpha: 0.1) : colors.muted,
+                  color: _isRecordingVoice
+                      ? Colors.red.withValues(alpha: 0.1)
+                      : colors.muted,
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   LucideIcons.mic,
                   size: 20,
-                  color: _isRecordingVoice ? Colors.red : colors.mutedForeground,
+                  color:
+                      _isRecordingVoice ? Colors.red : colors.mutedForeground,
                 ),
               ),
             ),
@@ -599,8 +686,7 @@ class _VoiceMicButtonState extends State<_VoiceMicButton>
                         height: 40,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: const Color(0xFFEF4444)
-                              .withValues(alpha: 0.2),
+                          color: const Color(0xFFEF4444).withValues(alpha: 0.2),
                         ),
                       ),
                     ),
@@ -617,9 +703,7 @@ class _VoiceMicButtonState extends State<_VoiceMicButton>
                         height: 40,
                         child: Icon(
                           LucideIcons.mic,
-                          color: _recording
-                              ? Colors.white
-                              : widget.iconColor,
+                          color: _recording ? Colors.white : widget.iconColor,
                           size: 20,
                         ),
                       ),
