@@ -142,7 +142,13 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
 
   void _setPlaybackState(EmojiPlaybackState state) {
     if (_playbackState == state) return;
-    _playbackState = state;
+    if (!mounted) {
+      _playbackState = state;
+      return;
+    }
+    setState(() {
+      _playbackState = state;
+    });
   }
 
   void _handleLoaded(EmojiAsset asset, Duration duration) {
@@ -179,38 +185,65 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
     final asset = _asset;
     if (asset == null) {
       AnimatedEmojiAssets.logMissing(widget.emoji);
-      return _textFallback();
+      return _staticEmoji();
     }
 
     final renderer = EmojiAnimationRenderers.resolve(asset);
-    if (renderer == null) return _textFallback();
+    if (renderer == null) return _staticEmoji();
+
+    if (_shouldRenderStatic) {
+      return _withReplay(_staticEmoji());
+    }
 
     final rendered = renderer.build(
       asset: asset,
       controller: _controller,
       size: widget.size,
       fit: widget.fit,
-      fallback: _textFallback(),
+      fallback: _staticEmoji(),
       onLoaded: (duration) => _handleLoaded(asset, duration),
       onError: (error) => _logRenderError(asset, error),
     );
 
-    if (!widget.replayOnTap || !_canAnimate) return rendered;
+    return _withReplay(rendered);
+  }
+
+  bool get _shouldRenderStatic {
+    if (!_canAnimate) return true;
+    if (_playbackState == EmojiPlaybackState.static ||
+        _playbackState == EmojiPlaybackState.completed) {
+      return true;
+    }
+    return _playbackState == EmojiPlaybackState.initial &&
+        _hasSeenPlaybackKey(_stablePlaybackKey);
+  }
+
+  Widget _withReplay(Widget child) {
+    if (!widget.replayOnTap || !_canAnimate) return child;
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: _playOnce,
-      child: rendered,
+      child: child,
     );
   }
 
-  Widget _textFallback() {
+  Widget _staticEmoji() {
     return Semantics(
       label: widget.emoji,
       child: Text(
         widget.emoji,
         textAlign: TextAlign.center,
-        style: TextStyle(fontSize: widget.size, height: 1),
+        style: TextStyle(
+          fontSize: widget.size,
+          height: 1,
+          fontFamilyFallback: const [
+            'Apple Color Emoji',
+            'Segoe UI Emoji',
+            'Noto Color Emoji',
+            'Twemoji Mozilla',
+          ],
+        ),
       ),
     );
   }
