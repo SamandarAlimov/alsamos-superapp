@@ -3367,6 +3367,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
   Widget _composer(AlsamosColors c, ThemeData theme) {
     final primary = theme.colorScheme.primary;
     final isDark = theme.brightness == Brightness.dark;
+    final compact = MediaQuery.sizeOf(context).width < 560;
+    final actionSize = compact ? 44.0 : 48.0;
+    final inputMaxHeight = compact ? 236.0 : 260.0;
     final composerSurface = c.card.withValues(alpha: isDark ? 0.78 : 0.86);
     final inputSurface = c.muted.withValues(alpha: isDark ? 0.52 : 0.74);
     final subtleShadow = [
@@ -3400,18 +3403,19 @@ class _ChatPageState extends ConsumerState<ChatPage>
                       foreground: c.mutedForeground,
                       background: c.muted.withValues(alpha: 0.48),
                       borderColor: c.border,
+                      size: actionSize,
                       onPressed: _showAttachmentMenu,
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: compact ? 6 : 8),
                     Expanded(
                       child: Container(
-                        constraints: const BoxConstraints(
-                          minHeight: 48,
-                          maxHeight: 148,
+                        constraints: BoxConstraints(
+                          minHeight: actionSize,
+                          maxHeight: inputMaxHeight,
                         ),
                         decoration: BoxDecoration(
                           color: inputSurface,
-                          borderRadius: BorderRadius.circular(18),
+                          borderRadius: BorderRadius.circular(20),
                           border: Border.all(
                             color: _focusNode.hasFocus
                                 ? primary.withValues(alpha: 0.34)
@@ -3426,23 +3430,22 @@ class _ChatPageState extends ConsumerState<ChatPage>
                             ),
                           ],
                         ),
-                        padding: const EdgeInsets.fromLTRB(16, 5, 7, 5),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                        child: Stack(
                           children: [
-                            Expanded(
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 5, 72, 5),
                               child: TextField(
                                 controller: _controller,
                                 focusNode: _focusNode,
                                 minLines: 1,
-                                maxLines: 6,
+                                maxLines: compact ? 10 : 12,
                                 keyboardType: TextInputType.multiline,
                                 textCapitalization:
                                     TextCapitalization.sentences,
                                 style: TextStyle(
                                   color: c.foreground,
                                   fontSize: 16,
-                                  height: 1.25,
+                                  height: 1.28,
                                 ),
                                 cursorColor: primary,
                                 decoration: InputDecoration(
@@ -3454,26 +3457,34 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                   border: InputBorder.none,
                                   isDense: true,
                                   contentPadding:
-                                      const EdgeInsets.symmetric(vertical: 9),
+                                      const EdgeInsets.symmetric(vertical: 8),
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 4),
-                            _ComposerIconButton(
-                              icon: LucideIcons.sticker,
-                              color: c.mutedForeground,
-                              onPressed: _showStickerPicker,
-                            ),
-                            _ComposerIconButton(
-                              icon: LucideIcons.smile,
-                              color: c.mutedForeground,
-                              onPressed: _pickEmojiForComposer,
+                            Positioned(
+                              right: 6,
+                              bottom: 5,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _ComposerIconButton(
+                                    icon: LucideIcons.sticker,
+                                    color: c.mutedForeground,
+                                    onPressed: _showStickerPicker,
+                                  ),
+                                  _ComposerIconButton(
+                                    icon: LucideIcons.smile,
+                                    color: c.mutedForeground,
+                                    onPressed: _pickEmojiForComposer,
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: compact ? 6 : 8),
                     // v33: send vs mic switcher (autocomplete overlay positioning anchor)
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 150),
@@ -3489,6 +3500,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                 background: primary,
                                 borderColor: Colors.transparent,
                                 shadowColor: primary.withValues(alpha: 0.34),
+                                size: actionSize,
                                 onPressed: _send,
                               ),
                             )
@@ -3516,6 +3528,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                 foreground: c.mutedForeground,
                                 background: c.muted.withValues(alpha: 0.58),
                                 borderColor: c.border,
+                                size: actionSize,
                                 onPressed: null,
                               ),
                             ),
@@ -3579,13 +3592,13 @@ class _ComposerIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 34,
-      height: 38,
+      width: 32,
+      height: 34,
       child: IconButton(
         visualDensity: VisualDensity.compact,
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 34, minHeight: 38),
-        icon: Icon(icon, color: color, size: 20),
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 34),
+        icon: Icon(icon, color: color, size: 19),
         onPressed: onPressed,
       ),
     );
@@ -3598,6 +3611,7 @@ class _ComposerCircleButton extends StatelessWidget {
   final Color background;
   final Color borderColor;
   final Color? shadowColor;
+  final double size;
   final VoidCallback? onPressed;
 
   const _ComposerCircleButton({
@@ -3606,14 +3620,15 @@ class _ComposerCircleButton extends StatelessWidget {
     required this.background,
     required this.borderColor,
     this.shadowColor,
+    this.size = 48,
     this.onPressed,
   });
 
   @override
   Widget build(BuildContext context) {
     final button = Container(
-      width: 48,
-      height: 48,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: background,
         shape: BoxShape.circle,
@@ -3628,7 +3643,7 @@ class _ComposerCircleButton extends StatelessWidget {
                 ),
               ],
       ),
-      child: Icon(icon, color: foreground, size: 21),
+      child: Icon(icon, color: foreground, size: size <= 44 ? 20 : 21),
     );
 
     if (onPressed == null) return button;
