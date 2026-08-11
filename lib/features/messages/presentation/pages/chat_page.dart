@@ -3483,11 +3483,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
                         decoration: BoxDecoration(
                           color: inputSurface,
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: _focusNode.hasFocus
-                                ? primary.withValues(alpha: 0.34)
-                                : c.border.withValues(alpha: 0.75),
-                          ),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black
