@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import '../../../../core/supabase/supabase_client.dart';
@@ -120,10 +121,12 @@ class MessagesRepository {
       final unreadMap = <String, int>{};
       final lastMsgMap = <String, String?>{};
       final mentionMap = <String, int>{};
+      var unreadRpcHydrated = false;
       if (unreadData is List) {
         for (final row in unreadData) {
           final cid = row['conversation_id'] as String?;
           if (cid == null) continue;
+          unreadRpcHydrated = true;
           unreadMap[cid] = (row['unread_count'] as num?)?.toInt() ?? 0;
           lastMsgMap[cid] = row['last_message_content'] as String?;
           mentionMap[cid] = (row['mention_count'] as num?)?.toInt() ?? 0;
@@ -131,6 +134,15 @@ class MessagesRepository {
       }
 
       await _fillMissingLastMessages(ids, lastMsgMap);
+      if (!unreadRpcHydrated) {
+        await _fillUnreadCountsFromMessages(
+          ids: ids,
+          partMap: partMap,
+          userId: userId,
+          unreadMap: unreadMap,
+          mentionMap: mentionMap,
+        );
+      }
 
       final result = <Conversation>[];
       for (final conv in convos) {
@@ -233,7 +245,13 @@ class MessagesRepository {
 
     missingIds = _missingLastMessageIds(ids, lastMsgMap);
     if (missingIds.isNotEmpty) {
-      lastMsgMap.addAll(await _fetchLastMessagesWithoutRpc(missingIds));
+      final fallback = await _fetchLastMessagesWithoutRpc(missingIds);
+      for (final entry in fallback.entries) {
+        final value = entry.value;
+        if (value != null && value.trim().isNotEmpty) {
+          lastMsgMap[entry.key] = value;
+        }
+      }
     }
   }
 
@@ -253,27 +271,149 @@ class MessagesRepository {
       final chunk =
           conversationIds.sublist(i, (i + 50).clamp(0, conversationIds.length));
       try {
-        final rows = await supabase
-            .from('messages')
-            .select('conversation_id, content, created_at')
-            .inFilter('conversation_id', chunk)
-            .order('created_at', ascending: false)
-            .limit(chunk.length * 5)
-            .timeout(const Duration(seconds: 5));
-        for (final row in rows as List) {
-          final map = Map<String, dynamic>.from(row as Map);
-          final conversationId = map['conversation_id']?.toString();
-          if (conversationId == null || conversationId.isEmpty) continue;
-          byConversation.putIfAbsent(
-            conversationId,
-            () => map['content']?.toString(),
-          );
-        }
+        final rows = await _fetchLastMessageRows(chunk);
+        _applyLastMessageRows(byConversation, rows);
       } catch (error) {
         debugPrint('[MessagesRepo] last-message fallback ignored: $error');
       }
     }
     return byConversation;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchLastMessageRows(
+    List<String> conversationIds,
+  ) async {
+    try {
+      final rows = await supabase
+          .from('messages')
+          .select(
+              'conversation_id, content, media_type, media_url, metadata, created_at')
+          .inFilter('conversation_id', conversationIds)
+          .eq('is_deleted', false)
+          .order('created_at', ascending: false)
+          .limit(conversationIds.length * 12)
+          .timeout(const Duration(seconds: 8));
+      return _mapRows(rows);
+    } catch (error) {
+      debugPrint(
+        '[MessagesRepo] rich last-message fallback failed; retrying minimal: '
+        '$error',
+      );
+      final rows = await supabase
+          .from('messages')
+          .select('conversation_id, content, created_at')
+          .inFilter('conversation_id', conversationIds)
+          .order('created_at', ascending: false)
+          .limit(conversationIds.length * 12)
+          .timeout(const Duration(seconds: 8));
+      return _mapRows(rows);
+    }
+  }
+
+  void _applyLastMessageRows(
+    Map<String, String?> byConversation,
+    List<Map<String, dynamic>> rows,
+  ) {
+    for (final row in rows) {
+      final conversationId = row['conversation_id']?.toString();
+      if (conversationId == null || conversationId.isEmpty) continue;
+      if (byConversation[conversationId]?.trim().isNotEmpty == true) continue;
+
+      final preview = _messagePreviewFromMap(row);
+      if (preview == null || preview.trim().isEmpty) continue;
+      byConversation[conversationId] = preview;
+    }
+  }
+
+  Future<void> _fillUnreadCountsFromMessages({
+    required List<String> ids,
+    required Map<String, dynamic> partMap,
+    required String userId,
+    required Map<String, int> unreadMap,
+    required Map<String, int> mentionMap,
+  }) async {
+    for (var i = 0; i < ids.length; i += 50) {
+      final chunk = ids.sublist(i, (i + 50).clamp(0, ids.length));
+      try {
+        final rows = await supabase
+            .from('messages')
+            .select('conversation_id, sender_id, content, created_at')
+            .inFilter('conversation_id', chunk)
+            .neq('sender_id', userId)
+            .eq('is_deleted', false)
+            .order('created_at', ascending: false)
+            .limit(chunk.length * 100)
+            .timeout(const Duration(seconds: 8));
+        for (final row in _mapRows(rows)) {
+          final conversationId = row['conversation_id']?.toString();
+          if (conversationId == null || conversationId.isEmpty) continue;
+          final lastReadAt = _lastReadAt(partMap[conversationId]);
+          final createdAt =
+              DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal();
+          if (lastReadAt != null &&
+              createdAt != null &&
+              !createdAt.isAfter(lastReadAt)) {
+            continue;
+          }
+          unreadMap[conversationId] = (unreadMap[conversationId] ?? 0) + 1;
+          final content = row['content']?.toString().toLowerCase() ?? '';
+          if (content.contains('@')) {
+            mentionMap[conversationId] = (mentionMap[conversationId] ?? 0) + 1;
+          }
+        }
+      } catch (error) {
+        debugPrint('[MessagesRepo] unread fallback ignored: $error');
+      }
+    }
+  }
+
+  DateTime? _lastReadAt(dynamic participation) {
+    if (participation is! Map) return null;
+    final raw = participation['last_read_at'];
+    if (raw == null) return null;
+    return DateTime.tryParse(raw.toString())?.toLocal();
+  }
+
+  String? _messagePreviewFromMap(Map<String, dynamic> map) {
+    final content = map['content']?.toString().trim();
+    if (content != null && content.isNotEmpty) return content;
+
+    final metadata = _metadataFrom(map['metadata']);
+    final type = (map['media_type'] ?? metadata['media_type'])
+        ?.toString()
+        .toLowerCase()
+        .trim();
+    switch (type) {
+      case 'image':
+      case 'photo':
+        return 'Rasm';
+      case 'video':
+      case 'video_note':
+        return 'Video';
+      case 'voice':
+      case 'audio':
+        return 'Ovozli xabar';
+      case 'gif':
+        return 'GIF';
+      case 'sticker':
+        return 'Stiker';
+      case 'location':
+      case 'live_location':
+        return 'Joylashuv';
+      case 'file':
+      case 'document':
+        return 'Fayl';
+    }
+
+    final mediaUrls = metadata['media_urls'];
+    if (mediaUrls is List && mediaUrls.isNotEmpty) return 'Media';
+    final mediaUrl = map['media_url']?.toString().trim();
+    if (mediaUrl != null && mediaUrl.isNotEmpty) return 'Media';
+    if (metadata['poll'] is Map) return "So'rovnoma";
+    if (metadata['shared_post_id'] != null || map['shared_post_id'] != null) {
+      return 'Post';
+    }
+    return null;
   }
 
   DateTime _conversationTimestamp(Map<String, dynamic> conversation) {
@@ -397,6 +537,19 @@ class MessagesRepository {
         .whereType<Map>()
         .map((row) => Map<String, dynamic>.from(row))
         .toList(growable: false);
+  }
+
+  Map<String, dynamic> _metadataFrom(Object? raw) {
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {
+        return {};
+      }
+    }
+    return {};
   }
 
   Future<List<Message>> _hydrateThumbnailCache(List<Message> messages) async {
