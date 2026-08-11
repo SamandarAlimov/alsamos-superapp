@@ -141,6 +141,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       _scheduleDraftSync();
       _updateAutocomplete();
     });
+    _focusNode.addListener(_onInputFocusChanged);
     // Scroll listener for scroll-to-bottom button
     _scrollController.addListener(_onScroll);
     // Initialize recording pulse animation
@@ -148,6 +149,10 @@ class _ChatPageState extends ConsumerState<ChatPage>
       vsync: this,
       duration: const Duration(seconds: 1),
     );
+  }
+
+  void _onInputFocusChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onScroll() {
@@ -180,6 +185,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     } else {
       chatDrafts.remove(widget.conversationId);
     }
+    _focusNode.removeListener(_onInputFocusChanged);
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -3214,125 +3220,166 @@ class _ChatPageState extends ConsumerState<ChatPage>
   }
 
   Widget _composer(AlsamosColors c, ThemeData theme) {
+    final primary = theme.colorScheme.primary;
+    final isDark = theme.brightness == Brightness.dark;
+    final composerSurface = c.card.withValues(alpha: isDark ? 0.78 : 0.86);
+    final inputSurface = c.muted.withValues(alpha: isDark ? 0.52 : 0.74);
+    final subtleShadow = [
+      BoxShadow(
+        color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.08),
+        blurRadius: 24,
+        offset: const Offset(0, -8),
+      ),
+    ];
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          decoration: BoxDecoration(
-              color: c.card, border: Border(top: BorderSide(color: c.border))),
-          child: SafeArea(
-              top: false,
-              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                IconButton(
-                    icon: Icon(LucideIcons.plus, color: c.mutedForeground),
-                    onPressed: _showAttachmentMenu),
-                Expanded(
-                    child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 120),
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    maxLines: null,
-                    keyboardType: TextInputType.multiline,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      hintText: 'Xabar yozing...',
-                      filled: true,
-                      fillColor: c.muted,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide.none),
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: Icon(LucideIcons.sticker,
-                                color: c.mutedForeground, size: 20),
-                            onPressed: _showStickerPicker,
+        ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+              decoration: BoxDecoration(
+                color: composerSurface,
+                border: Border(top: BorderSide(color: c.border)),
+                boxShadow: subtleShadow,
+              ),
+              child: SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _ComposerCircleButton(
+                      icon: LucideIcons.plus,
+                      foreground: c.mutedForeground,
+                      background: c.muted.withValues(alpha: 0.48),
+                      borderColor: c.border,
+                      onPressed: _showAttachmentMenu,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Container(
+                        constraints: const BoxConstraints(
+                          minHeight: 48,
+                          maxHeight: 148,
+                        ),
+                        decoration: BoxDecoration(
+                          color: inputSurface,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: _focusNode.hasFocus
+                                ? primary.withValues(alpha: 0.34)
+                                : c.border.withValues(alpha: 0.75),
                           ),
-                          IconButton(
-                            icon: Icon(LucideIcons.smile,
-                                color: c.mutedForeground, size: 20),
-                            onPressed: () async {
-                              final emoji =
-                                  await EmojiPickerSheet.show(context);
-                              if (emoji != null && mounted) {
-                                final sel = _controller.selection;
-                                final base = _controller.text;
-                                final pos =
-                                    sel.isValid ? sel.start : base.length;
-                                final newText = base.substring(0, pos) +
-                                    emoji +
-                                    base.substring(pos);
-                                _controller.text = newText;
-                                _controller.selection = TextSelection.collapsed(
-                                    offset: pos + emoji.length);
-                              }
-                            },
-                          ),
-                        ],
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black
+                                  .withValues(alpha: isDark ? 0.10 : 0.04),
+                              blurRadius: 16,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 5, 7, 5),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _controller,
+                                focusNode: _focusNode,
+                                minLines: 1,
+                                maxLines: 6,
+                                keyboardType: TextInputType.multiline,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
+                                style: TextStyle(
+                                  color: c.foreground,
+                                  fontSize: 16,
+                                  height: 1.25,
+                                ),
+                                cursorColor: primary,
+                                decoration: InputDecoration(
+                                  hintText: 'Xabar yozing...',
+                                  hintStyle: TextStyle(
+                                    color: c.mutedForeground
+                                        .withValues(alpha: 0.82),
+                                  ),
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(vertical: 9),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            _ComposerIconButton(
+                              icon: LucideIcons.sticker,
+                              color: c.mutedForeground,
+                              onPressed: _showStickerPicker,
+                            ),
+                            _ComposerIconButton(
+                              icon: LucideIcons.smile,
+                              color: c.mutedForeground,
+                              onPressed: _pickEmojiForComposer,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                )),
-                const SizedBox(width: 6),
-                // v33: send vs mic switcher (autocomplete overlay positioning anchor)
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 150),
-                  child: _hasText
-                      ? Container(
-                          key: const ValueKey('send'),
-                          decoration: BoxDecoration(
-                              color: theme.colorScheme.primary,
-                              shape: BoxShape.circle),
-                          child: GestureDetector(
-                            onLongPress: _showSendOptions,
-                            child: IconButton(
-                                icon: const Icon(LucideIcons.send,
-                                    color: Colors.white, size: 20),
-                                onPressed: _send),
-                          ),
-                        )
-                      : GestureDetector(
-                          key: ValueKey(_isMediaVideoMode ? 'video' : 'mic'),
-                          onTap: () {
-                            HapticFeedback.lightImpact();
-                            setState(
-                                () => _isMediaVideoMode = !_isMediaVideoMode);
-                          },
-                          onLongPressStart: (_) {
-                            HapticFeedback.mediumImpact();
-                            if (!_isMediaVideoMode) {
-                              _startRecording();
-                            } else {
-                              _pickAndSendMedia(ImageSource.camera,
-                                  isVideo: true);
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                                color: c.muted, shape: BoxShape.circle),
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 200),
-                              transitionBuilder: (child, anim) =>
-                                  ScaleTransition(scale: anim, child: child),
-                              child: Icon(
-                                  _isMediaVideoMode
-                                      ? LucideIcons.camera
-                                      : LucideIcons.mic,
-                                  key: ValueKey(_isMediaVideoMode),
-                                  color: c.mutedForeground,
-                                  size: 20),
+                    const SizedBox(width: 8),
+                    // v33: send vs mic switcher (autocomplete overlay positioning anchor)
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 150),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      child: _hasText
+                          ? GestureDetector(
+                              key: const ValueKey('send'),
+                              onLongPress: _showSendOptions,
+                              child: _ComposerCircleButton(
+                                icon: LucideIcons.send,
+                                foreground: Colors.white,
+                                background: primary,
+                                borderColor: Colors.transparent,
+                                shadowColor: primary.withValues(alpha: 0.34),
+                                onPressed: _send,
+                              ),
+                            )
+                          : GestureDetector(
+                              key:
+                                  ValueKey(_isMediaVideoMode ? 'video' : 'mic'),
+                              onTap: () {
+                                HapticFeedback.lightImpact();
+                                setState(() =>
+                                    _isMediaVideoMode = !_isMediaVideoMode);
+                              },
+                              onLongPressStart: (_) {
+                                HapticFeedback.mediumImpact();
+                                if (!_isMediaVideoMode) {
+                                  _startRecording();
+                                } else {
+                                  _pickAndSendMedia(ImageSource.camera,
+                                      isVideo: true);
+                                }
+                              },
+                              child: _ComposerCircleButton(
+                                icon: _isMediaVideoMode
+                                    ? LucideIcons.camera
+                                    : LucideIcons.mic,
+                                foreground: c.mutedForeground,
+                                background: c.muted.withValues(alpha: 0.58),
+                                borderColor: c.border,
+                                onPressed: null,
+                              ),
                             ),
-                          ),
-                        ),
+                    ),
+                  ],
                 ),
-              ])),
+              ),
+            ),
+          ),
         ),
         // v33: autocomplete overlays — composer ustida ko'rinadi (web ekvivalent).
         // `HashtagAutocomplete`/`MentionAutocomplete` o'zlari `Positioned` qaytaradi,
@@ -3358,6 +3405,96 @@ class _ChatPageState extends ConsumerState<ChatPage>
             onClose: _closeAutocomplete,
           ),
       ],
+    );
+  }
+
+  Future<void> _pickEmojiForComposer() async {
+    final emoji = await EmojiPickerSheet.show(context);
+    if (emoji == null || !mounted) return;
+    final sel = _controller.selection;
+    final base = _controller.text;
+    final pos = sel.isValid ? sel.start : base.length;
+    final newText = base.substring(0, pos) + emoji + base.substring(pos);
+    _controller.text = newText;
+    _controller.selection = TextSelection.collapsed(offset: pos + emoji.length);
+  }
+}
+
+class _ComposerIconButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+
+  const _ComposerIconButton({
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 34,
+      height: 38,
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 34, minHeight: 38),
+        icon: Icon(icon, color: color, size: 20),
+        onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+class _ComposerCircleButton extends StatelessWidget {
+  final IconData icon;
+  final Color foreground;
+  final Color background;
+  final Color borderColor;
+  final Color? shadowColor;
+  final VoidCallback? onPressed;
+
+  const _ComposerCircleButton({
+    required this.icon,
+    required this.foreground,
+    required this.background,
+    required this.borderColor,
+    this.shadowColor,
+    this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final button = Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: background,
+        shape: BoxShape.circle,
+        border: Border.all(color: borderColor),
+        boxShadow: shadowColor == null
+            ? null
+            : [
+                BoxShadow(
+                  color: shadowColor!,
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+      ),
+      child: Icon(icon, color: foreground, size: 21),
+    );
+
+    if (onPressed == null) return button;
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: button,
+      ),
     );
   }
 }
