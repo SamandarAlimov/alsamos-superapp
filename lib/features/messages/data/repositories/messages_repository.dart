@@ -273,6 +273,13 @@ class MessagesRepository {
       try {
         final rows = await _fetchLastMessageRows(chunk);
         _applyLastMessageRows(byConversation, rows);
+        final stillMissing = chunk
+            .where((id) => byConversation[id]?.trim().isNotEmpty != true)
+            .toList(growable: false);
+        for (final conversationId in stillMissing) {
+          final row = await _fetchLastMessageRow(conversationId);
+          if (row != null) _applyLastMessageRows(byConversation, [row]);
+        }
       } catch (error) {
         debugPrint('[MessagesRepo] last-message fallback ignored: $error');
       }
@@ -289,7 +296,7 @@ class MessagesRepository {
           .select(
               'conversation_id, content, media_type, media_url, metadata, created_at')
           .inFilter('conversation_id', conversationIds)
-          .eq('is_deleted', false)
+          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', ascending: false)
           .limit(conversationIds.length * 12)
           .timeout(const Duration(seconds: 8));
@@ -303,10 +310,33 @@ class MessagesRepository {
           .from('messages')
           .select('conversation_id, content, created_at')
           .inFilter('conversation_id', conversationIds)
+          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', ascending: false)
           .limit(conversationIds.length * 12)
           .timeout(const Duration(seconds: 8));
       return _mapRows(rows);
+    }
+  }
+
+  Future<Map<String, dynamic>?> _fetchLastMessageRow(
+    String conversationId,
+  ) async {
+    try {
+      final rows = await supabase
+          .from('messages')
+          .select(
+              'conversation_id, content, media_type, media_url, metadata, created_at')
+          .eq('conversation_id', conversationId)
+          .or('is_deleted.is.null,is_deleted.eq.false')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .timeout(const Duration(seconds: 4));
+      final mapped = _mapRows(rows);
+      return mapped.isEmpty ? null : mapped.first;
+    } catch (error) {
+      debugPrint(
+          '[MessagesRepo] precise last-message fallback ignored: $error');
+      return null;
     }
   }
 
@@ -340,7 +370,7 @@ class MessagesRepository {
             .select('conversation_id, sender_id, content, created_at')
             .inFilter('conversation_id', chunk)
             .neq('sender_id', userId)
-            .eq('is_deleted', false)
+            .or('is_deleted.is.null,is_deleted.eq.false')
             .order('created_at', ascending: false)
             .limit(chunk.length * 100)
             .timeout(const Duration(seconds: 8));
