@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 
+import 'animated_emoji_catalog.dart';
+
 class AnimatedEmojiAssets {
   AnimatedEmojiAssets._();
 
@@ -42,9 +44,44 @@ class AnimatedEmojiAssets {
     '\u{1F440}': 'assets/animated_emoji/noto/1f440.json',
   };
 
-  static String? assetFor(String emoji) => _assetByEmoji[emoji];
+  static String? assetFor(String emoji) {
+    final explicitAsset = _assetByEmoji[emoji];
+    if (explicitAsset != null) return explicitAsset;
+
+    final key = _assetKeyForEmoji(emoji);
+    if (key == null) return null;
+
+    if (animatedEmojiAssetKeys.contains(key)) {
+      return _assetPathForKey(key);
+    }
+
+    final textStyleKey = '${key}_fe0f';
+    if (animatedEmojiAssetKeys.contains(textStyleKey)) {
+      return _assetPathForKey(textStyleKey);
+    }
+
+    if (key.contains('_fe0f')) {
+      final withoutVariationSelector = key.replaceAll('_fe0f', '');
+      if (animatedEmojiAssetKeys.contains(withoutVariationSelector)) {
+        return _assetPathForKey(withoutVariationSelector);
+      }
+    }
+
+    return null;
+  }
 
   static bool hasAsset(String emoji) => assetFor(emoji) != null;
+
+  static String _assetPathForKey(String key) =>
+      'assets/animated_emoji/noto/$key.json';
+
+  static String? _assetKeyForEmoji(String emoji) {
+    final trimmed = emoji.trim();
+    if (trimmed.isEmpty) return null;
+    final runes = trimmed.runes.map((rune) => rune.toRadixString(16)).toList();
+    if (runes.isEmpty) return null;
+    return runes.join('_');
+  }
 
   static void logMissing(String emoji) {
     if (!kDebugMode || _loggedMissing.contains(emoji)) return;

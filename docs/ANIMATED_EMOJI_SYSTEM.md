@@ -60,6 +60,8 @@ Current implementation:
 
 - Renderer: `lib/shared/communication/emoji/animated_emoji.dart`.
 - Bundled catalog: `assets/animated_emoji/noto/`.
+- Generated asset key catalog:
+  `lib/shared/communication/emoji/animated_emoji_catalog.dart`.
 - Attribution: `assets/animated_emoji/ATTRIBUTION.md`.
 - Consumers: emoji picker, emoji-only messages, reaction chips, reaction bar.
 
@@ -94,9 +96,9 @@ Authoring pipeline for original Alsamos packs:
 
 Launch catalog:
 
-- Keep the current Noto Animated Emoji subset for high-frequency reactions:
-  thumbs up, heart, fire, clap, laugh, cry, party, wow, sunglasses, kiss, star,
-  eyes, and related core expressions.
+- Keep the current Noto Animated Emoji catalog for high-frequency reactions and
+  Telegram-coverage-targeted codepoints from the imported reference lists. The
+  current bundled catalog contains 355 legal Noto Lottie assets.
 - Add only assets with clear license metadata.
 - Keep static Unicode rendering for unsupported long-tail emoji.
 
