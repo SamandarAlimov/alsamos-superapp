@@ -457,42 +457,24 @@ class MessagesRepository {
   }
 
   String? _messagePreviewFromMap(Map<String, dynamic> map) {
-    final content = map['content']?.toString().trim();
-    if (content != null && content.isNotEmpty) return content;
-
     final metadata = _metadataFrom(map['metadata']);
-    final denormalized = _conversationPreviewFromMap(map);
-    if (denormalized != null && denormalized.trim().isNotEmpty) {
-      return denormalized;
-    }
     final type = (map['media_type'] ?? metadata['media_type'])
         ?.toString()
         .toLowerCase()
         .trim();
-    switch (type) {
-      case 'image':
-      case 'photo':
-        return 'Rasm';
-      case 'video':
-      case 'video_note':
-        return 'Video';
-      case 'voice':
-      case 'audio':
-        return 'Ovozli xabar';
-      case 'gif':
-        return 'GIF';
-      case 'sticker':
-        return 'Stiker';
-      case 'emoji':
-      case 'animated_emoji':
-        return 'Emoji';
-      case 'location':
-      case 'live_location':
-        return 'Joylashuv';
-      case 'file':
-      case 'document':
-        return 'Fayl';
+    final mediaLabel = _mediaPreviewLabel(type);
+
+    final content =
+        _normalizePreviewText(map['content']?.toString(), mediaLabel);
+    if (content != null && content.isNotEmpty) return content;
+
+    final denormalized =
+        _normalizePreviewText(_conversationPreviewFromMap(map), mediaLabel);
+    if (denormalized != null && denormalized.isNotEmpty) {
+      return denormalized;
     }
+
+    if (mediaLabel != null) return mediaLabel;
 
     final mediaUrls = metadata['media_urls'];
     if (mediaUrls is List && mediaUrls.isNotEmpty) return 'Media';
@@ -538,34 +520,14 @@ class MessagesRepository {
   }
 
   static String? previewForMessage(Message message) {
-    final content = message.content?.trim();
-    if (content != null && content.isNotEmpty) return content;
-
     final type = (message.mediaType ?? message.metadata['media_type'])
         ?.toString()
         .toLowerCase()
         .trim();
-    switch (type) {
-      case 'image':
-      case 'photo':
-        return 'Rasm';
-      case 'video':
-      case 'video_note':
-        return 'Video';
-      case 'voice':
-      case 'audio':
-        return 'Ovozli xabar';
-      case 'gif':
-        return 'GIF';
-      case 'sticker':
-        return 'Stiker';
-      case 'location':
-      case 'live_location':
-        return 'Joylashuv';
-      case 'file':
-      case 'document':
-        return 'Fayl';
-    }
+    final mediaLabel = _mediaPreviewLabel(type);
+    final content = _normalizePreviewText(message.content, mediaLabel);
+    if (content != null && content.isNotEmpty) return content;
+    if (mediaLabel != null) return mediaLabel;
 
     final mediaUrls = message.metadata['media_urls'];
     if (mediaUrls is List && mediaUrls.isNotEmpty) return 'Media';
@@ -576,6 +538,100 @@ class MessagesRepository {
       return 'Post';
     }
     return null;
+  }
+
+  static String? _mediaPreviewLabel(String? type) {
+    switch (type) {
+      case 'image':
+      case 'photo':
+        return 'Rasm';
+      case 'album':
+        return 'Album';
+      case 'video':
+      case 'video_note':
+        return 'Video';
+      case 'voice':
+        return 'Ovozli xabar';
+      case 'audio':
+        return 'Audio';
+      case 'gif':
+        return 'GIF';
+      case 'sticker':
+        return 'Stiker';
+      case 'emoji':
+      case 'animated_emoji':
+        return 'Emoji';
+      case 'location':
+      case 'live_location':
+        return 'Joylashuv';
+      case 'file':
+      case 'document':
+        return 'Fayl';
+      case 'poll':
+        return "So'rovnoma";
+      case 'contact':
+        return 'Kontakt';
+      case 'call_history':
+        return "Qo'ng'iroq";
+      default:
+        return null;
+    }
+  }
+
+  static String? _normalizePreviewText(String? raw, String? mediaLabel) {
+    var text = raw?.trim();
+    if (text == null || text.isEmpty) return null;
+
+    var hadTechnicalBlock = false;
+    text = text.replaceAllMapped(
+      RegExp(r'\[media:(image|video|gif):[^\]]+\]', caseSensitive: false),
+      (match) {
+        hadTechnicalBlock = true;
+        return mediaLabel ?? _mediaPreviewLabel(match.group(1)) ?? 'Media';
+      },
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'\[(.*?)\]\(plugin://[^)]+\)', caseSensitive: false),
+      (match) {
+        hadTechnicalBlock = true;
+        return match.group(1)?.trim() ?? 'Plugin';
+      },
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'\[(.*?)\]\((?:file|blob):[^)]+\)', caseSensitive: false),
+      (match) {
+        hadTechnicalBlock = true;
+        return match.group(1)?.trim() ?? mediaLabel ?? 'Media';
+      },
+    );
+
+    final musicMatch = RegExp(r'\[music\].*?\[/music\]', caseSensitive: false)
+        .firstMatch(text);
+    if (musicMatch != null) {
+      hadTechnicalBlock = true;
+      text = text.replaceAll(musicMatch.group(0)!, 'Musiqa');
+    }
+
+    text = text
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'^\s*[-–—•]+\s*'), '')
+        .trim();
+    if (text.isEmpty) return mediaLabel;
+
+    final lower = text.toLowerCase();
+    final looksLikeRawJson = (text.startsWith('{') && text.endsWith('}')) ||
+        (text.startsWith('[') && text.endsWith(']') && text.contains(':'));
+    final looksLikeInternalUri = lower.contains('plugin://') ||
+        lower.contains('storage/v1/object') ||
+        lower.startsWith('file://') ||
+        lower.startsWith('blob:');
+    if ((looksLikeRawJson || looksLikeInternalUri) && mediaLabel != null) {
+      return mediaLabel;
+    }
+    if (hadTechnicalBlock && text.length > 80 && mediaLabel != null) {
+      return mediaLabel;
+    }
+    return text;
   }
 
   DateTime _conversationTimestamp(Map<String, dynamic> conversation) {
