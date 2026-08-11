@@ -1305,7 +1305,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
               close();
               Future<void>.microtask(() async {
                 if (!mounted) return;
-                final emoji = await EmojiPickerSheet.show(context);
+                final emoji = await EmojiPickerSheet.showReactions(context);
                 if (emoji == null || emoji.isEmpty) return;
                 onReact(emoji);
               });
