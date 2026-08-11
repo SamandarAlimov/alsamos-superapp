@@ -121,6 +121,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
       if (cached.isNotEmpty && mounted) {
         _trackProcessed(cached.map((m) => m.id));
         state = state.copyWith(messages: cached, isLoading: false);
+        _updateConversationPreview(cached);
       }
     } catch (_) {}
   }
@@ -140,6 +141,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
       if (!mounted) return;
       _trackProcessed(msgs.map((m) => m.id));
       state = state.copyWith(messages: msgs, isLoading: false);
+      _updateConversationPreview(msgs);
       unawaited(_finishInitialLoad(msgs));
     } catch (e, st) {
       debugPrint('[MessagesNotifier] Error loading messages: $e');
@@ -163,6 +165,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
       );
       _trackProcessed(merged.map((m) => m.id));
       state = state.copyWith(messages: merged, isLoading: false);
+      _updateConversationPreview(merged);
       _markLocalConversationRead();
       await _saveCache(merged);
       if (!mounted) return;
@@ -178,6 +181,13 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
 
   void setReplyTo(String? id) => state = state.copyWith(replyToId: id);
   void setEditing(String? id) => state = state.copyWith(editingId: id);
+
+  void _updateConversationPreview(List<Message> messages) {
+    if (messages.isEmpty) return;
+    _ref
+        .read(conversationsProvider.notifier)
+        .updatePreviewFromMessages(_convId, messages);
+  }
 
   void sendTyping(bool isTyping) {
     if (_userId == null) return;
@@ -345,144 +355,148 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
                 await _saveCache(updated);
                 final userId = _userId;
                 if (userId != null && message.senderId != userId) {
-                  unawaited(_repo.markMessagesDelivered(
-                      _convId, userId, messages: [message]));
+                  unawaited(_repo.markMessagesDelivered(_convId, userId,
+                      messages: [message]));
                   unawaited(_repo.markConversationRead(_convId, userId));
                   _markLocalConversationRead();
                 }
               }
             } catch (e, stack) {
-              debugPrint('[MessagesProvider] Error handling message insert: $e\n$stack');
+              debugPrint(
+                  '[MessagesProvider] Error handling message insert: $e\n$stack');
             }
           },
         )
-      ..onBroadcast(
-        event: 'typing',
-        callback: (payload) {
-          final from = payload['user_id'] as String?;
-          final conversationId = payload['conversation_id'] as String?;
-          final typing = payload['is_typing'] == true;
-          if (from == null || from == _userId || conversationId != _convId) {
-            return;
-          }
-          final users = {...state.typingUsers};
-          if (typing) {
-            users[from] = TypingUser(
-              userId: from,
-              name: (payload['name'] as String?)?.trim().isNotEmpty == true
-                  ? payload['name'] as String
-                  : 'User',
-              expiresAt: DateTime.now().add(const Duration(seconds: 3)),
-            );
-          } else {
-            users.remove(from);
-          }
-          _typingOffTimer?.cancel();
-          state =
-              state.copyWith(isTyping: users.isNotEmpty, typingUsers: users);
-          if (typing) {
-            _typingOffTimer =
-                Timer(const Duration(seconds: 3), _expireTypingUsers);
-          }
-        },
-      )
-      ..onPostgresChanges(
-        event: PostgresChangeEvent.update,
-        schema: 'public',
-        table: 'messages',
-        filter: PostgresChangeFilter(
-          type: PostgresChangeFilterType.eq,
-          column: 'conversation_id',
-          value: _convId,
-        ),
-        callback: (payload) async {
-          try {
-            final id = payload.newRecord['id'] as String?;
-            if (id == null) return;
-            final deleted = payload.newRecord['is_deleted'] as bool? ?? false;
-            if (deleted) {
-              final updated = state.messages
-                  .map((m) => m.id == id
-                      ? m.copyWith(
-                          isDeleted: true,
-                        )
-                      : m)
-                  .toList();
-              state = state.copyWith(messages: updated);
-              await _saveCache(updated);
+        ..onBroadcast(
+          event: 'typing',
+          callback: (payload) {
+            final from = payload['user_id'] as String?;
+            final conversationId = payload['conversation_id'] as String?;
+            final typing = payload['is_typing'] == true;
+            if (from == null || from == _userId || conversationId != _convId) {
               return;
             }
-            final data = await supabase
-                .from('messages')
-                .select(
-                    '*, sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)')
-                .eq('id', id)
-                .maybeSingle();
-            if (data == null) return;
-            final message =
-                await _repo.hydratePrivateMediaUrl(Message.fromMap(data));
-            final updated = state.messages
-                .map((m) => m.id == id ? message.copyWith(status: m.status) : m)
-                .toList()
-              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-            state = state.copyWith(messages: updated);
-            await _saveCache(updated);
-          } catch (e, stack) {
-            debugPrint('[MessagesProvider] Error handling message update: $e\n$stack');
-          }
-        },
-      )
-      ..onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'message_reads',
-        callback: (_) {
-          _scheduleReadStatusRefresh();
-          _refreshReadReceipts();
-        },
-      )
-      ..onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'message_delivery_receipts',
-        callback: (_) => _scheduleReadStatusRefresh(),
-      )
-      ..onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'message_reactions',
-        callback: (_) => _refreshReactions(),
-      )
-      ..onPostgresChanges(
-        event: PostgresChangeEvent.insert,
-        schema: 'public',
-        table: 'message_poll_votes',
-        callback: (_) => load(),
-      )
-      ..subscribe((status, [error]) {
-        debugPrint(
-          '[MessagesProvider] realtime status for $_convId: $status'
-          '${error == null ? '' : ' error=$error'}',
-        );
-        if (status == RealtimeSubscribeStatus.subscribed) {
-          Future.microtask(() async {
-            if (!mounted) return;
-            await load();
+            final users = {...state.typingUsers};
+            if (typing) {
+              users[from] = TypingUser(
+                userId: from,
+                name: (payload['name'] as String?)?.trim().isNotEmpty == true
+                    ? payload['name'] as String
+                    : 'User',
+                expiresAt: DateTime.now().add(const Duration(seconds: 3)),
+              );
+            } else {
+              users.remove(from);
+            }
+            _typingOffTimer?.cancel();
+            state =
+                state.copyWith(isTyping: users.isNotEmpty, typingUsers: users);
+            if (typing) {
+              _typingOffTimer =
+                  Timer(const Duration(seconds: 3), _expireTypingUsers);
+            }
+          },
+        )
+        ..onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'conversation_id',
+            value: _convId,
+          ),
+          callback: (payload) async {
+            try {
+              final id = payload.newRecord['id'] as String?;
+              if (id == null) return;
+              final deleted = payload.newRecord['is_deleted'] as bool? ?? false;
+              if (deleted) {
+                final updated = state.messages
+                    .map((m) => m.id == id
+                        ? m.copyWith(
+                            isDeleted: true,
+                          )
+                        : m)
+                    .toList();
+                state = state.copyWith(messages: updated);
+                await _saveCache(updated);
+                return;
+              }
+              final data = await supabase
+                  .from('messages')
+                  .select(
+                      '*, sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)')
+                  .eq('id', id)
+                  .maybeSingle();
+              if (data == null) return;
+              final message =
+                  await _repo.hydratePrivateMediaUrl(Message.fromMap(data));
+              final updated = state.messages
+                  .map((m) =>
+                      m.id == id ? message.copyWith(status: m.status) : m)
+                  .toList()
+                ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+              state = state.copyWith(messages: updated);
+              await _saveCache(updated);
+            } catch (e, stack) {
+              debugPrint(
+                  '[MessagesProvider] Error handling message update: $e\n$stack');
+            }
+          },
+        )
+        ..onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'message_reads',
+          callback: (_) {
             _scheduleReadStatusRefresh();
-            await _refreshReadReceipts();
-            await _refreshReactions();
-            await _syncAllOutboxes();
-          });
-        } else if (status == RealtimeSubscribeStatus.channelError ||
-            status == RealtimeSubscribeStatus.timedOut) {
+            _refreshReadReceipts();
+          },
+        )
+        ..onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'message_delivery_receipts',
+          callback: (_) => _scheduleReadStatusRefresh(),
+        )
+        ..onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'message_reactions',
+          callback: (_) => _refreshReactions(),
+        )
+        ..onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'message_poll_votes',
+          callback: (_) => load(),
+        )
+        ..subscribe((status, [error]) {
           debugPrint(
-            '[MessagesProvider] realtime subscription failed for $_convId: '
-            '$status ${error ?? ''}',
+            '[MessagesProvider] realtime status for $_convId: $status'
+            '${error == null ? '' : ' error=$error'}',
           );
-        }
-      });
+          if (status == RealtimeSubscribeStatus.subscribed) {
+            Future.microtask(() async {
+              if (!mounted) return;
+              await load();
+              _scheduleReadStatusRefresh();
+              await _refreshReadReceipts();
+              await _refreshReactions();
+              await _syncAllOutboxes();
+            });
+          } else if (status == RealtimeSubscribeStatus.channelError ||
+              status == RealtimeSubscribeStatus.timedOut) {
+            debugPrint(
+              '[MessagesProvider] realtime subscription failed for $_convId: '
+              '$status ${error ?? ''}',
+            );
+          }
+        });
     } catch (e, stack) {
-      debugPrint('[MessagesProvider] Error setting up realtime subscription: $e\n$stack');
+      debugPrint(
+          '[MessagesProvider] Error setting up realtime subscription: $e\n$stack');
     }
   }
 

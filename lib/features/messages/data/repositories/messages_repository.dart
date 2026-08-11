@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import '../../../../core/supabase/supabase_client.dart';
+import '../local/messages_local_store.dart';
 import '../models/conversation_model.dart';
 import '../models/message_interaction_model.dart';
 import '../models/message_model.dart';
@@ -14,6 +15,7 @@ class MessagesRepository {
   const MessagesRepository();
   static const ContentAiService _ai = SupabaseContentAiService();
   static const ChatMediaUploadService _media = ChatMediaUploadService();
+  static final MessagesLocalStore _localStore = MessagesLocalStore.instance;
 
   Future<List<Conversation>> fetchConversations(String userId,
       {bool showArchived = false}) async {
@@ -200,7 +202,10 @@ class MessagesRepository {
         ));
       }
 
-      result.sort((a, b) {
+      final hydratedResult =
+          await _hydrateMissingConversationPreviewsFromCache(result);
+
+      hydratedResult.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
         if (a.isPinned && b.isPinned) {
           final po =
@@ -209,12 +214,50 @@ class MessagesRepository {
         }
         return b.lastMessageAt.compareTo(a.lastMessageAt);
       });
-      return result;
+      return hydratedResult;
     } catch (e, st) {
       debugPrint('[MessagesRepo] Error fetching conversations: $e');
       debugPrint('[MessagesRepo] Stack trace: $st');
       rethrow;
     }
+  }
+
+  Future<List<Conversation>> _hydrateMissingConversationPreviewsFromCache(
+    List<Conversation> conversations,
+  ) async {
+    final next = <Conversation>[];
+    for (final conversation in conversations) {
+      if (conversation.lastMessage?.trim().isNotEmpty == true) {
+        next.add(conversation);
+        continue;
+      }
+      try {
+        final cached =
+            await _localStore.loadMessages(conversation.id, limit: 20);
+        Message? latest;
+        for (final message in cached.reversed) {
+          if (!message.isDeleted) {
+            latest = message;
+            break;
+          }
+        }
+        final preview = latest == null ? null : previewForMessage(latest);
+        if (latest != null && preview?.trim().isNotEmpty == true) {
+          final lastAt = latest.createdAt.isAfter(conversation.lastMessageAt)
+              ? latest.createdAt
+              : conversation.lastMessageAt;
+          next.add(conversation.copyWith(
+            lastMessage: preview,
+            lastMessageAt: lastAt,
+          ));
+        } else {
+          next.add(conversation);
+        }
+      } catch (_) {
+        next.add(conversation);
+      }
+    }
+    return next;
   }
 
   Future<void> _fillMissingLastMessages(
@@ -441,6 +484,47 @@ class MessagesRepository {
     if (mediaUrl != null && mediaUrl.isNotEmpty) return 'Media';
     if (metadata['poll'] is Map) return "So'rovnoma";
     if (metadata['shared_post_id'] != null || map['shared_post_id'] != null) {
+      return 'Post';
+    }
+    return null;
+  }
+
+  static String? previewForMessage(Message message) {
+    final content = message.content?.trim();
+    if (content != null && content.isNotEmpty) return content;
+
+    final type = (message.mediaType ?? message.metadata['media_type'])
+        ?.toString()
+        .toLowerCase()
+        .trim();
+    switch (type) {
+      case 'image':
+      case 'photo':
+        return 'Rasm';
+      case 'video':
+      case 'video_note':
+        return 'Video';
+      case 'voice':
+      case 'audio':
+        return 'Ovozli xabar';
+      case 'gif':
+        return 'GIF';
+      case 'sticker':
+        return 'Stiker';
+      case 'location':
+      case 'live_location':
+        return 'Joylashuv';
+      case 'file':
+      case 'document':
+        return 'Fayl';
+    }
+
+    final mediaUrls = message.metadata['media_urls'];
+    if (mediaUrls is List && mediaUrls.isNotEmpty) return 'Media';
+    if (message.mediaUrl?.trim().isNotEmpty == true) return 'Media';
+    if (message.metadata['poll'] is Map) return "So'rovnoma";
+    if (message.metadata['shared_post_id'] != null ||
+        message.originalPostId != null) {
       return 'Post';
     }
     return null;

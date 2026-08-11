@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/supabase/supabase_client.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/models/conversation_model.dart';
+import '../../data/models/message_model.dart';
 import '../../data/repositories/messages_repository.dart';
 
 final messagesRepositoryProvider =
@@ -302,6 +303,31 @@ class ConversationsNotifier
         unreadCount: 0,
         mentionCount: 0,
         manuallyUnread: false,
+      ),
+    );
+  }
+
+  void updatePreviewFromMessages(
+    String conversationId,
+    List<Message> messages,
+  ) {
+    Message? latest;
+    for (final message in messages.reversed) {
+      if (!message.isDeleted) {
+        latest = message;
+        break;
+      }
+    }
+    final preview =
+        latest == null ? null : MessagesRepository.previewForMessage(latest);
+    if (latest == null || preview?.trim().isNotEmpty != true) return;
+    _patchConversation(
+      conversationId,
+      (conversation) => conversation.copyWith(
+        lastMessage: preview,
+        lastMessageAt: latest!.createdAt.isAfter(conversation.lastMessageAt)
+            ? latest.createdAt
+            : conversation.lastMessageAt,
       ),
     );
   }
