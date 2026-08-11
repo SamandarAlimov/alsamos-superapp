@@ -16,14 +16,23 @@ final messagesRepositoryProvider =
 /// Realtime list of the current user's conversations (web useConversations).
 final conversationsProvider = StateNotifierProvider<ConversationsNotifier,
     AsyncValue<List<Conversation>>>((ref) {
-  // Use ref.read() instead of ref.watch() to avoid provider invalidation
-  // when auth state changes (e.g., token refresh, presence update).
-  final userId = ref.read(authProvider).user?.id;
+  final userId = ref.watch(authProvider.select((state) => state.user?.id));
   return ConversationsNotifier(
     ref.read(messagesRepositoryProvider),
     userId,
     onFoldersChanged: () => ref.invalidate(chatFoldersProvider),
   );
+});
+
+final messagesUnreadCountProvider = Provider<int>((ref) {
+  final conversations = ref.watch(conversationsProvider).valueOrNull ?? [];
+  return conversations.fold<int>(0, (sum, conversation) {
+    if (conversation.isMutedEffective) return sum;
+    if (conversation.unreadCount > 0) {
+      return sum + conversation.unreadCount;
+    }
+    return conversation.manuallyUnread ? sum + 1 : sum;
+  });
 });
 
 final chatFoldersProvider = FutureProvider<List<ChatFolder>>((ref) async {

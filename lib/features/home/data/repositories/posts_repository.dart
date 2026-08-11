@@ -12,8 +12,9 @@ import '../models/post_model.dart';
 /// joined with `profiles`, handles like/unlike and pagination.
 class PostsRepository extends BaseRepository {
   static const _pageSize = 10;
-  static const _primaryQueryTimeout = Duration(seconds: 8);
-  static const _fallbackQueryTimeout = Duration(seconds: 12);
+  static const _primaryQueryTimeout = Duration(seconds: 6);
+  static const _fallbackQueryTimeout = Duration(seconds: 8);
+  static const _enrichmentTimeout = Duration(seconds: 2);
   final SupabaseDataSource _db;
 
   const PostsRepository({SupabaseDataSource db = const SupabaseDataSource()})
@@ -47,7 +48,7 @@ class PostsRepository extends BaseRepository {
                 .table('post_views')
                 .select('post_id, user_id')
                 .inFilter('post_id', postIds)
-                .timeout(const Duration(seconds: 5));
+                .timeout(_enrichmentTimeout);
 
             // Count unique users per post
             final viewCounts = <String, Set<String>>{};
@@ -74,7 +75,7 @@ class PostsRepository extends BaseRepository {
                   .select('post_id')
                   .eq('user_id', userId)
                   .inFilter('post_id', postIds)
-                  .timeout(const Duration(seconds: 5));
+                  .timeout(_enrichmentTimeout);
               final likedIds =
                   (likes as List).map((e) => e['post_id'] as String).toSet();
               return posts
@@ -94,6 +95,22 @@ class PostsRepository extends BaseRepository {
     required int to,
   }) async {
     try {
+      return await _fetchPublicPostRowsWithAnonymousClient(from: from, to: to);
+    } catch (error) {
+      debugPrint(
+        '[PostsRepository] anonymous public feed query failed; '
+        'retrying with authenticated client: $error',
+      );
+      return _fetchPublicPostRowsWithAuthenticatedClient(from: from, to: to);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>>
+      _fetchPublicPostRowsWithAuthenticatedClient({
+    required int from,
+    required int to,
+  }) async {
+    try {
       final rows = await _db
           .table('posts')
           .select(_selectQuery)
@@ -106,9 +123,9 @@ class PostsRepository extends BaseRepository {
     } on TimeoutException catch (error) {
       debugPrint(
         '[PostsRepository] rich public feed query timed out; '
-        'retrying with anonymous public client: $error',
+        'retrying without profile embed: $error',
       );
-      return _fetchPublicPostRowsWithAnonymousClient(from: from, to: to);
+      return _fetchPublicPostRowsWithoutEmbed(from: from, to: to);
     } catch (error) {
       debugPrint(
         '[PostsRepository] rich public feed query failed; '
@@ -318,7 +335,7 @@ class PostsRepository extends BaseRepository {
           .table('post_product_tags')
           .select('post_id, product_id')
           .inFilter('post_id', posts.map((p) => p.id).toList())
-          .timeout(const Duration(seconds: 5));
+          .timeout(_enrichmentTimeout);
       final tagsByPost = <String, List<String>>{};
       for (final row in rows as List) {
         final map = Map<String, dynamic>.from(row as Map);
@@ -349,7 +366,7 @@ class PostsRepository extends BaseRepository {
           .select('post_id, user_id')
           .inFilter('post_id', postIds)
           .eq('status', 'accepted')
-          .timeout(const Duration(seconds: 5));
+          .timeout(_enrichmentTimeout);
 
       final userIdsByPost = <String, List<String>>{};
       final userIds = <String>{};
@@ -372,7 +389,7 @@ class PostsRepository extends BaseRepository {
           .table('profiles')
           .select('id, username, display_name, avatar_url, is_verified')
           .inFilter('id', userIds.toList(growable: false))
-          .timeout(const Duration(seconds: 5));
+          .timeout(_enrichmentTimeout);
 
       final profilesById = <String, PostCollaborator>{};
       for (final row in profileRows as List) {

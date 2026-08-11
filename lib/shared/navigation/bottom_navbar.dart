@@ -37,12 +37,7 @@ class BottomNavbar extends ConsumerWidget {
     final location = GoRouterState.of(context).uri.path;
 
     final profile = ref.watch(authProvider).profile;
-    final convState = ref.watch(conversationsProvider);
-    final conversations = convState.valueOrNull ?? [];
-    final unreadCount = conversations.where((conversation) {
-      if (conversation.isMutedEffective) return false;
-      return conversation.unreadCount > 0 || conversation.manuallyUnread;
-    }).length;
+    final unreadCount = ref.watch(messagesUnreadCountProvider);
 
     return MediaQuery(
       data: MediaQuery.of(context).copyWith(

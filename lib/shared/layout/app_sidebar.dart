@@ -33,10 +33,7 @@ class AppSidebar extends ConsumerWidget {
     final location = GoRouterState.of(context).uri.path;
     final profile = ref.watch(authProvider).profile;
     final isAdmin = profile?.isAdmin ?? false;
-    final convState = ref.watch(conversationsProvider);
-    final conversations = convState.valueOrNull ?? [];
-    final messagesUnread =
-        conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
+    final messagesUnread = ref.watch(messagesUnreadCountProvider);
     final notifUnread = ref.watch(unreadNotificationsProvider);
     final width = expanded ? 256.0 : 72.0;
 
@@ -197,7 +194,8 @@ class AppSidebar extends ConsumerWidget {
 
 bool _isSidebarRouteActive(String location, String path) {
   if (location == path) return true;
-  if (path == AppRoutes.messages && location.startsWith('${AppRoutes.messages}/')) {
+  if (path == AppRoutes.messages &&
+      location.startsWith('${AppRoutes.messages}/')) {
     return true;
   }
   if (path == AppRoutes.profile &&
