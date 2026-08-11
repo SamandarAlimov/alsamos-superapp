@@ -90,8 +90,7 @@ class AnimatedEmoji extends StatelessWidget {
           animate: animate && !reduceMotion,
           repeat: animate && !reduceMotion,
           fit: fit,
-          frameRate: FrameRate.max,
-          renderCache: RenderCache.raster,
+          frameRate: FrameRate.composition,
           errorBuilder: (_, error, __) {
             if (kDebugMode) {
               debugPrint('[AnimatedEmoji] Failed to load $asset: $error');
