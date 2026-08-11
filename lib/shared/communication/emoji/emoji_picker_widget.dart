@@ -45,7 +45,8 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
   void initState() {
     super.initState();
     _manager = ref.read(emojiManagerProvider);
-    _tab = TabController(length: EmojiManager.categories.length + 1, vsync: this);
+    _tab =
+        TabController(length: EmojiManager.categories.length + 1, vsync: this);
     _searchCtrl.addListener(_onSearch);
   }
 
@@ -105,7 +106,8 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
                   Icon(Icons.search, size: 18, color: c.mutedForeground),
               suffixIcon: _searchCtrl.text.isNotEmpty
                   ? IconButton(
-                      icon: Icon(Icons.close, size: 16, color: c.mutedForeground),
+                      icon:
+                          Icon(Icons.close, size: 16, color: c.mutedForeground),
                       onPressed: () => _searchCtrl.clear())
                   : null,
               filled: true,
@@ -138,8 +140,7 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
               controller: _tab,
               children: [
                 _buildRecentTab(c),
-                ...EmojiManager.categories.map(
-                    (cat) => _buildGrid(cat.emojis)),
+                ...EmojiManager.categories.map((cat) => _buildGrid(cat.emojis)),
               ],
             ),
           ),
@@ -173,8 +174,8 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
         crossAxisSpacing: 4,
       ),
       itemCount: emojis.length,
-      itemBuilder: (_, i) => InkWell(
-        borderRadius: BorderRadius.circular(8),
+      itemBuilder: (_, i) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => _select(emojis[i]),
         onLongPress: () {
           HapticFeedback.mediumImpact();

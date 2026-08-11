@@ -72,7 +72,8 @@ class ExpressionPanel extends ConsumerWidget {
               onTap: () => StickerStoreSheet.show(context),
               child: Padding(
                 padding: const EdgeInsets.all(6),
-                child: Icon(LucideIcons.plus, size: 18, color: c.mutedForeground),
+                child:
+                    Icon(LucideIcons.plus, size: 18, color: c.mutedForeground),
               ),
             ),
         ],
@@ -91,7 +92,8 @@ class ExpressionPanel extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          color: active ? c.primary.withValues(alpha: 0.12) : Colors.transparent,
+          color:
+              active ? c.primary.withValues(alpha: 0.12) : Colors.transparent,
         ),
         child: Text(
           label,
@@ -117,8 +119,16 @@ class ExpressionPanel extends ConsumerWidget {
           onSelect: (sticker) {
             onStickerSelected(MediaAttachment(
               type: MediaAttachmentType.sticker,
-              remoteUrl: sticker.imageUrl,
-              metadata: {'sticker_id': sticker.id, 'pack_id': sticker.packId},
+              remoteUrl: sticker.displayUrl,
+              thumbnailUrl: sticker.thumbnailUrl ?? sticker.imageUrl,
+              metadata: {
+                'sticker_id': sticker.id,
+                'pack_id': sticker.packId,
+                'sticker_type': sticker.type,
+                if (sticker.lottieUrl != null) 'lottie_url': sticker.lottieUrl,
+                if (sticker.videoUrl != null) 'video_url': sticker.videoUrl,
+                if (sticker.emoji != null) 'emoji': sticker.emoji,
+              },
             ));
           },
         );

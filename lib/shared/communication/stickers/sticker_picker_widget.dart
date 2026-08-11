@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/app_theme.dart';
+import '../../../core/media_kit/presentation/widgets/sticker_store_sheet.dart';
 import '../../../core/media_kit/presentation/widgets/animated_sticker_renderer.dart';
 import '../../../core/media_kit/presentation/widgets/sticker_preview_popup.dart';
 import 'sticker_manager.dart';
@@ -38,7 +39,8 @@ class _StickerPickerWidgetState extends ConsumerState<StickerPickerWidget>
   @override
   void initState() {
     super.initState();
-    _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text.toLowerCase()));
+    _searchCtrl.addListener(
+        () => setState(() => _query = _searchCtrl.text.toLowerCase()));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final mgr = ref.read(stickerManagerProvider.notifier);
       mgr.loadInstalledPacks();
@@ -61,8 +63,9 @@ class _StickerPickerWidgetState extends ConsumerState<StickerPickerWidget>
 
   Future<List<StickerItem>> _getPackStickers(String packId) async {
     if (_packStickers.containsKey(packId)) return _packStickers[packId]!;
-    final stickers =
-        await ref.read(stickerManagerProvider.notifier).loadPackStickers(packId);
+    final stickers = await ref
+        .read(stickerManagerProvider.notifier)
+        .loadPackStickers(packId);
     _packStickers[packId] = stickers;
     return stickers;
   }
@@ -78,79 +81,103 @@ class _StickerPickerWidgetState extends ConsumerState<StickerPickerWidget>
       _tabController = TabController(length: tabCount, vsync: this);
     }
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.6,
-      decoration: BoxDecoration(
-        color: colors.background,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        border: Border.all(color: colors.border),
-      ),
-      child: Column(children: [
-        Container(
-          margin: const EdgeInsets.only(top: 8, bottom: 4),
-          width: 38,
-          height: 4,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.hasBoundedHeight &&
+            constraints.maxHeight.isFinite &&
+            constraints.maxHeight > 0;
+        final height = bounded
+            ? constraints.maxHeight
+            : MediaQuery.of(context).size.height * 0.6;
+        return Container(
+          height: height,
           decoration: BoxDecoration(
-              color: colors.mutedForeground.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(2)),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: TextField(
-            controller: _searchCtrl,
-            style: const TextStyle(fontSize: 13),
-            decoration: InputDecoration(
-              hintText: 'Stiker qidirish...',
-              prefixIcon:
-                  Icon(LucideIcons.search, size: 16, color: colors.mutedForeground),
-              filled: true,
-              fillColor: colors.muted,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              isDense: true,
+            color: colors.background,
+            borderRadius: bounded
+                ? null
+                : const BorderRadius.vertical(top: Radius.circular(20)),
+            border: bounded ? null : Border.all(color: colors.border),
+          ),
+          child: Column(children: [
+            Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: colors.mutedForeground.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2)),
             ),
-          ),
-        ),
-        TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          indicatorWeight: 2,
-          tabs: [
-            const Tab(icon: Icon(LucideIcons.clock, size: 18)),
-            ...state.installedPacks.map((pack) => Tab(
-                  child: pack.coverUrl != null
-                      ? CachedNetworkImage(
-                          imageUrl: pack.coverUrl!,
-                          width: 24,
-                          height: 24,
-                          fit: BoxFit.contain,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(LucideIcons.sticker, size: 18),
-                        )
-                      : const Icon(LucideIcons.sticker, size: 18),
-                )),
-          ],
-        ),
-        Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              _buildRecentsGrid(state.recentStickers, colors),
-              ...state.installedPacks
-                  .map((pack) => _PackGrid(
-                        packId: pack.id,
-                        loader: _getPackStickers,
-                        query: _query,
-                        onSelect: _select,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: TextField(
+                controller: _searchCtrl,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Stiker qidirish...',
+                  prefixIcon: Icon(LucideIcons.search,
+                      size: 16, color: colors.mutedForeground),
+                  filled: true,
+                  fillColor: colors.muted,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  isDense: true,
+                ),
+              ),
+            ),
+            if (state.loading)
+              const LinearProgressIndicator(minHeight: 1)
+            else
+              const SizedBox(height: 1),
+            if (state.installedPacks.isNotEmpty ||
+                state.recentStickers.isNotEmpty)
+              TabBar(
+                controller: _tabController,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                indicatorWeight: 2,
+                tabs: [
+                  const Tab(icon: Icon(LucideIcons.clock, size: 18)),
+                  ...state.installedPacks.map((pack) => Tab(
+                        child: pack.coverUrl != null
+                            ? CachedNetworkImage(
+                                imageUrl: pack.coverUrl!,
+                                width: 24,
+                                height: 24,
+                                fit: BoxFit.contain,
+                                errorWidget: (_, __, ___) =>
+                                    const Icon(LucideIcons.sticker, size: 18),
+                              )
+                            : const Icon(LucideIcons.sticker, size: 18),
                       )),
-            ],
-          ),
-        ),
-      ]),
+                ],
+              ),
+            Expanded(
+              child:
+                  state.installedPacks.isEmpty && state.recentStickers.isEmpty
+                      ? _StickerEmptyState(
+                          colors: colors,
+                          loading: state.loading,
+                          onBrowse: () => StickerStoreSheet.show(context),
+                        )
+                      : TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildRecentsGrid(state.recentStickers, colors),
+                            ...state.installedPacks.map((pack) => _PackGrid(
+                                  packId: pack.id,
+                                  loader: _getPackStickers,
+                                  query: _query,
+                                  onSelect: _select,
+                                )),
+                          ],
+                        ),
+            ),
+          ]),
+        );
+      },
     );
   }
 
@@ -219,6 +246,15 @@ class _PackGridState extends State<_PackGrid> {
         : _stickers!
             .where((s) => (s.emoji ?? '').toLowerCase().contains(widget.query))
             .toList();
+    if (filtered.isEmpty) {
+      final colors = AlsamosColors.of(context);
+      return Center(
+        child: Text(
+          widget.query.isEmpty ? 'Bu paketda stiker yo\'q' : 'Stiker topilmadi',
+          style: TextStyle(fontSize: 13, color: colors.mutedForeground),
+        ),
+      );
+    }
     return GridView.builder(
       padding: const EdgeInsets.all(8),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -230,6 +266,59 @@ class _PackGridState extends State<_PackGrid> {
       itemBuilder: (_, i) => _StickerTile(
         sticker: filtered[i],
         onTap: () => widget.onSelect(filtered[i]),
+      ),
+    );
+  }
+}
+
+class _StickerEmptyState extends StatelessWidget {
+  final AlsamosColors colors;
+  final bool loading;
+  final VoidCallback onBrowse;
+
+  const _StickerEmptyState({
+    required this.colors,
+    required this.loading,
+    required this.onBrowse,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+    final primary = Theme.of(context).colorScheme.primary;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.sticker, size: 38, color: colors.mutedForeground),
+            const SizedBox(height: 10),
+            Text(
+              'Stiker paketlari yo\'q',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: colors.foreground,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Paket qo\'shing yoki GIF/emoji yuboring.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: colors.mutedForeground),
+            ),
+            const SizedBox(height: 14),
+            TextButton.icon(
+              onPressed: onBrowse,
+              icon: const Icon(LucideIcons.plus, size: 16),
+              label: const Text('Stiker qo\'shish'),
+              style: TextButton.styleFrom(foregroundColor: primary),
+            ),
+          ],
+        ),
       ),
     );
   }
