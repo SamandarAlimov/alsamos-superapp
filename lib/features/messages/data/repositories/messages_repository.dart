@@ -123,6 +123,14 @@ class MessagesRepository {
       final unreadMap = <String, int>{};
       final lastMsgMap = <String, String?>{};
       final mentionMap = <String, int>{};
+      for (final conv in convos) {
+        final convId = conv['id']?.toString();
+        if (convId == null || convId.isEmpty) continue;
+        final preview = _conversationPreviewFromMap(conv);
+        if (preview != null && preview.trim().isNotEmpty) {
+          lastMsgMap[convId] = preview;
+        }
+      }
       var unreadRpcHydrated = false;
       if (unreadData is List) {
         for (final row in unreadData) {
@@ -130,7 +138,8 @@ class MessagesRepository {
           if (cid == null) continue;
           unreadRpcHydrated = true;
           unreadMap[cid] = (row['unread_count'] as num?)?.toInt() ?? 0;
-          lastMsgMap[cid] = row['last_message_content'] as String?;
+          lastMsgMap[cid] =
+              _messagePreviewFromMap(Map<String, dynamic>.from(row));
           mentionMap[cid] = (row['mention_count'] as num?)?.toInt() ?? 0;
         }
       }
@@ -277,11 +286,13 @@ class MessagesRepository {
           .onError((_, __) => <dynamic>[]);
       if (rows is List) {
         for (final row in rows) {
-          final cid = row['conversation_id'] as String?;
+          if (row is! Map) continue;
+          final mapped = Map<String, dynamic>.from(row);
+          final cid = mapped['conversation_id'] as String?;
           if (cid == null) continue;
-          final content = row['content'] as String?;
-          if (content == null || content.trim().isEmpty) continue;
-          lastMsgMap[cid] = content;
+          final preview = _messagePreviewFromMap(mapped);
+          if (preview == null || preview.trim().isEmpty) continue;
+          lastMsgMap[cid] = preview;
         }
       }
     }
@@ -337,11 +348,10 @@ class MessagesRepository {
       final rows = await supabase
           .from('messages')
           .select(
-              'conversation_id, content, media_type, media_url, metadata, created_at')
+              'conversation_id, content, media_type, media_url, metadata, original_post_id, is_deleted, created_at')
           .inFilter('conversation_id', conversationIds)
-          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', ascending: false)
-          .limit(conversationIds.length * 12)
+          .limit(conversationIds.length * 20)
           .timeout(const Duration(seconds: 8));
       return _mapRows(rows);
     } catch (error) {
@@ -351,11 +361,10 @@ class MessagesRepository {
       );
       final rows = await supabase
           .from('messages')
-          .select('conversation_id, content, created_at')
+          .select('conversation_id, content, is_deleted, created_at')
           .inFilter('conversation_id', conversationIds)
-          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', ascending: false)
-          .limit(conversationIds.length * 12)
+          .limit(conversationIds.length * 20)
           .timeout(const Duration(seconds: 8));
       return _mapRows(rows);
     }
@@ -368,14 +377,13 @@ class MessagesRepository {
       final rows = await supabase
           .from('messages')
           .select(
-              'conversation_id, content, media_type, media_url, metadata, created_at')
+              'conversation_id, content, media_type, media_url, metadata, original_post_id, is_deleted, created_at')
           .eq('conversation_id', conversationId)
-          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', ascending: false)
-          .limit(1)
+          .limit(20)
           .timeout(const Duration(seconds: 4));
       final mapped = _mapRows(rows);
-      return mapped.isEmpty ? null : mapped.first;
+      return _firstPreviewableMessageRow(mapped);
     } catch (error) {
       debugPrint(
           '[MessagesRepo] precise last-message fallback ignored: $error');
@@ -388,6 +396,7 @@ class MessagesRepository {
     List<Map<String, dynamic>> rows,
   ) {
     for (final row in rows) {
+      if ((row['is_deleted'] as bool?) == true) continue;
       final conversationId = row['conversation_id']?.toString();
       if (conversationId == null || conversationId.isEmpty) continue;
       if (byConversation[conversationId]?.trim().isNotEmpty == true) continue;
@@ -452,6 +461,10 @@ class MessagesRepository {
     if (content != null && content.isNotEmpty) return content;
 
     final metadata = _metadataFrom(map['metadata']);
+    final denormalized = _conversationPreviewFromMap(map);
+    if (denormalized != null && denormalized.trim().isNotEmpty) {
+      return denormalized;
+    }
     final type = (map['media_type'] ?? metadata['media_type'])
         ?.toString()
         .toLowerCase()
@@ -470,6 +483,9 @@ class MessagesRepository {
         return 'GIF';
       case 'sticker':
         return 'Stiker';
+      case 'emoji':
+      case 'animated_emoji':
+        return 'Emoji';
       case 'location':
       case 'live_location':
         return 'Joylashuv';
@@ -482,9 +498,41 @@ class MessagesRepository {
     if (mediaUrls is List && mediaUrls.isNotEmpty) return 'Media';
     final mediaUrl = map['media_url']?.toString().trim();
     if (mediaUrl != null && mediaUrl.isNotEmpty) return 'Media';
+    if (metadata['sticker'] is Map || metadata['sticker_id'] != null) {
+      return 'Stiker';
+    }
+    if (metadata['emoji'] != null || metadata['animated_emoji'] != null) {
+      return 'Emoji';
+    }
     if (metadata['poll'] is Map) return "So'rovnoma";
     if (metadata['shared_post_id'] != null || map['shared_post_id'] != null) {
       return 'Post';
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _firstPreviewableMessageRow(
+    List<Map<String, dynamic>> rows,
+  ) {
+    for (final row in rows) {
+      if ((row['is_deleted'] as bool?) == true) continue;
+      final preview = _messagePreviewFromMap(row);
+      if (preview != null && preview.trim().isNotEmpty) return row;
+    }
+    return null;
+  }
+
+  String? _conversationPreviewFromMap(Map<String, dynamic> map) {
+    for (final key in const [
+      'last_message_content',
+      'last_message',
+      'last_message_text',
+      'last_message_preview',
+      'message_preview',
+      'preview',
+    ]) {
+      final value = map[key];
+      if (value is String && value.trim().isNotEmpty) return value.trim();
     }
     return null;
   }
