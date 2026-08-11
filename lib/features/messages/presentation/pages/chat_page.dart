@@ -2767,11 +2767,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                                 ? null
                                                 : _onLongPress(m, isMine,
                                                     d.globalPosition),
-                                        onLongPressStart: (d) =>
-                                            _isSelectionMode
-                                                ? null
-                                                : _onLongPress(m, isMine,
-                                                    d.globalPosition),
                                         child: Stack(
                                           children: [
                                             GestureDetector(
