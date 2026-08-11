@@ -4059,7 +4059,7 @@ class _MessageReactionMenuBar extends StatelessWidget {
                       margin: const EdgeInsets.only(left: 2),
                       decoration:
                           BoxDecoration(color: c.muted, shape: BoxShape.circle),
-                      child: Icon(LucideIcons.plus,
+                      child: Icon(LucideIcons.chevronDown,
                           size: 18, color: c.mutedForeground),
                     ),
                   ),

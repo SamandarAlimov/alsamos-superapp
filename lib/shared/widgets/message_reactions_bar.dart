@@ -287,7 +287,7 @@ class _ReactionBar extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      LucideIcons.plus,
+                      LucideIcons.chevronDown,
                       size: 18,
                       color: c.mutedForeground,
                     ),
