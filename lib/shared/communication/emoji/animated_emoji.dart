@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'emoji_animation_renderer.dart';
 import 'emoji_asset.dart';
 import 'emoji_asset_provider.dart';
+import 'emoji_playback_policy.dart';
 
 class AnimatedEmojiAssets {
   AnimatedEmojiAssets._();
@@ -61,9 +62,8 @@ enum EmojiPlaybackState {
 
 class _AnimatedEmojiState extends State<AnimatedEmoji>
     with SingleTickerProviderStateMixin {
-  static const int _maxSeenPlaybackKeys = 512;
-  static final Set<String> _seenPlaybackKeys = <String>{};
-  static final List<String> _seenPlaybackOrder = <String>[];
+  static final EmojiPlaybackHistory _playbackHistory =
+      EmojiPlaybackHistory(maxEntries: 512);
 
   late final AnimationController _controller;
   EmojiAsset? _asset;
@@ -138,15 +138,7 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
     return '${asset.source.name}:${asset.id}:${asset.emoji}';
   }
 
-  bool _hasSeenPlaybackKey(String key) => _seenPlaybackKeys.contains(key);
-
-  void _markPlaybackKeySeen(String key) {
-    if (!_seenPlaybackKeys.add(key)) return;
-    _seenPlaybackOrder.add(key);
-    while (_seenPlaybackOrder.length > _maxSeenPlaybackKeys) {
-      _seenPlaybackKeys.remove(_seenPlaybackOrder.removeAt(0));
-    }
-  }
+  bool _hasSeenPlaybackKey(String key) => _playbackHistory.hasSeen(key);
 
   void _setPlaybackState(EmojiPlaybackState state) {
     if (_playbackState == state) return;
@@ -173,7 +165,7 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
       return;
     }
 
-    _markPlaybackKeySeen(key);
+    _playbackHistory.markSeen(key);
     _playOnce();
   }
 

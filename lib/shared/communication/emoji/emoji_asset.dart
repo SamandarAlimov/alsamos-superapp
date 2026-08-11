@@ -35,7 +35,5 @@ class EmojiAsset {
     this.loop = false,
   });
 
-  bool get isLottieCompatible =>
-      format == EmojiAnimationFormat.lottieJson ||
-      format == EmojiAnimationFormat.tgsJson;
+  bool get isLottieCompatible => format == EmojiAnimationFormat.lottieJson;
 }

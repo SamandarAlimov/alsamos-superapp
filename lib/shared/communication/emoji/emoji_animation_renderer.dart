@@ -65,6 +65,8 @@ class LottieEmojiAnimationRenderer extends EmojiAnimationRenderer {
 class EmojiAnimationRenderers {
   EmojiAnimationRenderers._();
 
+  static final Set<String> _loggedUnsupportedAssets = <String>{};
+
   static const List<EmojiAnimationRenderer> _renderers = [
     LottieEmojiAnimationRenderer(),
   ];
@@ -73,7 +75,7 @@ class EmojiAnimationRenderers {
     for (final renderer in _renderers) {
       if (renderer.supports(asset)) return renderer;
     }
-    if (kDebugMode) {
+    if (kDebugMode && _loggedUnsupportedAssets.add(asset.assetPath)) {
       debugPrint(
         '[AnimatedEmoji] Unsupported animation format '
         '${asset.format.name} for ${asset.assetPath}',
