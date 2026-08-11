@@ -51,19 +51,9 @@ class AnimatedEmojiAssets {
     final key = _assetKeyForEmoji(emoji);
     if (key == null) return null;
 
-    if (animatedEmojiAssetKeys.contains(key)) {
-      return _assetPathForKey(key);
-    }
-
-    final textStyleKey = '${key}_fe0f';
-    if (animatedEmojiAssetKeys.contains(textStyleKey)) {
-      return _assetPathForKey(textStyleKey);
-    }
-
-    if (key.contains('_fe0f')) {
-      final withoutVariationSelector = key.replaceAll('_fe0f', '');
-      if (animatedEmojiAssetKeys.contains(withoutVariationSelector)) {
-        return _assetPathForKey(withoutVariationSelector);
+    for (final candidate in _assetKeyCandidates(key)) {
+      if (animatedEmojiAssetKeys.contains(candidate)) {
+        return _assetPathForKey(candidate);
       }
     }
 
@@ -81,6 +71,34 @@ class AnimatedEmojiAssets {
     final runes = trimmed.runes.map((rune) => rune.toRadixString(16)).toList();
     if (runes.isEmpty) return null;
     return runes.join('_');
+  }
+
+  static Iterable<String> _assetKeyCandidates(String key) sync* {
+    yield key;
+
+    if (!key.endsWith('_fe0f')) {
+      yield '${key}_fe0f';
+    }
+
+    final withoutVariationSelector = key.replaceAll('_fe0f', '');
+    if (withoutVariationSelector != key) {
+      yield withoutVariationSelector;
+    }
+
+    final withoutSkinTone = withoutVariationSelector
+        .split('_')
+        .where((part) => !_isSkinToneModifier(part))
+        .join('_');
+    if (withoutSkinTone != withoutVariationSelector) {
+      yield withoutSkinTone;
+      yield '${withoutSkinTone}_fe0f';
+    }
+  }
+
+  static bool _isSkinToneModifier(String keyPart) {
+    final value = int.tryParse(keyPart, radix: 16);
+    if (value == null) return false;
+    return value >= 0x1F3FB && value <= 0x1F3FF;
   }
 
   static void logMissing(String emoji) {

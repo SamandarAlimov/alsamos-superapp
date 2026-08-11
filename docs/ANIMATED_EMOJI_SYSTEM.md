@@ -96,9 +96,12 @@ Authoring pipeline for original Alsamos packs:
 
 Launch catalog:
 
-- Keep the current Noto Animated Emoji catalog for high-frequency reactions and
-  Telegram-coverage-targeted codepoints from the imported reference lists. The
-  current bundled catalog contains 355 legal Noto Lottie assets.
+- Keep the current Noto Animated Emoji catalog for high-frequency reactions,
+  Telegram-coverage-targeted codepoints from the imported reference lists, and
+  the official Noto Animated Emoji API catalog. The current bundled catalog
+  contains 910 legal Noto Lottie assets. The official API listed 881 codepoint
+  entries at import time; copyright and registered-symbol animation files were
+  unavailable from the upstream CDN, so those remain static Unicode fallback.
 - Add only assets with clear license metadata.
 - Keep static Unicode rendering for unsupported long-tail emoji.
 
