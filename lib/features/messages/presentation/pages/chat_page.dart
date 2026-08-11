@@ -127,6 +127,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
   bool _edgeSwipeActive = false;
   double _edgeSwipeProgress = 0;
   bool _nextUnreadNavigationQueued = false;
+  Conversation? _resolvedConversation;
+  bool _resolvingConversation = false;
+  bool _conversationResolveScheduled = false;
 
   @override
   void initState() {
@@ -152,6 +155,68 @@ class _ChatPageState extends ConsumerState<ChatPage>
       vsync: this,
       duration: const Duration(seconds: 1),
     );
+    _scheduleConversationResolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _resolvedConversation = null;
+      _resolvingConversation = false;
+      _conversationResolveScheduled = false;
+      _scheduleConversationResolve();
+    }
+  }
+
+  void _scheduleConversationResolve() {
+    if (_conversationResolveScheduled || _resolvingConversation) return;
+    if (widget.conversation != null) return;
+    _conversationResolveScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _conversationResolveScheduled = false;
+      if (mounted) _resolveConversationIfNeeded();
+    });
+  }
+
+  Future<void> _resolveConversationIfNeeded() async {
+    if (_resolvingConversation) return;
+    if (widget.conversation != null) return;
+    if (_resolvedConversation?.id == widget.conversationId) return;
+
+    final cached = ref
+        .read(conversationsProvider)
+        .valueOrNull
+        ?.where((conversation) => conversation.id == widget.conversationId)
+        .firstOrNull;
+    if (cached != null) {
+      if (mounted) setState(() => _resolvedConversation = cached);
+      return;
+    }
+
+    final userId = ref.read(authProvider).user?.id;
+    if (userId == null) return;
+
+    if (mounted) setState(() => _resolvingConversation = true);
+    try {
+      final conversations =
+          await ref.read(messagesRepositoryProvider).fetchConversations(userId);
+      final resolved = conversations
+          .where((conversation) => conversation.id == widget.conversationId)
+          .firstOrNull;
+      if (!mounted) return;
+      if (resolved != null) {
+        setState(() => _resolvedConversation = resolved);
+      }
+    } catch (e) {
+      debugPrint('[ChatPage] Could not resolve conversation header: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _resolvingConversation = false);
+      } else {
+        _resolvingConversation = false;
+      }
+    }
   }
 
   void _onInputFocusChanged() {
@@ -2432,10 +2497,12 @@ class _ChatPageState extends ConsumerState<ChatPage>
         ref.watch(conversationsProvider).valueOrNull ?? const <Conversation>[];
     final showDeleted =
         ref.watch(showDeletedMessagesProvider).valueOrNull ?? false;
-    final conv = widget.conversation ??
-        conversations
-            .where((conversation) => conversation.id == widget.conversationId)
-            .firstOrNull;
+    final convFromProvider = conversations
+        .where((conversation) => conversation.id == widget.conversationId)
+        .firstOrNull;
+    final conv =
+        widget.conversation ?? convFromProvider ?? _resolvedConversation;
+    if (conv == null) _scheduleConversationResolve();
     final isGroup = conv?.type == 'group';
     final isChannel = conv?.type == 'channel';
     final nextUnreadChannel =
@@ -2573,7 +2640,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                           child: Text(
                                         isSelf
                                             ? 'Saqlangan xabarlar'
-                                            : (conv?.title ?? 'Suhbat'),
+                                            : (conv?.title ?? 'Yuklanmoqda...'),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
@@ -3151,7 +3218,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       avatar = StoryAvatarRing(
           userId: conv?.otherParticipant?.id,
           avatarUrl: conv?.displayAvatar,
-          fallback: conv?.initial ?? 'C',
+          fallback: conv?.initial ?? '?',
           size: 40);
     }
     return SizedBox(
