@@ -4,6 +4,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../core/media_kit/presentation/widgets/reaction_burst_overlay.dart';
+import '../emoji/animated_emoji.dart';
 import 'reaction_manager.dart';
 
 class ReactionBarWidget extends StatelessWidget {
@@ -32,8 +33,11 @@ class ReactionBarWidget extends StatelessWidget {
     final overlay = Overlay.of(context);
     final size = MediaQuery.of(context).size;
     final list = emojis ?? ReactionManager.quickReactions;
-    const barHeight = 48.0;
-    final barWidth = list.length * 38.0 + 16 + (onAddMore != null ? 38 : 0);
+    const barHeight = 58.0;
+    final naturalBarWidth =
+        list.length * 46.0 + 18 + (onAddMore != null ? 46 : 0);
+    final barWidth =
+        naturalBarWidth > size.width - 16 ? size.width - 16 : naturalBarWidth;
     double left = anchor.dx - barWidth / 2;
     if (left < 8) left = 8;
     if (left + barWidth > size.width - 8) left = size.width - 8 - barWidth;
@@ -61,25 +65,28 @@ class ReactionBarWidget extends StatelessWidget {
               alignment: Alignment.bottomCenter,
               child: Opacity(opacity: v.clamp(0, 1), child: child),
             ),
-            child: ReactionBarWidget(
-              emojis: list,
-              onSelect: (e) {
-                hide();
-                if (showBurst) {
-                  ReactionBurstOverlay.show(
-                    context,
-                    emoji: e,
-                    origin: anchor,
-                  );
-                }
-                onSelect(e);
-              },
-              onAddMore: onAddMore == null
-                  ? null
-                  : () {
-                      hide();
-                      onAddMore();
-                    },
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: size.width - 16),
+              child: ReactionBarWidget(
+                emojis: list,
+                onSelect: (e) {
+                  hide();
+                  if (showBurst) {
+                    ReactionBurstOverlay.show(
+                      context,
+                      emoji: e,
+                      origin: anchor,
+                    );
+                  }
+                  onSelect(e);
+                },
+                onAddMore: onAddMore == null
+                    ? null
+                    : () {
+                        hide();
+                        onAddMore();
+                      },
+              ),
             ),
           ),
         ),
@@ -99,55 +106,73 @@ class ReactionBarWidget extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
+        height: 54,
+        padding: const EdgeInsets.symmetric(horizontal: 7),
         decoration: BoxDecoration(
-          color: c.card,
+          color: c.card.withValues(alpha: 0.96),
           borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: c.border),
+          border: Border.all(color: c.border.withValues(alpha: 0.7)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final e in emojis)
-              InkWell(
-                onTap: () {
-                  HapticFeedback.lightImpact();
-                  onSelect(e);
-                },
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  margin: const EdgeInsets.symmetric(horizontal: 1),
-                  alignment: Alignment.center,
-                  child: Text(e, style: const TextStyle(fontSize: 24)),
-                ),
-              ),
-            if (onAddMore != null)
-              InkWell(
-                onTap: onAddMore,
-                borderRadius: BorderRadius.circular(20),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  margin: const EdgeInsets.symmetric(horizontal: 1),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.muted,
-                    shape: BoxShape.circle,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final e in emojis)
+                InkWell(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    onSelect(e);
+                  },
+                  borderRadius: BorderRadius.circular(24),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOutCubic,
+                    width: 42,
+                    height: 42,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: c.muted.withValues(alpha: 0.45),
+                      shape: BoxShape.circle,
+                    ),
+                    child: AnimatedEmoji(
+                      emoji: e,
+                      size: 34,
+                      replayOnTap: false,
+                    ),
                   ),
-                  child: Icon(LucideIcons.plus, size: 16, color: c.mutedForeground),
                 ),
-              ),
-          ],
+              if (onAddMore != null)
+                InkWell(
+                  onTap: onAddMore,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: c.muted,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      LucideIcons.plus,
+                      size: 18,
+                      color: c.mutedForeground,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

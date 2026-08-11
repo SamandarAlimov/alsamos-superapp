@@ -113,6 +113,7 @@ class AnimatedEmoji extends StatefulWidget {
   final double size;
   final bool animate;
   final BoxFit fit;
+  final bool replayOnTap;
 
   const AnimatedEmoji({
     super.key,
@@ -120,6 +121,7 @@ class AnimatedEmoji extends StatefulWidget {
     required this.size,
     this.animate = true,
     this.fit = BoxFit.contain,
+    this.replayOnTap = true,
   });
 
   @override
@@ -185,39 +187,43 @@ class _AnimatedEmojiState extends State<AnimatedEmoji>
       );
     }
 
+    final lottie = SizedBox.square(
+      dimension: widget.size,
+      child: RepaintBoundary(
+        child: Lottie.asset(
+          asset,
+          controller: _controller,
+          animate: false,
+          repeat: false,
+          fit: widget.fit,
+          frameRate: FrameRate.composition,
+          onLoaded: (composition) {
+            _controller.duration = composition.duration;
+            if (_shouldAutoPlay) {
+              _shouldAutoPlay = false;
+              _playOnce();
+            }
+          },
+          errorBuilder: (_, error, __) {
+            if (kDebugMode) {
+              debugPrint('[AnimatedEmoji] Failed to load $asset: $error');
+            }
+            return Text(
+              widget.emoji,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: widget.size, height: 1),
+            );
+          },
+        ),
+      ),
+    );
+
+    if (!widget.replayOnTap) return lottie;
+
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: _playOnce,
-      child: SizedBox.square(
-        dimension: widget.size,
-        child: RepaintBoundary(
-          child: Lottie.asset(
-            asset,
-            controller: _controller,
-            animate: false,
-            repeat: false,
-            fit: widget.fit,
-            frameRate: FrameRate.composition,
-            onLoaded: (composition) {
-              _controller.duration = composition.duration;
-              if (_shouldAutoPlay) {
-                _shouldAutoPlay = false;
-                _playOnce();
-              }
-            },
-            errorBuilder: (_, error, __) {
-              if (kDebugMode) {
-                debugPrint('[AnimatedEmoji] Failed to load $asset: $error');
-              }
-              return Text(
-                widget.emoji,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: widget.size, height: 1),
-              );
-            },
-          ),
-        ),
-      ),
+      child: lottie,
     );
   }
 }

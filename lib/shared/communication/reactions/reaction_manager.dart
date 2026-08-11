@@ -34,13 +34,16 @@ class ReactionData {
 enum ReactionTarget { message, post, comment, story }
 
 class ReactionManager {
+  static const int standardReactionLimit = 1;
+  static const int premiumReactionLimit = 3;
+
   static const List<String> quickReactions = [
-    '\u{2764}\u{FE0F}',
     '\u{1F44D}',
     '\u{1F602}',
-    '\u{1F62E}',
-    '\u{1F622}',
-    '\u{1F621}',
+    '\u{2764}\u{FE0F}',
+    '\u{1F604}',
+    '\u{1F91D}',
+    '\u{1F525}',
   ];
 
   final _client = Supabase.instance.client;
@@ -57,18 +60,34 @@ class ReactionManager {
       final table = _tableFor(targetType);
       final idColumn = _idColumnFor(targetType);
 
-      final existing = await _client
+      final existingRows = await _client
           .from(table)
-          .select('id')
+          .select('id, emoji')
           .eq(idColumn, targetId)
-          .eq('user_id', userId)
-          .eq('emoji', emoji)
-          .maybeSingle();
+          .eq('user_id', userId);
+      final userReactions = (existingRows as List)
+          .cast<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+      Map<String, dynamic>? existing;
+      for (final row in userReactions) {
+        if (row['emoji'] == emoji) {
+          existing = row;
+          break;
+        }
+      }
 
       if (existing != null) {
         await _client.from(table).delete().eq('id', existing['id'] as String);
         return false;
       } else {
+        if (standardReactionLimit == 1 && userReactions.isNotEmpty) {
+          await _client
+              .from(table)
+              .delete()
+              .eq(idColumn, targetId)
+              .eq('user_id', userId);
+        }
         await _client.from(table).insert({
           idColumn: targetId,
           'user_id': userId,
@@ -104,12 +123,14 @@ class ReactionManager {
         groups.putIfAbsent(emoji, () => []).add(uid);
       }
 
-      return groups.entries.map((e) => ReactionData(
-        emoji: e.key,
-        count: e.value.length,
-        hasReacted: userId != null && e.value.contains(userId),
-        userIds: e.value,
-      )).toList()
+      return groups.entries
+          .map((e) => ReactionData(
+                emoji: e.key,
+                count: e.value.length,
+                hasReacted: userId != null && e.value.contains(userId),
+                userIds: e.value,
+              ))
+          .toList()
         ..sort((a, b) => b.count.compareTo(a.count));
     } catch (e) {
       debugPrint('[ReactionManager] getReactions error: $e');
@@ -123,7 +144,24 @@ class ReactionManager {
     String userId,
   ) {
     final list = List<ReactionData>.from(current);
-    final idx = list.indexWhere((r) => r.emoji == emoji);
+    var idx = list.indexWhere((r) => r.emoji == emoji);
+    final isRemovingOwnReaction = idx >= 0 && list[idx].hasReacted;
+
+    if (standardReactionLimit == 1 && !isRemovingOwnReaction) {
+      for (var i = list.length - 1; i >= 0; i--) {
+        final reaction = list[i];
+        if (!reaction.hasReacted) continue;
+        if (reaction.count <= 1) {
+          list.removeAt(i);
+        } else {
+          list[i] = reaction.copyWith(
+            count: reaction.count - 1,
+            hasReacted: false,
+          );
+        }
+      }
+      idx = list.indexWhere((r) => r.emoji == emoji);
+    }
 
     if (idx >= 0) {
       final existing = list[idx];
@@ -155,16 +193,16 @@ class ReactionManager {
   }
 
   String _tableFor(ReactionTarget target) => switch (target) {
-    ReactionTarget.message => 'message_reactions',
-    ReactionTarget.post => 'post_reactions',
-    ReactionTarget.comment => 'comment_reactions',
-    ReactionTarget.story => 'story_reactions',
-  };
+        ReactionTarget.message => 'message_reactions',
+        ReactionTarget.post => 'post_reactions',
+        ReactionTarget.comment => 'comment_reactions',
+        ReactionTarget.story => 'story_reactions',
+      };
 
   String _idColumnFor(ReactionTarget target) => switch (target) {
-    ReactionTarget.message => 'message_id',
-    ReactionTarget.post => 'post_id',
-    ReactionTarget.comment => 'comment_id',
-    ReactionTarget.story => 'story_id',
-  };
+        ReactionTarget.message => 'message_id',
+        ReactionTarget.post => 'post_id',
+        ReactionTarget.comment => 'comment_id',
+        ReactionTarget.story => 'story_id',
+      };
 }

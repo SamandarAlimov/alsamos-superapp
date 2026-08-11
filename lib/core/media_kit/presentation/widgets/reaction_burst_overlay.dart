@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../shared/communication/emoji/animated_emoji.dart';
+
 class ReactionBurstOverlay extends StatefulWidget {
   final String emoji;
   final Offset origin;
@@ -73,7 +75,8 @@ class _ReactionBurstOverlayState extends State<ReactionBurstOverlay>
   List<_Particle> _generateParticles() {
     final random = Random(widget.emoji.hashCode);
     return List.generate(widget.particleCount, (i) {
-      final angle = (2 * pi * i / widget.particleCount) + random.nextDouble() * 0.4;
+      final angle =
+          (2 * pi * i / widget.particleCount) + random.nextDouble() * 0.4;
       final distance = 60.0 + random.nextDouble() * 80;
       final scale = 0.5 + random.nextDouble() * 0.8;
       final rotationSpeed = (random.nextDouble() - 0.5) * 2;
@@ -99,21 +102,27 @@ class _ReactionBurstOverlayState extends State<ReactionBurstOverlay>
             for (final particle in _particles)
               Positioned(
                 left: widget.origin.dx +
-                    cos(particle.angle) * particle.distance * Curves.easeOutCubic.transform(t) -
+                    cos(particle.angle) *
+                        particle.distance *
+                        Curves.easeOutCubic.transform(t) -
                     widget.particleSize * particle.scale / 2,
                 top: widget.origin.dy +
-                    sin(particle.angle) * particle.distance * Curves.easeOutCubic.transform(t) -
+                    sin(particle.angle) *
+                        particle.distance *
+                        Curves.easeOutCubic.transform(t) -
                     widget.particleSize * particle.scale / 2 +
                     30 * t * t,
                 child: Opacity(
                   opacity: opacity,
                   child: Transform.scale(
-                    scale: particle.scale * (1.0 + 0.3 * Curves.easeOut.transform(t)),
+                    scale: particle.scale *
+                        (1.0 + 0.3 * Curves.easeOut.transform(t)),
                     child: Transform.rotate(
                       angle: particle.rotationSpeed * t * pi,
                       child: Text(
                         widget.emoji,
-                        style: TextStyle(fontSize: widget.particleSize * particle.scale),
+                        style: TextStyle(
+                            fontSize: widget.particleSize * particle.scale),
                       ),
                     ),
                   ),
@@ -125,10 +134,12 @@ class _ReactionBurstOverlayState extends State<ReactionBurstOverlay>
               child: Opacity(
                 opacity: opacity,
                 child: Transform.scale(
-                  scale: 1.0 + 1.2 * Curves.easeOutBack.transform(min(t * 2, 1.0)),
-                  child: Text(
-                    widget.emoji,
-                    style: TextStyle(fontSize: widget.particleSize * 2),
+                  scale:
+                      1.0 + 1.2 * Curves.easeOutBack.transform(min(t * 2, 1.0)),
+                  child: AnimatedEmoji(
+                    emoji: widget.emoji,
+                    size: widget.particleSize * 2,
+                    replayOnTap: false,
                   ),
                 ),
               ),

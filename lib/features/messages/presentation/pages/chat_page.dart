@@ -43,6 +43,7 @@ import '../widgets/scheduled_messages_sheet.dart';
 import '../widgets/message_search_in_conversation.dart';
 import '../../../../shared/widgets/gif_picker.dart';
 import '../../../../shared/widgets/hashtag_autocomplete.dart';
+import '../../../../shared/communication/emoji/animated_emoji.dart';
 import 'webrtc_call_page.dart';
 import '../../data/models/sticker_model.dart';
 import '../widgets/telegram_sticker_picker.dart';
@@ -438,7 +439,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
         .toList();
 
     if (mySelectedMessages.isEmpty) {
-      AppToast.error(context, 'Faqat o\'z xabarlaringizni o\'chirishingiz mumkin');
+      AppToast.error(
+          context, 'Faqat o\'z xabarlaringizni o\'chirishingiz mumkin');
       return;
     }
 
@@ -1259,8 +1261,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final size = overlayBox?.size ?? MediaQuery.sizeOf(context);
     final localAnchor = overlayBox?.globalToLocal(anchor) ?? anchor;
     const menuWidth = 236.0;
-    const reactionWidth = 228.0;
-    const reactionHeight = 38.0;
+    final reactionWidth = size.width < 356 ? size.width - 20 : 336.0;
+    const reactionHeight = 58.0;
     final menuHeight =
         (38.0 + actions.length * 34.0 + 14.0).clamp(160.0, size.height * 0.58);
     final left = (localAnchor.dx - menuWidth / 2)
@@ -1370,7 +1372,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
           'Alsamos';
       final callerAvatar = callerProfile?['avatar_url'] as String?;
 
-      debugPrint('[ChatPage] Sending call invites to ${recipientIds.length} recipients');
+      debugPrint(
+          '[ChatPage] Sending call invites to ${recipientIds.length} recipients');
 
       final inviteChannels = <RealtimeChannel>[];
       for (final recipientId in recipientIds) {
@@ -1631,8 +1634,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
           thumbnailUrl: thumbnailUrl);
       _finishUpload(taskId);
       if (!mounted) return;
-      AppToast.success(
-          context, isVideo ? 'Video yuborildi' : 'Rasm yuborildi');
+      AppToast.success(context, isVideo ? 'Video yuborildi' : 'Rasm yuborildi');
     } catch (e) {
       if (taskId != null) _failUpload(taskId, e);
       if (!mounted) return;
@@ -2118,19 +2120,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
     if (userId == null) return;
 
     // Send sticker as message with metadata
-    final stickerUrl = sticker.lottieUrl ?? sticker.imageUrl ?? sticker.videoUrl;
+    final stickerUrl =
+        sticker.lottieUrl ?? sticker.imageUrl ?? sticker.videoUrl;
     if (stickerUrl == null) return;
 
-    await ref
-        .read(messagesProvider(widget.conversationId).notifier)
-        .send(
-          sticker.emoji, // Text fallback
-          mediaType: 'sticker',
-          mediaUrl: stickerUrl,
-          metadata: {
-            'sticker': sticker.toMap(),
-          },
-        );
+    await ref.read(messagesProvider(widget.conversationId).notifier).send(
+      sticker.emoji, // Text fallback
+      mediaType: 'sticker',
+      mediaUrl: stickerUrl,
+      metadata: {
+        'sticker': sticker.toMap(),
+      },
+    );
   }
 
   Future<void> _showStickerSheet() async {
@@ -2711,177 +2712,190 @@ class _ChatPageState extends ConsumerState<ChatPage>
                         : Builder(builder: (_) {
                             final msgsById = {for (final m in msgs) m.id: m};
                             return ListView.builder(
-                            controller: _scrollController,
-                            reverse: true,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            itemCount: msgs.length,
-                            itemBuilder: (_, i) {
-                              final idx = msgs.length - 1 - i;
-                              final m = msgs[idx];
-                              final isMine = m.senderId == userId;
-                              // ignore: unused_local_variable
-                              final next =
-                                  idx + 1 < msgs.length ? msgs[idx + 1] : null;
-                              final prev = idx - 1 >= 0 ? msgs[idx - 1] : null;
-                              final replyMessage = m.replyToId == null
-                                  ? null
-                                  : msgsById[m.replyToId];
-                              Offset tapPosition = Offset.zero;
-                              // Date divider when day changes.
-                              final showDayDivider = prev == null ||
-                                  _isDifferentDay(prev.createdAt, m.createdAt);
-                              return Column(
-                                  crossAxisAlignment: isMine
-                                      ? CrossAxisAlignment.end
-                                      : CrossAxisAlignment.start,
-                                  children: [
-                                    if (showDayDivider)
-                                      _DayDivider(
-                                          label: _dayLabel(m.createdAt), c: c),
-                                    GestureDetector(
-                                      onTapDown: (d) =>
-                                          tapPosition = d.globalPosition,
-                                      onTap: _isSelectionMode
-                                          ? () => _toggleMessageSelection(m.id)
-                                          : () => _onLongPress(
-                                              m, isMine, tapPosition),
-                                      onSecondaryTapDown: (d) =>
-                                          _isSelectionMode
-                                              ? null
-                                              : _onLongPress(
-                                                  m, isMine, d.globalPosition),
-                                      onLongPressStart: (d) => _isSelectionMode
-                                          ? null
-                                          : _onLongPress(
-                                              m, isMine, d.globalPosition),
-                                      child: Stack(
-                                        children: [
-                                          GestureDetector(
-                                            behavior:
-                                                HitTestBehavior.translucent,
-                                            child: AnimatedContainer(
-                                              duration: const Duration(
-                                                  milliseconds: 220),
-                                              curve: Curves.easeOutCubic,
-                                              decoration: BoxDecoration(
-                                                color: _highlightedMessageId ==
-                                                        m.id
-                                                    ? theme.colorScheme.primary
-                                                        .withValues(alpha: 0.12)
-                                                    : Colors.transparent,
-                                                borderRadius:
-                                                    BorderRadius.circular(14),
-                                              ),
-                                              child: MessageBubble(
-                                                message: m,
-                                                isMine: isMine,
-                                                replyMessage: replyMessage,
-                                                onCommentTap: (conv?.type ==
-                                                            'channel' &&
-                                                        conv?.linkedGroupId !=
-                                                            null)
-                                                    ? () =>
-                                                        _openDiscussionForMessage(
-                                                            m, conv!)
-                                                    : null,
-                                                onHashtagTap:
-                                                    _openHashtagSearch,
-                                                onMediaPlaybackRequested: null,
-                                                onReplyPreviewTap:
-                                                    m.replyToId == null
-                                                        ? null
-                                                        : () =>
-                                                            _scrollToMessage(
-                                                              m.replyToId!,
-                                                              msgs,
-                                                            ),
-                                                reactions:
-                                                    state.reactions[m.id] ??
-                                                        const [],
-                                                onToggleReaction: (emoji) =>
-                                                    _onReact(m, emoji),
-                                                onReactionSummaryTap:
-                                                    _showReactionUsers,
-                                                onPollVote: (optionId) => ref
-                                                    .read(messagesProvider(
-                                                            widget
-                                                                .conversationId)
-                                                        .notifier)
-                                                    .votePoll(m.id, optionId),
-                                                onTranslate: () => ref
-                                                    .read(messagesProvider(
-                                                            widget
-                                                                .conversationId)
-                                                        .notifier)
-                                                    .translate(m.id),
-                                                onTranscribe: () => ref
-                                                    .read(messagesProvider(
-                                                            widget
-                                                                .conversationId)
-                                                        .notifier)
-                                                    .transcribe(m.id),
-                                                onStopLiveLocation: m
-                                                                .mediaType ==
-                                                            'live_location' &&
-                                                        isMine
-                                                    ? () => ref
-                                                        .read(messagesProvider(
-                                                                widget
-                                                                    .conversationId)
-                                                            .notifier)
-                                                        .stopLiveLocation(m.id)
-                                                    : null,
-                                                onCallTap: (type) => _startCall(
-                                                  type: type == CallType.video
-                                                      ? 'video'
-                                                      : 'audio',
+                              controller: _scrollController,
+                              reverse: true,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              itemCount: msgs.length,
+                              itemBuilder: (_, i) {
+                                final idx = msgs.length - 1 - i;
+                                final m = msgs[idx];
+                                final isMine = m.senderId == userId;
+                                // ignore: unused_local_variable
+                                final next = idx + 1 < msgs.length
+                                    ? msgs[idx + 1]
+                                    : null;
+                                final prev =
+                                    idx - 1 >= 0 ? msgs[idx - 1] : null;
+                                final replyMessage = m.replyToId == null
+                                    ? null
+                                    : msgsById[m.replyToId];
+                                Offset tapPosition = Offset.zero;
+                                // Date divider when day changes.
+                                final showDayDivider = prev == null ||
+                                    _isDifferentDay(
+                                        prev.createdAt, m.createdAt);
+                                return Column(
+                                    crossAxisAlignment: isMine
+                                        ? CrossAxisAlignment.end
+                                        : CrossAxisAlignment.start,
+                                    children: [
+                                      if (showDayDivider)
+                                        _DayDivider(
+                                            label: _dayLabel(m.createdAt),
+                                            c: c),
+                                      GestureDetector(
+                                        onTapDown: (d) =>
+                                            tapPosition = d.globalPosition,
+                                        onTap: _isSelectionMode
+                                            ? () =>
+                                                _toggleMessageSelection(m.id)
+                                            : () => _onLongPress(
+                                                m, isMine, tapPosition),
+                                        onSecondaryTapDown: (d) =>
+                                            _isSelectionMode
+                                                ? null
+                                                : _onLongPress(m, isMine,
+                                                    d.globalPosition),
+                                        onLongPressStart: (d) =>
+                                            _isSelectionMode
+                                                ? null
+                                                : _onLongPress(m, isMine,
+                                                    d.globalPosition),
+                                        child: Stack(
+                                          children: [
+                                            GestureDetector(
+                                              behavior:
+                                                  HitTestBehavior.translucent,
+                                              child: AnimatedContainer(
+                                                duration: const Duration(
+                                                    milliseconds: 220),
+                                                curve: Curves.easeOutCubic,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      _highlightedMessageId ==
+                                                              m.id
+                                                          ? theme.colorScheme
+                                                              .primary
+                                                              .withValues(
+                                                                  alpha: 0.12)
+                                                          : Colors.transparent,
+                                                  borderRadius:
+                                                      BorderRadius.circular(14),
+                                                ),
+                                                child: MessageBubble(
+                                                  message: m,
+                                                  isMine: isMine,
+                                                  replyMessage: replyMessage,
+                                                  onCommentTap: (conv?.type ==
+                                                              'channel' &&
+                                                          conv?.linkedGroupId !=
+                                                              null)
+                                                      ? () =>
+                                                          _openDiscussionForMessage(
+                                                              m, conv!)
+                                                      : null,
+                                                  onHashtagTap:
+                                                      _openHashtagSearch,
+                                                  onMediaPlaybackRequested:
+                                                      null,
+                                                  onReplyPreviewTap:
+                                                      m.replyToId == null
+                                                          ? null
+                                                          : () =>
+                                                              _scrollToMessage(
+                                                                m.replyToId!,
+                                                                msgs,
+                                                              ),
+                                                  reactions:
+                                                      state.reactions[m.id] ??
+                                                          const [],
+                                                  onToggleReaction: (emoji) =>
+                                                      _onReact(m, emoji),
+                                                  onReactionSummaryTap:
+                                                      _showReactionUsers,
+                                                  onPollVote: (optionId) => ref
+                                                      .read(messagesProvider(
+                                                              widget
+                                                                  .conversationId)
+                                                          .notifier)
+                                                      .votePoll(m.id, optionId),
+                                                  onTranslate: () => ref
+                                                      .read(messagesProvider(
+                                                              widget
+                                                                  .conversationId)
+                                                          .notifier)
+                                                      .translate(m.id),
+                                                  onTranscribe: () => ref
+                                                      .read(messagesProvider(
+                                                              widget
+                                                                  .conversationId)
+                                                          .notifier)
+                                                      .transcribe(m.id),
+                                                  onStopLiveLocation: m
+                                                                  .mediaType ==
+                                                              'live_location' &&
+                                                          isMine
+                                                      ? () => ref
+                                                          .read(messagesProvider(
+                                                                  widget
+                                                                      .conversationId)
+                                                              .notifier)
+                                                          .stopLiveLocation(
+                                                              m.id)
+                                                      : null,
+                                                  onCallTap: (type) =>
+                                                      _startCall(
+                                                    type: type == CallType.video
+                                                        ? 'video'
+                                                        : 'audio',
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                          // Selection checkbox (web isSelected indicator)
-                                          if (_isSelectionMode)
-                                            Positioned(
-                                              left: isMine ? null : 8,
-                                              right: isMine ? 8 : null,
-                                              top: 8,
-                                              child: Container(
-                                                width: 24,
-                                                height: 24,
-                                                decoration: BoxDecoration(
-                                                  color: _selectedMessages
-                                                          .contains(m.id)
-                                                      ? theme
-                                                          .colorScheme.primary
-                                                      : c.card,
-                                                  shape: BoxShape.circle,
-                                                  border: Border.all(
+                                            // Selection checkbox (web isSelected indicator)
+                                            if (_isSelectionMode)
+                                              Positioned(
+                                                left: isMine ? null : 8,
+                                                right: isMine ? 8 : null,
+                                                top: 8,
+                                                child: Container(
+                                                  width: 24,
+                                                  height: 24,
+                                                  decoration: BoxDecoration(
                                                     color: _selectedMessages
                                                             .contains(m.id)
                                                         ? theme
                                                             .colorScheme.primary
-                                                        : c.border,
-                                                    width: 2,
+                                                        : c.card,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: _selectedMessages
+                                                              .contains(m.id)
+                                                          ? theme.colorScheme
+                                                              .primary
+                                                          : c.border,
+                                                      width: 2,
+                                                    ),
                                                   ),
+                                                  child: _selectedMessages
+                                                          .contains(m.id)
+                                                      ? Icon(
+                                                          LucideIcons.check,
+                                                          size: 16,
+                                                          color: theme
+                                                              .colorScheme
+                                                              .onPrimary,
+                                                        )
+                                                      : null,
                                                 ),
-                                                child: _selectedMessages
-                                                        .contains(m.id)
-                                                    ? Icon(
-                                                        LucideIcons.check,
-                                                        size: 16,
-                                                        color: theme.colorScheme
-                                                            .onPrimary,
-                                                      )
-                                                    : null,
                                               ),
-                                            ),
-                                        ],
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                  ]);
-                            },
-                          );
+                                    ]);
+                              },
+                            );
                           }),
                 // === Scroll-to-bottom FAB ===
                 // Web: `absolute bottom-4 right-4 z-20 h-11 w-11 rounded-full bg-card border border-border shadow-lg ... transition-all active:scale-95`
@@ -3058,8 +3072,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
             .read(conversationAdminRepositoryProvider)
             .createUserExport();
         if (mounted) {
-          AppToast.info(
-              context, 'Eksport: ${data['status'] ?? 'ready'}');
+          AppToast.info(context, 'Eksport: ${data['status'] ?? 'ready'}');
         }
         break;
       case 'archive':
@@ -3240,11 +3253,13 @@ class _ChatPageState extends ConsumerState<ChatPage>
                             icon: Icon(LucideIcons.smile,
                                 color: c.mutedForeground, size: 20),
                             onPressed: () async {
-                              final emoji = await EmojiPickerSheet.show(context);
+                              final emoji =
+                                  await EmojiPickerSheet.show(context);
                               if (emoji != null && mounted) {
                                 final sel = _controller.selection;
                                 final base = _controller.text;
-                                final pos = sel.isValid ? sel.start : base.length;
+                                final pos =
+                                    sel.isValid ? sel.start : base.length;
                                 final newText = base.substring(0, pos) +
                                     emoji +
                                     base.substring(pos);
@@ -3958,7 +3973,14 @@ class _MessageReactionMenuBar extends StatelessWidget {
   final ValueChanged<String> onReact;
   const _MessageReactionMenuBar({required this.onReact});
 
-  static const _emojis = ['❤', '😂', '😮', '😢', '😡', '👍'];
+  static const _emojis = [
+    '\u{1F44D}',
+    '\u{1F602}',
+    '\u{2764}\u{FE0F}',
+    '\u{1F604}',
+    '\u{1F91D}',
+    '\u{1F525}',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -3967,16 +3989,16 @@ class _MessageReactionMenuBar extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(19),
+          borderRadius: BorderRadius.circular(29),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
             child: Container(
-              height: 38,
-              padding: const EdgeInsets.symmetric(horizontal: 5),
+              height: 54,
+              padding: const EdgeInsets.symmetric(horizontal: 7),
               decoration: BoxDecoration(
-                color: c.card.withValues(alpha: 0.9),
-                borderRadius: BorderRadius.circular(19),
-                border: Border.all(color: c.border.withValues(alpha: 0.5)),
+                color: c.card.withValues(alpha: 0.96),
+                borderRadius: BorderRadius.circular(29),
+                border: Border.all(color: c.border.withValues(alpha: 0.65)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.16),
@@ -3992,24 +4014,33 @@ class _MessageReactionMenuBar extends StatelessWidget {
                       HapticFeedback.selectionClick();
                       onReact(emoji);
                     },
-                    borderRadius: BorderRadius.circular(18),
-                    child: SizedBox(
-                      width: 30,
-                      height: 30,
-                      child: Center(
-                        child:
-                            Text(emoji, style: const TextStyle(fontSize: 19)),
+                    borderRadius: BorderRadius.circular(24),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 140),
+                      curve: Curves.easeOutCubic,
+                      width: 42,
+                      height: 42,
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: c.muted.withValues(alpha: 0.45),
+                        shape: BoxShape.circle,
+                      ),
+                      child: AnimatedEmoji(
+                        emoji: emoji,
+                        size: 34,
+                        replayOnTap: false,
                       ),
                     ),
                   ),
                 Container(
-                  width: 28,
-                  height: 28,
+                  width: 42,
+                  height: 42,
                   margin: const EdgeInsets.only(left: 2),
                   decoration:
                       BoxDecoration(color: c.muted, shape: BoxShape.circle),
                   child: Icon(LucideIcons.plus,
-                      size: 16, color: c.mutedForeground),
+                      size: 18, color: c.mutedForeground),
                 ),
               ]),
             ),
