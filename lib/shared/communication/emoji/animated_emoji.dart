@@ -108,7 +108,7 @@ class AnimatedEmojiAssets {
   }
 }
 
-class AnimatedEmoji extends StatelessWidget {
+class AnimatedEmoji extends StatefulWidget {
   final String emoji;
   final double size;
   final bool animate;
@@ -123,39 +123,99 @@ class AnimatedEmoji extends StatelessWidget {
   });
 
   @override
+  State<AnimatedEmoji> createState() => _AnimatedEmojiState();
+}
+
+class _AnimatedEmojiState extends State<AnimatedEmoji>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  String? _asset;
+  bool _shouldAutoPlay = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this);
+    _asset = AnimatedEmojiAssets.assetFor(widget.emoji);
+  }
+
+  @override
+  void didUpdateWidget(covariant AnimatedEmoji oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.emoji != widget.emoji) {
+      _asset = AnimatedEmojiAssets.assetFor(widget.emoji);
+      _shouldAutoPlay = true;
+      _controller
+        ..stop()
+        ..reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _playOnce() {
+    if (!_canAnimate) return;
+    _controller
+      ..stop()
+      ..reset()
+      ..forward();
+  }
+
+  bool get _canAnimate => widget.animate && !_reduceMotion;
+
+  bool get _reduceMotion {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    return mediaQuery?.disableAnimations == true ||
+        mediaQuery?.accessibleNavigation == true;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final asset = AnimatedEmojiAssets.assetFor(emoji);
-    final reduceMotion =
-        MediaQuery.maybeOf(context)?.disableAnimations == true ||
-            MediaQuery.maybeOf(context)?.accessibleNavigation == true;
+    final asset = _asset;
     if (asset == null) {
-      AnimatedEmojiAssets.logMissing(emoji);
+      AnimatedEmojiAssets.logMissing(widget.emoji);
       return Text(
-        emoji,
+        widget.emoji,
         textAlign: TextAlign.center,
-        style: TextStyle(fontSize: size, height: 1),
+        style: TextStyle(fontSize: widget.size, height: 1),
       );
     }
 
-    return SizedBox.square(
-      dimension: size,
-      child: RepaintBoundary(
-        child: Lottie.asset(
-          asset,
-          animate: animate && !reduceMotion,
-          repeat: animate && !reduceMotion,
-          fit: fit,
-          frameRate: FrameRate.composition,
-          errorBuilder: (_, error, __) {
-            if (kDebugMode) {
-              debugPrint('[AnimatedEmoji] Failed to load $asset: $error');
-            }
-            return Text(
-              emoji,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: size, height: 1),
-            );
-          },
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _playOnce,
+      child: SizedBox.square(
+        dimension: widget.size,
+        child: RepaintBoundary(
+          child: Lottie.asset(
+            asset,
+            controller: _controller,
+            animate: false,
+            repeat: false,
+            fit: widget.fit,
+            frameRate: FrameRate.composition,
+            onLoaded: (composition) {
+              _controller.duration = composition.duration;
+              if (_shouldAutoPlay) {
+                _shouldAutoPlay = false;
+                _playOnce();
+              }
+            },
+            errorBuilder: (_, error, __) {
+              if (kDebugMode) {
+                debugPrint('[AnimatedEmoji] Failed to load $asset: $error');
+              }
+              return Text(
+                widget.emoji,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: widget.size, height: 1),
+              );
+            },
+          ),
         ),
       ),
     );
