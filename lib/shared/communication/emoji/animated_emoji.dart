@@ -45,7 +45,7 @@ class AnimatedEmoji extends StatefulWidget {
     this.fit = BoxFit.contain,
     this.replayOnTap = true,
     this.playbackKey,
-    this.restingProgress = 1,
+    this.restingProgress = 0,
   });
 
   @override

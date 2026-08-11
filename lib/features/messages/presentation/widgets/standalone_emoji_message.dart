@@ -225,7 +225,6 @@ class _StandaloneEmojiMessageState extends State<StandaloneEmojiMessage>
                               size: fontSize,
                               playbackKey:
                                   'message:${widget.message.id}:$emoji',
-                              restingProgress: 1,
                             ),
                         ],
                       ),
