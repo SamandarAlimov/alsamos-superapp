@@ -91,7 +91,10 @@ class _EditProfileDialogState extends ConsumerState<EditProfileDialog> {
       await Supabase.instance.client.storage.from(bucket).uploadBinary(
             path,
             bytes,
-            fileOptions: FileOptions(upsert: true, contentType: 'image/$ext'),
+            fileOptions: FileOptions(
+              upsert: true,
+              contentType: _imageContentTypeForExtension(ext),
+            ),
           );
       final publicUrl =
           Supabase.instance.client.storage.from(bucket).getPublicUrl(path);
@@ -117,6 +120,18 @@ class _EditProfileDialogState extends ConsumerState<EditProfileDialog> {
         });
       }
     }
+  }
+
+  String _imageContentTypeForExtension(String ext) {
+    return switch (ext.toLowerCase()) {
+      'jpg' || 'jpeg' || 'jpe' => 'image/jpeg',
+      'png' => 'image/png',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      'heic' => 'image/heic',
+      'heif' => 'image/heif',
+      _ => 'application/octet-stream',
+    };
   }
 
   Future<void> _save() async {

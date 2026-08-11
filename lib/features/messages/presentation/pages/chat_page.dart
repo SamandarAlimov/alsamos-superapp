@@ -477,12 +477,15 @@ class _ChatPageState extends ConsumerState<ChatPage>
   String _contentTypeForFile(String name) {
     final ext = name.split('.').last.toLowerCase();
     return switch (ext) {
-      'jpg' || 'jpeg' => 'image/jpeg',
+      'jpg' || 'jpeg' || 'jpe' => 'image/jpeg',
       'png' => 'image/png',
       'gif' => 'image/gif',
       'webp' => 'image/webp',
-      'mp4' => 'video/mp4',
+      'heic' => 'image/heic',
+      'heif' => 'image/heif',
+      'mp4' || 'm4v' => 'video/mp4',
       'mov' => 'video/quicktime',
+      'webm' => 'video/webm',
       'm4a' => 'audio/mp4',
       'mp3' => 'audio/mpeg',
       'wav' => 'audio/wav',
@@ -1769,9 +1772,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
         if (thumbBytes != null) {
           final thumbPath =
               '$uid/thumbnails/${DateTime.now().microsecondsSinceEpoch}_thumb.jpg';
-          await sb.storage
-              .from('chat-media')
-              .uploadBinary(thumbPath, thumbBytes);
+          await sb.storage.from('chat-media').uploadBinary(
+                thumbPath,
+                thumbBytes,
+                fileOptions: const FileOptions(
+                  contentType: 'image/jpeg',
+                  upsert: false,
+                ),
+              );
           thumbnailUrl = sb.storage.from('chat-media').getPublicUrl(thumbPath);
         }
       } catch (e) {
@@ -1781,7 +1789,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final publicUrl = await _uploadChatMedia(
         bytes,
         path,
-        contentType: isVideo ? 'video/$ext' : 'image/$ext',
+        contentType: _contentTypeForFile(file.name),
         taskId: taskId,
       );
       _setUploadProgress(taskId, 0.95);
@@ -1863,7 +1871,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final urls = <String>[];
       final thumbUrls = <String>[];
       for (final file in files.take(10)) {
-        final ext = file.name.contains('.') ? file.name.split('.').last : 'jpg';
         final path =
             '$uid/albums/${DateTime.now().microsecondsSinceEpoch}_${file.name}';
         final bytes = await file.readAsBytes();
@@ -1878,9 +1885,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
                 Uint8List.fromList(img.encodeJpg(resized, quality: 70));
             final thumbPath =
                 '$uid/thumbnails/${DateTime.now().microsecondsSinceEpoch}_thumb.jpg';
-            await sb.storage
-                .from('chat-media')
-                .uploadBinary(thumbPath, thumbBytes);
+            await sb.storage.from('chat-media').uploadBinary(
+                  thumbPath,
+                  thumbBytes,
+                  fileOptions: const FileOptions(
+                    contentType: 'image/jpeg',
+                    upsert: false,
+                  ),
+                );
             thumbUrl = sb.storage.from('chat-media').getPublicUrl(thumbPath);
           }
         } catch (e) {
@@ -1891,7 +1903,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
         final uploadedUrl = await _uploadChatMedia(
           bytes,
           path,
-          contentType: 'image/$ext',
+          contentType: _contentTypeForFile(file.name),
           taskId: taskId,
         );
         urls.add(uploadedUrl);
