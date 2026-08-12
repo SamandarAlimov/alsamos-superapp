@@ -88,6 +88,10 @@ class ChatPage extends ConsumerStatefulWidget {
 final Map<String, String> chatDrafts = {};
 final Map<String, String> pendingMessageHighlights = {};
 
+class _SendMessageIntent extends Intent {
+  const _SendMessageIntent();
+}
+
 class _ChatPageState extends ConsumerState<ChatPage>
     with SingleTickerProviderStateMixin {
   final _controller = TextEditingController();
@@ -3525,35 +3529,61 @@ class _ChatPageState extends ConsumerState<ChatPage>
                           children: [
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 5, 72, 5),
-                              child: TextField(
-                                controller: _controller,
-                                focusNode: _focusNode,
-                                minLines: 1,
-                                maxLines: compact ? 10 : 12,
-                                keyboardType: TextInputType.multiline,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                                style: TextStyle(
-                                  color: c.foreground,
-                                  fontSize: 16,
-                                  height: 1.28,
-                                ),
-                                cursorColor: primary,
-                                decoration: InputDecoration(
-                                  hintText: 'Xabar yozing...',
-                                  hintStyle: TextStyle(
-                                    color: c.mutedForeground
-                                        .withValues(alpha: 0.82),
+                              child: Shortcuts(
+                                shortcuts: {
+                                  const SingleActivator(
+                                          LogicalKeyboardKey.enter):
+                                      const _SendMessageIntent(),
+                                  const SingleActivator(
+                                          LogicalKeyboardKey.numpadEnter):
+                                      const _SendMessageIntent(),
+                                },
+                                child: Actions(
+                                  actions: {
+                                    _SendMessageIntent:
+                                        CallbackAction<_SendMessageIntent>(
+                                      onInvoke: (_) {
+                                        if (_controller.text
+                                            .trim()
+                                            .isNotEmpty) {
+                                          _send();
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  },
+                                  child: TextField(
+                                    controller: _controller,
+                                    focusNode: _focusNode,
+                                    minLines: 1,
+                                    maxLines: compact ? 10 : 12,
+                                    keyboardType: TextInputType.multiline,
+                                    textCapitalization:
+                                        TextCapitalization.sentences,
+                                    style: TextStyle(
+                                      color: c.foreground,
+                                      fontSize: 16,
+                                      height: 1.28,
+                                    ),
+                                    cursorColor: primary,
+                                    decoration: InputDecoration(
+                                      hintText: 'Xabar yozing...',
+                                      hintStyle: TextStyle(
+                                        color: c.mutedForeground
+                                            .withValues(alpha: 0.82),
+                                      ),
+                                      border: InputBorder.none,
+                                      enabledBorder: InputBorder.none,
+                                      focusedBorder: InputBorder.none,
+                                      disabledBorder: InputBorder.none,
+                                      errorBorder: InputBorder.none,
+                                      focusedErrorBorder: InputBorder.none,
+                                      isDense: true,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              vertical: 8),
+                                    ),
                                   ),
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  disabledBorder: InputBorder.none,
-                                  errorBorder: InputBorder.none,
-                                  focusedErrorBorder: InputBorder.none,
-                                  isDense: true,
-                                  contentPadding:
-                                      const EdgeInsets.symmetric(vertical: 8),
                                 ),
                               ),
                             ),
