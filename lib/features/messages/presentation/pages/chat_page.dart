@@ -2165,24 +2165,41 @@ class _ChatPageState extends ConsumerState<ChatPage>
         builder: (ctx) {
           final c = AlsamosColors.of(ctx);
           Widget tile(
-                  IconData ic, String label, Color color, VoidCallback onTap) =>
-              InkWell(
-                onTap: () {
-                  Navigator.pop(ctx);
-                  onTap();
-                },
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.15),
-                          shape: BoxShape.circle),
-                      child: Icon(ic, color: color, size: 26)),
-                  const SizedBox(height: 6),
-                  Text(label,
-                      style: TextStyle(fontSize: 12, color: c.foreground)),
-                ]),
+            IconData ic,
+            String label,
+            Color color,
+            VoidCallback onTap,
+          ) =>
+              Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(24),
+                  hoverColor: color.withValues(alpha: 0.06),
+                  highlightColor: color.withValues(alpha: 0.08),
+                  splashColor: color.withValues(alpha: 0.10),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onTap();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 12),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.15),
+                              shape: BoxShape.circle),
+                          child: Icon(ic, color: color, size: 26)),
+                      const SizedBox(height: 6),
+                      Text(label,
+                          style: TextStyle(fontSize: 12, color: c.foreground)),
+                    ]),
+                  ),
+                ),
               );
           // v37: real dialoglar — ComposerExtras (Joylashuv/Kontakt/So'rovnoma)
           return SafeArea(
