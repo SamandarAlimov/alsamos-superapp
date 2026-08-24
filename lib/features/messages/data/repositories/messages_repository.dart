@@ -675,6 +675,7 @@ class MessagesRepository {
       final msgs = await _hydratePrivateMediaUrls(await _hydrateThumbnailCache(
         data.map<Message>((m) => Message.fromMap(m)).toList(),
       ));
+      unawaited(_localStore.saveMessages(msgs));
 
       if (userId != null && msgs.isNotEmpty) {
         unawaited(markConversationRead(conversationId, userId, messages: msgs));
@@ -683,6 +684,14 @@ class MessagesRepository {
     } catch (e, st) {
       debugPrint('[MessagesRepo] Error fetching messages: $e');
       debugPrint('[MessagesRepo] Stack trace: $st');
+      final cached = await _localStore.loadMessages(conversationId, limit: 200);
+      if (cached.isNotEmpty) {
+        debugPrint(
+          '[MessagesRepo] using ${cached.length} cached messages for '
+          '$conversationId after remote fetch failed',
+        );
+        return _hydratePrivateMediaUrls(cached);
+      }
       rethrow;
     }
   }
