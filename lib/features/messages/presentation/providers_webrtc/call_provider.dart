@@ -95,6 +95,8 @@ class CallState {
     this.peerConnectionState = 'new',
     this.error,
     this.elapsed = Duration.zero,
+    this.hasEnded = false,
+    this.endReason,
   });
 
   final MediaStream? localStream;
@@ -115,6 +117,8 @@ class CallState {
   final String peerConnectionState;
   final String? error;
   final Duration elapsed;
+  final bool hasEnded;
+  final String? endReason;
 
   CallState copyWith({
     MediaStream? localStream,
@@ -135,6 +139,8 @@ class CallState {
     String? peerConnectionState,
     Object? error = _unset,
     Duration? elapsed,
+    bool? hasEnded,
+    Object? endReason = _unset,
   }) =>
       CallState(
         localStream: localStream ?? this.localStream,
@@ -161,6 +167,9 @@ class CallState {
         peerConnectionState: peerConnectionState ?? this.peerConnectionState,
         error: identical(error, _unset) ? this.error : error as String?,
         elapsed: elapsed ?? this.elapsed,
+        hasEnded: hasEnded ?? this.hasEnded,
+        endReason:
+            identical(endReason, _unset) ? this.endReason : endReason as String?,
       );
 }
 
@@ -304,8 +313,27 @@ class CallNotifier extends StateNotifier<CallState> {
   Future<void> leaveRoom() async {
     if (_leaving) return;
     _leaving = true;
-    _broadcast('leave', {'from': userId});
+    _broadcast('leave', {'from': userId, 'ended': true});
     unawaited(_markLeftOnServer());
+    await _cleanupLocalCallResources();
+    state = const CallState();
+    _leaving = false;
+  }
+
+  Future<void> _handleRemoteCallEnded([String? reason]) async {
+    if (_leaving || state.hasEnded) return;
+    _leaving = true;
+    unawaited(_markLeftOnServer());
+    await _cleanupLocalCallResources();
+    state = CallState(
+      hasEnded: true,
+      endReason: reason ?? 'remote_ended',
+      elapsed: state.elapsed,
+    );
+    _leaving = false;
+  }
+
+  Future<void> _cleanupLocalCallResources() async {
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
@@ -337,8 +365,6 @@ class CallNotifier extends StateNotifier<CallState> {
       await _sb.removeChannel(_channel!);
       _channel = null;
     }
-    state = const CallState();
-    _leaving = false;
   }
 
   Future<void> _markLeftOnServer() async {
@@ -867,6 +893,9 @@ class CallNotifier extends StateNotifier<CallState> {
                 if (from != null && from != userId) {
                   _presencePeerIds.remove(from);
                   _closePeer(from);
+                  if (signal['ended'] == true) {
+                    unawaited(_handleRemoteCallEnded('remote_left'));
+                  }
                 }
               } catch (e, stack) {
                 debugPrint('[WebRTC] Error handling leave: $e\n$stack');
@@ -883,6 +912,22 @@ class CallNotifier extends StateNotifier<CallState> {
           ),
           callback: (_) {
             unawaited(_syncDbParticipants(localStream));
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'video_calls',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'id',
+            value: roomId,
+          ),
+          callback: (payload) {
+            final status = payload.newRecord['status']?.toString();
+            if (_isTerminalCallStatus(status)) {
+              unawaited(_handleRemoteCallEnded(status));
+            }
           },
         )
         .onPostgresChanges(
@@ -1006,10 +1051,21 @@ class CallNotifier extends StateNotifier<CallState> {
     try {
       final rows = await _fetchCallParticipantRows();
 
-      final activeRows = rows
-          .whereType<Map<String, dynamic>>()
-          .where((row) => row['left_at'] == null)
-          .toList();
+      final participantRows = rows.whereType<Map<String, dynamic>>().toList();
+      Map<String, dynamic>? selfRow;
+      for (final row in participantRows) {
+        if (row['user_id']?.toString() == userId) {
+          selfRow = row;
+          break;
+        }
+      }
+      if (!_leaving && selfRow != null && selfRow['left_at'] != null) {
+        unawaited(_handleRemoteCallEnded('participant_left'));
+        return;
+      }
+
+      final activeRows =
+          participantRows.where((row) => row['left_at'] == null).toList();
       final peerRows = activeRows.where((row) {
         final id = row['user_id'] as String?;
         if (id == null || id == userId) return false;
@@ -1017,12 +1073,29 @@ class CallNotifier extends StateNotifier<CallState> {
             (row['connection_state'] ?? 'connecting').toString();
         return _isPeerReadyForRtc(connectionState);
       }).toList();
-      if (peerRows.isEmpty) return;
 
       final participantsById = {
         for (final participant in state.participants)
           participant.id: participant,
       };
+      final activePeerIds =
+          peerRows.map((row) => row['user_id'] as String).toSet();
+      for (final participantId in participantsById.keys.toList()) {
+        if (!activePeerIds.contains(participantId)) {
+          _closePeer(participantId);
+          participantsById.remove(participantId);
+        }
+      }
+      if (peerRows.isEmpty) {
+        if (participantsById.isEmpty) {
+          state = state.copyWith(
+            participants: const [],
+            isConnecting: state.localStream != null && !_leaving,
+            isConnected: false,
+          );
+        }
+        return;
+      }
 
       for (final row in peerRows) {
         final peerId = row['user_id'] as String;
@@ -1091,6 +1164,14 @@ class CallNotifier extends StateNotifier<CallState> {
   bool _isPeerReadyForRtc(String connectionState) {
     return switch (connectionState) {
       'joining' || 'connecting' || 'connected' || 'reconnecting' => true,
+      _ => false,
+    };
+  }
+
+  bool _isTerminalCallStatus(String? status) {
+    return switch (status) {
+      'ended' || 'declined' || 'missed' || 'cancelled' || 'failed' || 'expired' =>
+        true,
       _ => false,
     };
   }
@@ -1488,10 +1569,13 @@ class CallNotifier extends StateNotifier<CallState> {
         if (peerId != null && peerId != userId) {
           _edgePeerIds.remove(peerId);
           _closePeer(peerId);
+          if (message['ended'] == true) {
+            unawaited(_handleRemoteCallEnded('remote_left'));
+          }
         }
         break;
       case 'call-ended':
-        if (!_leaving) unawaited(leaveRoom());
+        if (!_leaving) unawaited(_handleRemoteCallEnded('call_ended'));
         break;
       case 'error':
         final error = message['message']?.toString();
@@ -2117,6 +2201,9 @@ class CallNotifier extends StateNotifier<CallState> {
         _presencePeerIds.remove(from);
         _edgePeerIds.remove(from);
         _closePeer(from);
+        if (signal['ended'] == true) {
+          unawaited(_handleRemoteCallEnded('remote_left'));
+        }
         break;
       default:
         debugPrint('[WebRTC] ignored DB signal: $row');

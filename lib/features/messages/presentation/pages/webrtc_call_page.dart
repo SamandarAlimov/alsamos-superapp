@@ -150,6 +150,15 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<CallState>(callProvider(widget.roomId), (previous, next) {
+      if (_leftRoom || !next.hasEnded) return;
+      _leftRoom = true;
+      _hideTimer?.cancel();
+      if (mounted) {
+        Navigator.of(context).maybePop(next.elapsed);
+      }
+    });
+
     final callState = ref.watch(callProvider(widget.roomId));
     final notifier = ref.read(callProvider(widget.roomId).notifier);
 
