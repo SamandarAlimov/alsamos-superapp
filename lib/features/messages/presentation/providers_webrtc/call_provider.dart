@@ -198,6 +198,7 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _elapsedTimer;
   Timer? _statsTimer;
   Timer? _resyncTimer;
+  Timer? _fastResyncTimer;
   Timer? _edgeHeartbeatTimer;
   Timer? _realtimeResubscribeTimer;
   MediaStream? _screenStream;
@@ -337,9 +338,11 @@ class CallNotifier extends StateNotifier<CallState> {
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
+    _fastResyncTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
     _edgeHeartbeatTimer = null;
+    _fastResyncTimer = null;
     _realtimeResubscribeTimer = null;
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
@@ -1930,38 +1933,59 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _startResyncLoop() {
     _resyncTimer?.cancel();
-    _resyncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      unawaited(_writeParticipantState());
-      final localStream = state.localStream;
-      if (localStream != null) {
-        unawaited(_syncDbParticipants(localStream));
-      }
-      unawaited(_channel?.track({
-            'user_id': userId,
-            'online_at': DateTime.now().toIso8601String(),
-            'media': {
-              'muted': state.isMuted,
-              'video': state.isVideoOn,
-              'screen': state.isScreenSharing,
-            },
-          }) ??
-          Future<void>.value());
-      // If we have peers but no connected connection, re-offer
-      for (final peerId in _peers.keys.toList()) {
-        final pc = _peers[peerId];
-        if (pc == null) continue;
-        if (pc.connectionState ==
-                RTCPeerConnectionState.RTCPeerConnectionStateNew ||
-            pc.connectionState ==
-                RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-          unawaited(Future<void>(() async {
-            await _maybeMakeOffer(peerId);
-          }).catchError((e, stack) {
-            debugPrint('[WebRTC] resync re-offer failed: $e\n$stack');
-          }));
+    _fastResyncTimer?.cancel();
+    var fastTicks = 0;
+    _fastResyncTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      fastTicks++;
+      _runResyncTick();
+      if (fastTicks >= 30 || _hasRealRtcConnection()) {
+        timer.cancel();
+        if (identical(_fastResyncTimer, timer)) {
+          _fastResyncTimer = null;
         }
       }
     });
+    _resyncTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _runResyncTick(),
+    );
+    _runResyncTick();
+  }
+
+  void _runResyncTick() {
+    if (_leaving) return;
+    unawaited(_writeParticipantState());
+    final localStream = state.localStream;
+    if (localStream != null) {
+      unawaited(_syncDbParticipants(localStream));
+    }
+    unawaited(_channel?.track({
+          'user_id': userId,
+          'online_at': DateTime.now().toIso8601String(),
+          'media': {
+            'muted': state.isMuted,
+            'video': state.isVideoOn,
+            'screen': state.isScreenSharing,
+          },
+        }) ??
+        Future<void>.value());
+    if (localStream != null && _peers.isEmpty && state.participants.isEmpty) {
+      _broadcast('resync', {'from': userId});
+    }
+    for (final peerId in _peers.keys.toList()) {
+      final pc = _peers[peerId];
+      if (pc == null) continue;
+      if (pc.connectionState ==
+              RTCPeerConnectionState.RTCPeerConnectionStateNew ||
+          pc.connectionState ==
+              RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        unawaited(Future<void>(() async {
+          await _maybeMakeOffer(peerId);
+        }).catchError((e, stack) {
+          debugPrint('[WebRTC] resync re-offer failed: $e\n$stack');
+        }));
+      }
+    }
   }
 
   Future<void> _writeParticipantState({String? connectionState}) async {
@@ -2254,6 +2278,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
+    _fastResyncTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
     for (final timer in _reconnectTimers.values) {

@@ -319,11 +319,13 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
       },
       onAccept: () async {
         try {
+          debugPrint('[CallInviteListener] Accepting call $callId');
           await _joinCall(
             callId: callId,
             currentUserId: currentUserId,
             isVideo: type == 'video',
           );
+          debugPrint('[CallInviteListener] Joined call $callId');
 
           if (!mounted) return;
 
@@ -372,6 +374,7 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
       }
 
       await _markCallInviteAccepted(callId);
+      debugPrint('[CallInviteListener] join_video_call_guarded ok: $callId');
       return;
     } catch (e) {
       if (!_isMissingRpc(e)) rethrow;
@@ -415,6 +418,7 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           .eq('id', existing['id'])
           .timeout(const Duration(seconds: 5));
       await _markCallInviteAccepted(callId);
+      debugPrint('[CallInviteListener] join fallback update ok: $callId');
       return;
     }
 
@@ -452,6 +456,7 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           .timeout(const Duration(seconds: 5));
     }
     await _markCallInviteAccepted(callId);
+    debugPrint('[CallInviteListener] join fallback insert ok: $callId');
   }
 
   Future<void> _markCallInviteAccepted(String callId) async {
