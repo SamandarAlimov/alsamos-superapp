@@ -98,6 +98,8 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
   Timer? _typingOffTimer;
   Timer? _outboxTimer;
   bool _syncingOutbox = false;
+  bool _loadInFlight = false;
+  bool _reloadAfterLoad = false;
 
   MessagesNotifier(this._ref, this._repo, this._convId, this._userId)
       : super(const MessagesState()) {
@@ -134,6 +136,11 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
 
   Future<void> load() async {
     if (!mounted) return;
+    if (_loadInFlight) {
+      _reloadAfterLoad = true;
+      return;
+    }
+    _loadInFlight = true;
     state = state.copyWith(isLoading: state.messages.isEmpty);
     try {
       final msgs =
@@ -148,6 +155,12 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
       debugPrint('[MessagesNotifier] Stack trace: $st');
       if (!mounted) return;
       state = state.copyWith(isLoading: false);
+    } finally {
+      _loadInFlight = false;
+      if (_reloadAfterLoad && mounted) {
+        _reloadAfterLoad = false;
+        unawaited(load());
+      }
     }
   }
 
