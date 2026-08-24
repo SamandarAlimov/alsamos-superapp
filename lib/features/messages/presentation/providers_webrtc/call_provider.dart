@@ -468,7 +468,11 @@ class CallNotifier extends StateNotifier<CallState> {
         'audio': false,
       });
       final track = display.getVideoTracks().firstOrNull;
-      if (track == null) return;
+      if (track == null) {
+        await display.dispose();
+        state = state.copyWith(error: 'Ekran video track topilmadi.');
+        return;
+      }
       _screenStream = display;
       await _replaceVideoTrack(track);
       track.onEnded = () => _restoreCameraTrack();
@@ -1572,11 +1576,22 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> _replaceSenderTrack(String kind, MediaStreamTrack track) async {
     for (final pc in _peers.values) {
-      final sender = (await pc.getSenders()).firstWhere(
-        (s) => s.track?.kind == kind,
-        orElse: () => throw StateError('$kind sender not found'),
-      );
-      await sender.replaceTrack(track);
+      final senders = await pc.getSenders();
+      RTCRtpSender? sender;
+      for (final candidate in senders) {
+        if (candidate.track?.kind == kind) {
+          sender = candidate;
+          break;
+        }
+      }
+
+      if (sender != null) {
+        await sender.replaceTrack(track);
+      } else if (state.localStream != null) {
+        await pc.addTrack(track, state.localStream!);
+      } else {
+        throw StateError('$kind sender not found');
+      }
     }
   }
 
@@ -1587,25 +1602,47 @@ class CallNotifier extends StateNotifier<CallState> {
       old.stop();
     }
     state.localStream?.addTrack(track);
+    for (final peerId in _peers.keys.toList()) {
+      unawaited(_renegotiate(peerId).catchError((e, stack) {
+        debugPrint('[WebRTC] video track renegotiate failed: $e\n$stack');
+      }));
+    }
   }
 
   Future<void> _restoreCameraTrack() async {
     _screenStream?.getTracks().forEach((t) => t.stop());
     _screenStream = null;
-    final stream = await navigator.mediaDevices.getUserMedia({
-      'video': {
-        'width': 1280,
-        'height': 720,
-        if (state.selectedVideoInputId != null)
-          'deviceId': state.selectedVideoInputId,
-      },
-      'audio': false,
-    });
-    final track = stream.getVideoTracks().firstOrNull;
-    if (track == null) return;
-    await _replaceVideoTrack(track);
-    state = state.copyWith(isScreenSharing: false, isVideoOn: true);
-    _broadcastMedia();
+    MediaStream? stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        'video': {
+          'width': 1280,
+          'height': 720,
+          if (state.selectedVideoInputId != null)
+            'deviceId': state.selectedVideoInputId,
+        },
+        'audio': false,
+      });
+      final track = stream.getVideoTracks().firstOrNull;
+      if (track == null) {
+        await stream.dispose();
+        state = state.copyWith(isScreenSharing: false, isVideoOn: false);
+        _broadcastMedia();
+        return;
+      }
+      await _replaceVideoTrack(track);
+      await stream.dispose();
+      state = state.copyWith(isScreenSharing: false, isVideoOn: true);
+      _broadcastMedia();
+    } catch (e) {
+      await stream?.dispose();
+      state = state.copyWith(
+        isScreenSharing: false,
+        isVideoOn: false,
+        error: 'Kameraga qaytib bo\'lmadi: $e',
+      );
+      _broadcastMedia();
+    }
   }
 
   int _qualityWriteCount = 0;

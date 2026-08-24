@@ -238,65 +238,68 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
               top: 0,
               left: 0,
               right: 0,
-              child: AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 300),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.black87, Colors.transparent],
+              child: IgnorePointer(
+                ignoring: !_controlsVisible,
+                child: AnimatedOpacity(
+                  opacity: _controlsVisible ? 1 : 0,
+                  duration: const Duration(milliseconds: 300),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black87, Colors.transparent],
+                      ),
                     ),
-                  ),
-                  child: Row(children: [
-                    IconButton(
-                      tooltip: 'Kichraytirish',
-                      onPressed: () {
-                        _minimized = true;
-                        ref.read(callMiniOverlayProvider.notifier).state =
-                            MiniCallSession(
-                          roomId: widget.roomId,
-                          remoteName: widget.remoteName,
-                          remoteAvatar: widget.remoteAvatar,
-                          isVideo: widget.isVideo,
-                        );
-                        Navigator.of(context).pop();
-                      },
-                      icon: const Icon(LucideIcons.minimize2,
-                          color: Colors.white),
-                    ),
-                    Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(widget.remoteName ?? 'Qo\'ng\'iroq',
+                    child: Row(children: [
+                      IconButton(
+                        tooltip: 'Kichraytirish',
+                        onPressed: () {
+                          _minimized = true;
+                          ref.read(callMiniOverlayProvider.notifier).state =
+                              MiniCallSession(
+                            roomId: widget.roomId,
+                            remoteName: widget.remoteName,
+                            remoteAvatar: widget.remoteAvatar,
+                            isVideo: widget.isVideo,
+                          );
+                          Navigator.of(context).pop();
+                        },
+                        icon: const Icon(LucideIcons.minimize2,
+                            color: Colors.white),
+                      ),
+                      Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(widget.remoteName ?? 'Qo\'ng\'iroq',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 18)),
+                              Text(
+                                callState.isConnecting
+                                    ? 'Ulanmoqda...'
+                                    : callState.isReconnecting
+                                        ? 'Qayta ulanmoqda...'
+                                        : callState.participants.isEmpty
+                                            ? 'Kutmoqda...'
+                                            : timeStr,
                                 style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 18)),
-                            Text(
-                              callState.isConnecting
-                                  ? 'Ulanmoqda...'
-                                  : callState.isReconnecting
-                                      ? 'Qayta ulanmoqda...'
-                                      : callState.participants.isEmpty
-                                          ? 'Kutmoqda...'
-                                          : timeStr,
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 13),
-                            ),
-                          ]),
-                    ),
-                    NetworkQualityIndicator(
-                      quality: quality,
-                      rttMs: callState.quality.rttMs,
-                      packetLoss: callState.quality.packetLoss,
-                      isReconnecting: callState.isReconnecting,
-                      showDetails: true,
-                    ),
-                  ]),
+                                    color: Colors.white70, fontSize: 13),
+                              ),
+                            ]),
+                      ),
+                      NetworkQualityIndicator(
+                        quality: quality,
+                        rttMs: callState.quality.rttMs,
+                        packetLoss: callState.quality.packetLoss,
+                        isReconnecting: callState.isReconnecting,
+                        showDetails: true,
+                      ),
+                    ]),
+                  ),
                 ),
               ),
             ),
@@ -306,72 +309,76 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
               bottom: 0,
               left: 0,
               right: 0,
-              child: AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 300),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [Colors.black87, Colors.transparent],
+              child: IgnorePointer(
+                ignoring: !_controlsVisible,
+                child: AnimatedOpacity(
+                  opacity: _controlsVisible ? 1 : 0,
+                  duration: const Duration(milliseconds: 300),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [Colors.black87, Colors.transparent],
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _CallBtn(
-                        icon: callState.isMuted
-                            ? LucideIcons.micOff
-                            : LucideIcons.mic,
-                        label: callState.isMuted ? 'Ovoz yoq' : 'Ovoz o\'ch',
-                        active: callState.isMuted,
-                        onTap: notifier.toggleMute,
-                      ),
-                      if (widget.isVideo)
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
                         _CallBtn(
-                          icon: callState.isVideoOn
-                              ? LucideIcons.video
-                              : LucideIcons.videoOff,
-                          label: callState.isVideoOn
-                              ? 'Kamera o\'ch'
-                              : 'Kamera yoq',
-                          active: !callState.isVideoOn,
-                          onTap: notifier.toggleVideo,
+                          icon: callState.isMuted
+                              ? LucideIcons.micOff
+                              : LucideIcons.mic,
+                          label: callState.isMuted ? 'Ovoz yoq' : 'Ovoz o\'ch',
+                          active: callState.isMuted,
+                          onTap: notifier.toggleMute,
                         ),
-                      _CallBtn(
-                        icon: LucideIcons.handMetal,
-                        label: 'Qo\'l',
-                        active: callState.isHandRaised,
-                        onTap: notifier.toggleHandRaise,
-                      ),
-                      if (widget.isVideo)
+                        if (widget.isVideo)
+                          _CallBtn(
+                            icon: callState.isVideoOn
+                                ? LucideIcons.video
+                                : LucideIcons.videoOff,
+                            label: callState.isVideoOn
+                                ? 'Kamera o\'ch'
+                                : 'Kamera yoq',
+                            active: !callState.isVideoOn,
+                            onTap: notifier.toggleVideo,
+                          ),
                         _CallBtn(
-                          icon: callState.isScreenSharing
-                              ? LucideIcons.screenShareOff
-                              : LucideIcons.screenShare,
-                          label: callState.isScreenSharing
-                              ? 'Share stop'
-                              : 'Ekran',
-                          active: callState.isScreenSharing,
-                          onTap: notifier.toggleScreenShare,
+                          icon: LucideIcons.handMetal,
+                          label: 'Qo\'l',
+                          active: callState.isHandRaised,
+                          onTap: notifier.toggleHandRaise,
                         ),
-                      _CallBtn(
-                        icon: LucideIcons.settings2,
-                        label: 'Qurilma',
-                        active: false,
-                        onTap: () => _showDeviceSheet(callState, notifier),
-                      ),
-                      _EndCallBtn(onTap: () async {
-                        final elapsed = callState.elapsed;
-                        _leftRoom = true;
-                        ref.read(callMiniOverlayProvider.notifier).state = null;
-                        await notifier.leaveRoom();
-                        if (mounted) Navigator.of(context).pop(elapsed);
-                        widget.onCallEnd?.call();
-                      }),
-                    ],
+                        if (widget.isVideo)
+                          _CallBtn(
+                            icon: callState.isScreenSharing
+                                ? LucideIcons.screenShareOff
+                                : LucideIcons.screenShare,
+                            label: callState.isScreenSharing
+                                ? 'Share stop'
+                                : 'Ekran',
+                            active: callState.isScreenSharing,
+                            onTap: notifier.toggleScreenShare,
+                          ),
+                        _CallBtn(
+                          icon: LucideIcons.settings2,
+                          label: 'Qurilma',
+                          active: false,
+                          onTap: () => _showDeviceSheet(callState, notifier),
+                        ),
+                        _EndCallBtn(onTap: () async {
+                          final elapsed = callState.elapsed;
+                          _leftRoom = true;
+                          ref.read(callMiniOverlayProvider.notifier).state =
+                              null;
+                          await notifier.leaveRoom();
+                          if (mounted) Navigator.of(context).pop(elapsed);
+                          widget.onCallEnd?.call();
+                        }),
+                      ],
+                    ),
                   ),
                 ),
               ),
