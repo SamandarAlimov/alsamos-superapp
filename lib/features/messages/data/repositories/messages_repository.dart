@@ -13,6 +13,7 @@ import '../services/content_ai_service.dart';
 /// Ported 1:1 from web useMessages.ts (useConversations + useMessages logic).
 class MessagesRepository {
   const MessagesRepository();
+  static const int _initialMessagePageSize = 100;
   static const ContentAiService _ai = SupabaseContentAiService();
   static const ChatMediaUploadService _media = ChatMediaUploadService();
   static final MessagesLocalStore _localStore = MessagesLocalStore.instance;
@@ -705,22 +706,53 @@ class MessagesRepository {
           .select(
               '*, sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)')
           .eq('conversation_id', conversationId)
-          .order('created_at', ascending: true)
+          .order('created_at', ascending: false)
+          .limit(_initialMessagePageSize)
           .timeout(const Duration(seconds: 8));
-      return _mapRows(rows);
+      return _sortMessageRowsAscending(_mapRows(rows));
     } on TimeoutException catch (error) {
       debugPrint(
         '[MessagesRepo] rich messages query timed out; '
         'retrying without sender embed: $error',
       );
-      final rows = await supabase
-          .from('messages')
-          .select('*')
-          .eq('conversation_id', conversationId)
-          .order('created_at', ascending: true)
-          .timeout(const Duration(seconds: 12));
-      return _hydrateMessageSenders(_mapRows(rows));
+      try {
+        final rows = await supabase
+            .from('messages')
+            .select('*')
+            .eq('conversation_id', conversationId)
+            .order('created_at', ascending: false)
+            .limit(_initialMessagePageSize)
+            .timeout(const Duration(seconds: 8));
+        return _hydrateMessageSenders(_sortMessageRowsAscending(_mapRows(rows)));
+      } on TimeoutException catch (minimalError) {
+        debugPrint(
+          '[MessagesRepo] minimal messages query timed out; '
+          'retrying ultra-light: $minimalError',
+        );
+        final rows = await supabase
+            .from('messages')
+            .select(
+                'id, conversation_id, sender_id, content, media_url, media_type, metadata, reply_to_id, is_edited, is_deleted, created_at, status, read_at, client_message_id, original_post_id')
+            .eq('conversation_id', conversationId)
+            .order('created_at', ascending: false)
+            .limit(50)
+            .timeout(const Duration(seconds: 8));
+        return _sortMessageRowsAscending(_mapRows(rows));
+      }
     }
+  }
+
+  List<Map<String, dynamic>> _sortMessageRowsAscending(
+    List<Map<String, dynamic>> rows,
+  ) {
+    rows.sort((a, b) {
+      final aDate = DateTime.tryParse(a['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate = DateTime.tryParse(b['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return aDate.compareTo(bDate);
+    });
+    return rows;
   }
 
   Future<List<Map<String, dynamic>>> _hydrateMessageSenders(

@@ -181,7 +181,9 @@ class MessagesLocalStore {
             defaultTargetPlatform == TargetPlatform.linux ||
             defaultTargetPlatform == TargetPlatform.macOS)) {
       sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
+      if (!identical(databaseFactory, databaseFactoryFfi)) {
+        databaseFactory = databaseFactoryFfi;
+      }
     }
     _databaseFactoryReady = true;
   }
