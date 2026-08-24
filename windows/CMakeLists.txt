@@ -12,6 +12,13 @@ set(BINARY_NAME "Alsamos")
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
+if(POLICY CMP0175)
+  # media_kit_libs_windows_video 1.0.11 still uses the legacy
+  # add_custom_command(TARGET ...) form without PRE_BUILD/PRE_LINK/POST_BUILD.
+  # Keep CMake 3.31+ debug builds quiet until the upstream package updates it.
+  cmake_policy(SET CMP0175 OLD)
+endif()
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON CACHE BOOL "" FORCE)
 
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)

@@ -11,6 +11,7 @@ build/
 .claude/
 
 # Android release signing secrets
+# .env is intentionally tracked for this project. Do not ignore it.
 
 !.env.example
 *google-services*.json
