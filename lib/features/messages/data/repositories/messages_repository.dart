@@ -732,7 +732,7 @@ class MessagesRepository {
         final rows = await supabase
             .from('messages')
             .select(
-                'id, conversation_id, sender_id, content, media_url, media_type, metadata, reply_to_id, is_edited, is_deleted, created_at, status, read_at, client_message_id, original_post_id')
+                'id, conversation_id, sender_id, content, media_url, media_type, reply_to_id, is_edited, is_deleted, created_at')
             .eq('conversation_id', conversationId)
             .order('created_at', ascending: false)
             .limit(50)
