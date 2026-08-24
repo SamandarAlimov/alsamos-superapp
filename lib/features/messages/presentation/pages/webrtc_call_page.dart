@@ -72,6 +72,8 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
         'is_video_on': widget.isVideo,
         'is_screen_sharing': false,
         'is_hand_raised': false,
+        'connection_state': 'joining',
+        'last_seen_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'call_id,user_id').timeout(const Duration(seconds: 8));
     } catch (e) {
       debugPrint('[WebRTCCallPage] participant join mark ignored: $e');
@@ -85,7 +87,11 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     try {
       await sb
           .from('call_participants')
-          .update({'left_at': DateTime.now().toUtc().toIso8601String()})
+          .update({
+            'left_at': DateTime.now().toUtc().toIso8601String(),
+            'connection_state': 'left',
+            'last_seen_at': DateTime.now().toUtc().toIso8601String(),
+          })
           .eq('call_id', widget.roomId)
           .eq('user_id', uid)
           .timeout(const Duration(seconds: 8));

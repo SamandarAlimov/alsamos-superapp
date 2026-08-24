@@ -406,7 +406,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     }
   }
 
-  Future<String> _uploadChatMedia(
+  Future<_ChatUploadResult> _uploadChatMediaResult(
     Uint8List bytes,
     String path, {
     String? contentType,
@@ -418,6 +418,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final safePath = path
         .replaceAll(RegExp(r'[^a-zA-Z0-9_\-./]'), '_')
         .replaceAll(RegExp(r'_+'), '_');
+    final normalizedContentType =
+        _normalizeUploadContentType(contentType, safePath);
     for (final bucket in const ['chat-media', 'message-attachments']) {
       try {
         if (taskId != null && _uploads[taskId]?.cancelled == true) {
@@ -427,22 +429,63 @@ class _ChatPageState extends ConsumerState<ChatPage>
         await sb.storage.from(bucket).uploadBinary(
               safePath,
               bytes,
-              fileOptions: FileOptions(contentType: contentType, upsert: false),
+              fileOptions: FileOptions(
+                contentType: normalizedContentType,
+                upsert: false,
+              ),
             );
         if (taskId != null && _uploads[taskId]?.cancelled == true) {
           throw const _UploadCancelled();
         }
         if (taskId != null) _setUploadProgress(taskId, 0.86);
-        return sb.storage.from(bucket).getPublicUrl(safePath);
+        String url;
+        try {
+          url = await sb.storage.from(bucket).createSignedUrl(
+                safePath,
+                60 * 60,
+              );
+        } catch (error) {
+          debugPrint(
+            '[ChatPage] signed media url failed for $bucket/$safePath: $error',
+          );
+          url = sb.storage.from(bucket).getPublicUrl(safePath);
+        }
+        return _ChatUploadResult(
+          url: url,
+          bucket: bucket,
+          path: safePath,
+          contentType: normalizedContentType,
+        );
       } catch (e) {
         firstError ??= e;
         final message = e.toString().toLowerCase();
-        if (!message.contains('bucket not found') && !message.contains('404')) {
+        final canTryNext = bucket != 'message-attachments' &&
+            (message.contains('bucket not found') ||
+                message.contains('404') ||
+                message.contains('invalid_mime_type') ||
+                message.contains('mime type') ||
+                message.contains('415'));
+        if (!canTryNext) {
           rethrow;
         }
       }
     }
     throw firstError ?? StateError('Media upload failed');
+  }
+
+  Future<String> _uploadChatMedia(
+    Uint8List bytes,
+    String path, {
+    String? contentType,
+    String? taskId,
+  }) async {
+    final uploaded = await _uploadChatMediaResult(
+      bytes,
+      path,
+      contentType: contentType,
+      taskId: taskId,
+    );
+    return uploaded.url;
   }
 
   String _beginUpload(String label, Future<void> Function() retry) {
@@ -497,6 +540,15 @@ class _ChatPageState extends ConsumerState<ChatPage>
       'txt' => 'text/plain',
       _ => 'application/octet-stream',
     };
+  }
+
+  String _normalizeUploadContentType(String? contentType, String path) {
+    final lower = (contentType ?? '').trim().toLowerCase();
+    if (lower == 'image/jpg' || lower == 'image/pjpeg') return 'image/jpeg';
+    if (lower == 'video/x-m4v') return 'video/mp4';
+    if (lower == 'audio/x-m4a' || lower == 'audio/m4a') return 'audio/mp4';
+    if (lower.isNotEmpty && lower != 'application/octet-stream') return lower;
+    return _contentTypeForFile(path);
   }
 
   Future<void> _stopAndSendRecording() async {
@@ -1542,6 +1594,15 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final inviteChannels = <RealtimeChannel>[];
       for (final recipientId in recipientIds) {
         try {
+          await _createCallInvite(
+            sb: sb,
+            callId: callId,
+            callerId: uid,
+            recipientId: recipientId,
+            type: type,
+            callerName: callerName,
+            callerAvatar: callerAvatar,
+          );
           final channel = sb.channel(
             'call-invite:$recipientId',
             opts: const RealtimeChannelConfig(ack: true),
@@ -1653,35 +1714,111 @@ class _ChatPageState extends ConsumerState<ChatPage>
     required String type,
     required bool isVideo,
   }) async {
+    await _expireStaleCallSessions(sb);
+
     try {
-      final created = await sb.rpc('create_video_call', params: {
+      final result = await sb.rpc('create_video_call', params: {
         'p_conversation_id': widget.conversationId,
         'p_call_type': type,
         'p_is_video_on': isVideo,
       }).timeout(const Duration(seconds: 12));
-      if (created is String && created.isNotEmpty) return created;
-      if (created is Map && created['id'] is String) {
-        return created['id'] as String;
+      final callId = _callIdFromRpcResult(result);
+      if (callId != null) {
+        await _upsertLocalCallParticipant(
+          sb: sb,
+          uid: uid,
+          callId: callId,
+          isVideo: isVideo,
+        );
+        return callId;
       }
     } catch (e) {
-      debugPrint('[ChatPage] create_video_call RPC fallback: $e');
+      if (!_isMissingRpc(e)) {
+        if (_isDuplicateConflict(e)) {
+          final existing = await _findReusableCall(sb);
+          if (existing != null) {
+            await _upsertLocalCallParticipant(
+              sb: sb,
+              uid: uid,
+              callId: existing,
+              isVideo: isVideo,
+            );
+            return existing;
+          }
+        }
+        rethrow;
+      }
+      debugPrint(
+          '[ChatPage] create_video_call RPC unavailable, using fallback: $e');
     }
 
-    final callData = await sb
-        .from('video_calls')
-        .insert({
-          'conversation_id': widget.conversationId,
-          'host_id': uid,
-          'call_type': type,
-          'status': 'active',
-          'started_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .select()
-        .single()
-        .timeout(const Duration(seconds: 12));
+    try {
+      final callData = await sb
+          .from('video_calls')
+          .insert({
+            'conversation_id': widget.conversationId,
+            'host_id': uid,
+            'call_type': type,
+            'status': 'active',
+            'started_at': null,
+          })
+          .select()
+          .single()
+          .timeout(const Duration(seconds: 12));
 
-    final callId = callData['id'] as String;
-    await sb.from('call_participants').upsert({
+      final callId = callData['id'] as String;
+      await _upsertLocalCallParticipant(
+        sb: sb,
+        uid: uid,
+        callId: callId,
+        isVideo: isVideo,
+      );
+      return callId;
+    } catch (e) {
+      if (!_isDuplicateConflict(e)) rethrow;
+      final existing = await _findReusableCall(sb);
+      if (existing == null) rethrow;
+      await _upsertLocalCallParticipant(
+        sb: sb,
+        uid: uid,
+        callId: existing,
+        isVideo: isVideo,
+      );
+      return existing;
+    }
+  }
+
+  Future<void> _expireStaleCallSessions(SupabaseClient sb) async {
+    final now = DateTime.now().toUtc();
+    final staleBefore = now.subtract(const Duration(minutes: 2));
+    try {
+      await sb
+          .from('video_calls')
+          .update({
+            'status': 'ended',
+            'ended_at': now.toIso8601String(),
+          })
+          .eq('conversation_id', widget.conversationId)
+          .inFilter(
+            'status',
+            ['waiting', 'ringing', 'calling', 'connecting', 'active'],
+          )
+          .isFilter('ended_at', null)
+          .isFilter('started_at', null)
+          .lt('created_at', staleBefore.toIso8601String())
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      debugPrint('[ChatPage] stale call cleanup skipped: $e');
+    }
+  }
+
+  Future<void> _upsertLocalCallParticipant({
+    required SupabaseClient sb,
+    required String uid,
+    required String callId,
+    required bool isVideo,
+  }) async {
+    final participant = {
       'call_id': callId,
       'user_id': uid,
       'joined_at': DateTime.now().toUtc().toIso8601String(),
@@ -1690,8 +1827,218 @@ class _ChatPageState extends ConsumerState<ChatPage>
       'is_video_on': isVideo,
       'is_screen_sharing': false,
       'is_hand_raised': false,
-    }, onConflict: 'call_id,user_id').timeout(const Duration(seconds: 12));
-    return callId;
+      'connection_state': 'joining',
+      'last_seen_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    try {
+      await sb
+          .from('call_participants')
+          .upsert(participant, onConflict: 'call_id,user_id')
+          .timeout(const Duration(seconds: 12));
+      return;
+    } catch (e) {
+      if (!_isDuplicateConflict(e) && !_isConflictTargetMissing(e)) rethrow;
+      debugPrint('[ChatPage] participant upsert fallback: $e');
+    }
+
+    final existing = await sb
+        .from('call_participants')
+        .select('id')
+        .eq('call_id', callId)
+        .eq('user_id', uid)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 8));
+
+    if (existing != null && existing['id'] != null) {
+      await sb
+          .from('call_participants')
+          .update(participant)
+          .eq('id', existing['id'])
+          .timeout(const Duration(seconds: 8));
+      return;
+    }
+
+    try {
+      await sb
+          .from('call_participants')
+          .insert(participant)
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      if (!_isDuplicateConflict(e)) rethrow;
+      await sb
+          .from('call_participants')
+          .update(participant)
+          .eq('call_id', callId)
+          .eq('user_id', uid)
+          .timeout(const Duration(seconds: 8));
+    }
+  }
+
+  Future<String?> _findReusableCall(SupabaseClient sb) async {
+    const reusableStatuses = {
+      'waiting',
+      'ringing',
+      'calling',
+      'connecting',
+      'active',
+    };
+
+    try {
+      final rows = await sb
+          .from('video_calls')
+          .select('id,status,ended_at')
+          .eq('conversation_id', widget.conversationId)
+          .isFilter('ended_at', null)
+          .order('created_at', ascending: false)
+          .limit(5)
+          .timeout(const Duration(seconds: 8));
+
+      for (final row in rows as List) {
+        if (row is! Map) continue;
+        final id = row['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        final status = row['status']?.toString();
+        if (status == null ||
+            status.isEmpty ||
+            reusableStatuses.contains(status)) {
+          return id;
+        }
+      }
+    } catch (e) {
+      debugPrint('[ChatPage] broad reusable call lookup failed: $e');
+    }
+
+    final row = await sb
+        .from('video_calls')
+        .select('id')
+        .eq('conversation_id', widget.conversationId)
+        .inFilter('status', reusableStatuses.toList())
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 8));
+    return row?['id'] as String?;
+  }
+
+  Future<void> _createCallInvite({
+    required SupabaseClient sb,
+    required String callId,
+    required String callerId,
+    required String recipientId,
+    required String type,
+    required String callerName,
+    required String? callerAvatar,
+  }) async {
+    final metadata = <String, dynamic>{
+      'caller_name': callerName,
+      if (callerAvatar != null) 'caller_avatar': callerAvatar,
+    };
+    try {
+      await sb.rpc('create_call_invite', params: {
+        'p_call_id': callId,
+        'p_invitee_id': recipientId,
+        'p_conversation_id': widget.conversationId,
+        'p_call_type': type,
+        'p_metadata': metadata,
+      }).timeout(const Duration(seconds: 8));
+      return;
+    } catch (e) {
+      if (!_isMissingRpc(e)) {
+        debugPrint('[ChatPage] create_call_invite RPC failed: $e');
+      }
+    }
+
+    final invite = {
+      'call_id': callId,
+      'conversation_id': widget.conversationId,
+      'inviter_id': callerId,
+      'invitee_id': recipientId,
+      'status': 'ringing',
+      'call_type': type,
+      'metadata': metadata,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    try {
+      await sb
+          .from('call_invites')
+          .upsert(invite, onConflict: 'call_id,invitee_id')
+          .timeout(const Duration(seconds: 8));
+      return;
+    } catch (e) {
+      if (!_isDuplicateConflict(e) && !_isConflictTargetMissing(e)) {
+        debugPrint('[ChatPage] call_invites fallback failed: $e');
+        return;
+      }
+      debugPrint('[ChatPage] call_invites upsert fallback: $e');
+    }
+
+    try {
+      final existing = await sb
+          .from('call_invites')
+          .select('id')
+          .eq('call_id', callId)
+          .eq('invitee_id', recipientId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
+
+      if (existing != null && existing['id'] != null) {
+        await sb
+            .from('call_invites')
+            .update(invite)
+            .eq('id', existing['id'])
+            .timeout(const Duration(seconds: 8));
+        return;
+      }
+
+      await sb
+          .from('call_invites')
+          .insert(invite)
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      if (!_isDuplicateConflict(e)) {
+        debugPrint('[ChatPage] call_invites update/insert fallback failed: $e');
+        return;
+      }
+      await sb
+          .from('call_invites')
+          .update(invite)
+          .eq('call_id', callId)
+          .eq('invitee_id', recipientId)
+          .timeout(const Duration(seconds: 8));
+    }
+  }
+
+  String? _callIdFromRpcResult(Object? result) {
+    if (result == null) return null;
+    if (result is String && result.isNotEmpty) return result;
+    if (result is Map) {
+      return (result['call_id'] ?? result['id'])?.toString();
+    }
+    return result.toString().isEmpty ? null : result.toString();
+  }
+
+  bool _isMissingRpc(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('pgrst202') ||
+        message.contains('42883') ||
+        (message.contains('function') && message.contains('does not exist')) ||
+        message.contains('could not find the function');
+  }
+
+  bool _isDuplicateConflict(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('23505') ||
+        message.contains('duplicate key') ||
+        message.contains('already exists') ||
+        message.contains('allaqachon');
+  }
+
+  bool _isConflictTargetMissing(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('42p10') ||
+        message.contains('no unique or exclusion constraint');
   }
 
   /// v30: image_picker bilan rasm/video tanlaydi, Supabase Storage `chat-media`
@@ -1874,6 +2221,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final uid = sb.auth.currentUser?.id ?? 'anon';
       final urls = <String>[];
       final thumbUrls = <String>[];
+      final mediaPaths = <String>[];
+      final mediaBuckets = <String>[];
+      final mimeTypes = <String>[];
       for (final file in files.take(10)) {
         final path =
             '$uid/albums/${DateTime.now().microsecondsSinceEpoch}_${file.name}';
@@ -1904,14 +2254,17 @@ class _ChatPageState extends ConsumerState<ChatPage>
         }
 
         _setUploadProgress(taskId, 0.1 + (urls.length / files.length) * 0.75);
-        final uploadedUrl = await _uploadChatMedia(
+        final uploaded = await _uploadChatMediaResult(
           bytes,
           path,
           contentType: _contentTypeForFile(file.name),
           taskId: taskId,
         );
-        urls.add(uploadedUrl);
-        thumbUrls.add(thumbUrl ?? uploadedUrl);
+        urls.add(uploaded.url);
+        thumbUrls.add(thumbUrl ?? uploaded.url);
+        mediaPaths.add(uploaded.path);
+        mediaBuckets.add(uploaded.bucket);
+        mimeTypes.add(uploaded.contentType);
       }
       if (urls.isEmpty) return;
       await ref.read(messagesProvider(widget.conversationId).notifier).send(
@@ -1923,6 +2276,12 @@ class _ChatPageState extends ConsumerState<ChatPage>
           'album_id': 'album-${DateTime.now().microsecondsSinceEpoch}',
           'media_urls': urls,
           'thumbnail_urls': thumbUrls,
+          'media_paths': mediaPaths,
+          'media_buckets': mediaBuckets,
+          'mime_types': mimeTypes,
+          if (mediaPaths.isNotEmpty) 'media_path': mediaPaths.first,
+          if (mediaBuckets.isNotEmpty) 'media_bucket': mediaBuckets.first,
+          if (mimeTypes.isNotEmpty) 'mime_type': mimeTypes.first,
         },
       );
       _finishUpload(taskId);
@@ -1951,7 +2310,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final uid = sb.auth.currentUser?.id ?? 'anon';
       final path = '$uid/${DateTime.now().millisecondsSinceEpoch}_${file.name}';
 
-      final publicUrl = await _uploadChatMedia(
+      final uploaded = await _uploadChatMediaResult(
         bytes,
         path,
         contentType: _contentTypeForFile(file.name),
@@ -1959,9 +2318,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
       );
       _setUploadProgress(taskId, 0.95);
 
-      await ref
-          .read(messagesProvider(widget.conversationId).notifier)
-          .send(file.name, mediaUrl: publicUrl, mediaType: 'file');
+      await ref.read(messagesProvider(widget.conversationId).notifier).send(
+        file.name,
+        mediaUrl: uploaded.url,
+        mediaType: 'file',
+        metadata: {
+          'file_name': file.name,
+          'media_path': uploaded.path,
+          'media_bucket': uploaded.bucket,
+          'mime_type': uploaded.contentType,
+          'size_bytes': bytes.length,
+        },
+      );
       _finishUpload(taskId);
       if (!mounted) return;
       AppToast.success(context, 'Fayl yuborildi');
@@ -4382,6 +4750,20 @@ class _UploadCancelled implements Exception {
   const _UploadCancelled();
   @override
   String toString() => 'Upload bekor qilindi';
+}
+
+class _ChatUploadResult {
+  const _ChatUploadResult({
+    required this.url,
+    required this.bucket,
+    required this.path,
+    required this.contentType,
+  });
+
+  final String url;
+  final String bucket;
+  final String path;
+  final String contentType;
 }
 
 class _UploadTask {

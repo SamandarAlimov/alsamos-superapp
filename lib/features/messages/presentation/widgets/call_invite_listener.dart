@@ -71,7 +71,8 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           try {
             _handleIncomingCall(payload);
           } catch (e, stack) {
-            debugPrint('[CallInviteListener] Error handling broadcast invite: $e\n$stack');
+            debugPrint(
+                '[CallInviteListener] Error handling broadcast invite: $e\n$stack');
           }
         },
       )
@@ -92,11 +93,27 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
             unawaited(_handleDbCallInsert(payload.newRecord, uid));
           },
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'call_invites',
+          callback: (payload) {
+            unawaited(_handleDbCallInvite(payload.newRecord, uid));
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'call_invites',
+          callback: (payload) {
+            unawaited(_handleDbCallInvite(payload.newRecord, uid));
+          },
+        )
         .subscribe((status, error) {
-          if (kDebugMode && status == RealtimeSubscribeStatus.subscribed) {
-            debugPrint('[CallInviteListener] ✓ Subscribed to DB call inserts');
-          }
-        });
+      if (kDebugMode && status == RealtimeSubscribeStatus.subscribed) {
+        debugPrint('[CallInviteListener] ✓ Subscribed to DB call inserts');
+      }
+    });
 
     _pushPoll ??= Timer.periodic(
       const Duration(seconds: 2),
@@ -104,7 +121,8 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     );
   }
 
-  Future<void> _handleDbCallInsert(Map<String, dynamic> record, String uid) async {
+  Future<void> _handleDbCallInsert(
+      Map<String, dynamic> record, String uid) async {
     if (!mounted) return;
     final callId = record['id'] as String?;
     final hostId = record['host_id'] as String?;
@@ -157,6 +175,76 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     });
   }
 
+  Future<void> _handleDbCallInvite(
+      Map<String, dynamic> record, String uid) async {
+    if (!mounted) return;
+
+    final inviteeId = record['invitee_id'] as String?;
+    if (inviteeId != uid) return;
+
+    final status = (record['status'] as String?) ?? 'pending';
+    if (status == 'accepted' ||
+        status == 'declined' ||
+        status == 'cancelled' ||
+        status == 'missed' ||
+        status == 'ended') {
+      return;
+    }
+
+    final callId = record['call_id'] as String?;
+    if (callId == null) return;
+
+    var conversationId = record['conversation_id'] as String?;
+    var callerId = record['inviter_id'] as String?;
+    var callType = (record['call_type'] as String?) ?? 'video';
+    final rawMetadata = record['metadata'];
+    final metadata = rawMetadata is Map ? rawMetadata : const {};
+    var callerName = metadata['caller_name']?.toString() ?? 'Alsamos';
+    var callerAvatar = metadata['caller_avatar']?.toString();
+
+    if (conversationId == null || callerId == null) {
+      try {
+        final call = await Supabase.instance.client
+            .from('video_calls')
+            .select('conversation_id, host_id, call_type')
+            .eq('id', callId)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 5));
+        conversationId ??= call?['conversation_id'] as String?;
+        callerId ??= call?['host_id'] as String?;
+        callType = (call?['call_type'] as String?) ?? callType;
+      } catch (e) {
+        debugPrint('[CallInviteListener] invite call lookup failed: $e');
+      }
+    }
+
+    if (conversationId == null || callerId == null || callerId == uid) return;
+
+    if (callerName == 'Alsamos' || callerAvatar == null) {
+      try {
+        final profile = await Supabase.instance.client
+            .from('profiles')
+            .select('display_name, username, avatar_url')
+            .eq('id', callerId)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 5));
+        callerName = (profile?['display_name'] as String?) ??
+            (profile?['username'] as String?) ??
+            callerName;
+        callerAvatar = profile?['avatar_url'] as String? ?? callerAvatar;
+      } catch (_) {}
+    }
+
+    await _handleIncomingCall({
+      'call_id': callId,
+      'conversation_id': conversationId,
+      'caller_id': callerId,
+      'caller_name': callerName,
+      'caller_avatar': callerAvatar,
+      'call_type': callType,
+    });
+  }
+
   Future<void> _consumePendingCallPushes() async {
     if (!mounted || _listeningUserId == null) return;
     final prefs = await SharedPreferences.getInstance();
@@ -195,7 +283,8 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
 
     if (callId == null || conversationId == null) {
       if (kDebugMode) {
-        debugPrint('[CallInviteListener] Invalid payload: missing call_id or conversation_id');
+        debugPrint(
+            '[CallInviteListener] Invalid payload: missing call_id or conversation_id');
       }
       return;
     }
@@ -224,6 +313,8 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           await _declineCall(callId: callId, currentUserId: currentUserId);
         } catch (e, stack) {
           debugPrint('[CallInviteListener] Error declining call: $e\n$stack');
+        } finally {
+          _forgetCall(callId);
         }
       },
       onAccept: () async {
@@ -249,8 +340,17 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           );
         } catch (e, stack) {
           debugPrint('[CallInviteListener] Error accepting call: $e\n$stack');
+          _forgetCall(callId);
+        } finally {
+          _forgetCall(callId);
         }
       },
+    );
+  }
+
+  void _forgetCall(String callId) {
+    _seenCallIds.removeWhere(
+      (seen) => seen == callId || seen.startsWith('$callId:'),
     );
   }
 
@@ -260,28 +360,105 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     required bool isVideo,
   }) async {
     final sb = Supabase.instance.client;
+
     try {
-      await sb.rpc('join_video_call', params: {
+      final result = await sb.rpc('join_video_call_guarded', params: {
         'p_call_id': callId,
         'p_is_video_on': isVideo,
-      }).timeout(const Duration(seconds: 5));
+      }).timeout(const Duration(seconds: 8));
+
+      if (result is Map && result['joined'] == false) {
+        throw StateError(result['reason']?.toString() ?? 'call_join_failed');
+      }
+
+      await _markCallInviteAccepted(callId);
       return;
     } catch (e) {
-      debugPrint('[CallInviteListener] join_video_call RPC fallback: $e');
+      if (!_isMissingRpc(e)) rethrow;
+      debugPrint(
+          '[CallInviteListener] join_video_call_guarded unavailable, using fallback: $e');
     }
 
-    await sb.from('call_participants').upsert({
+    // Fallback for older Lovable DBs: same lifecycle, without capacity guard.
+    final callData = await sb
+        .from('video_calls')
+        .select('id,status')
+        .eq('id', callId)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 5));
+    if (callData == null || callData['status'] == 'ended') {
+      throw StateError('call_ended');
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final existing = await sb
+        .from('call_participants')
+        .select('id')
+        .eq('call_id', callId)
+        .eq('user_id', currentUserId)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 5));
+
+    if (existing != null && existing['id'] != null) {
+      await sb
+          .from('call_participants')
+          .update({
+            'joined_at': now,
+            'left_at': null,
+            'is_muted': false,
+            'is_video_on': isVideo,
+            'is_screen_sharing': false,
+            'is_hand_raised': false,
+          })
+          .eq('id', existing['id'])
+          .timeout(const Duration(seconds: 5));
+      await _markCallInviteAccepted(callId);
+      return;
+    }
+
+    final participant = {
       'call_id': callId,
       'user_id': currentUserId,
-      'joined_at': DateTime.now().toUtc().toIso8601String(),
-      'left_at': null,
       'is_muted': false,
       'is_video_on': isVideo,
       'is_screen_sharing': false,
       'is_hand_raised': false,
-      'connection_state': 'connecting',
-      'last_seen_at': DateTime.now().toUtc().toIso8601String(),
-    }, onConflict: 'call_id,user_id').timeout(const Duration(seconds: 5));
+    };
+
+    try {
+      await sb
+          .from('call_participants')
+          .insert(participant)
+          .timeout(const Duration(seconds: 5));
+    } catch (e) {
+      if (!_isDuplicateConflict(e)) rethrow;
+      await sb
+          .from('call_participants')
+          .update({
+            ...participant,
+            'joined_at': now,
+            'left_at': null,
+          })
+          .eq('call_id', callId)
+          .eq('user_id', currentUserId)
+          .timeout(const Duration(seconds: 5));
+    }
+    await _markCallInviteAccepted(callId);
+  }
+
+  Future<void> _markCallInviteAccepted(String callId) async {
+    final uid = _listeningUserId;
+    if (uid == null) return;
+    try {
+      await Supabase.instance.client
+          .from('call_invites')
+          .update({'status': 'accepted'})
+          .eq('call_id', callId)
+          .eq('invitee_id', uid)
+          .timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[CallInviteListener] invite accept update failed: $e');
+    }
   }
 
   Future<void> _declineCall({
@@ -289,27 +466,64 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     required String currentUserId,
   }) async {
     final sb = Supabase.instance.client;
+    final now = DateTime.now().toUtc().toIso8601String();
+
     try {
-      await sb.rpc('decline_video_call', params: {
-        'p_call_id': callId,
-      }).timeout(const Duration(seconds: 5));
-      return;
+      await sb
+          .from('video_calls')
+          .update({
+            'status': 'ended',
+            'ended_at': now,
+          })
+          .eq('id', callId)
+          .timeout(const Duration(seconds: 5));
     } catch (e) {
-      debugPrint('[CallInviteListener] decline_video_call RPC fallback: $e');
+      debugPrint('[CallInviteListener] decline update failed: $e');
     }
 
-    await sb.from('call_participants').upsert({
-      'call_id': callId,
-      'user_id': currentUserId,
-      'joined_at': null,
-      'left_at': DateTime.now().toUtc().toIso8601String(),
-      'is_muted': false,
-      'is_video_on': false,
-      'is_screen_sharing': false,
-      'is_hand_raised': false,
-      'connection_state': 'declined',
-      'last_seen_at': DateTime.now().toUtc().toIso8601String(),
-    }, onConflict: 'call_id,user_id').timeout(const Duration(seconds: 5));
+    try {
+      await sb.from('call_participants').upsert({
+        'call_id': callId,
+        'user_id': currentUserId,
+        'joined_at': null,
+        'left_at': now,
+        'is_muted': false,
+        'is_video_on': false,
+        'is_screen_sharing': false,
+        'is_hand_raised': false,
+        'connection_state': 'declined',
+        'last_seen_at': now,
+      }, onConflict: 'call_id,user_id').timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[CallInviteListener] decline participant update failed: $e');
+    }
+
+    try {
+      await sb
+          .from('call_invites')
+          .update({'status': 'declined'})
+          .eq('call_id', callId)
+          .eq('invitee_id', currentUserId)
+          .timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[CallInviteListener] decline invite update failed: $e');
+    }
+  }
+
+  bool _isMissingRpc(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('pgrst202') ||
+        message.contains('42883') ||
+        (message.contains('function') && message.contains('does not exist')) ||
+        message.contains('could not find the function');
+  }
+
+  bool _isDuplicateConflict(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('23505') ||
+        message.contains('duplicate key') ||
+        message.contains('already exists') ||
+        message.contains('allaqachon');
   }
 
   Future<void> _disposeChannel() async {
