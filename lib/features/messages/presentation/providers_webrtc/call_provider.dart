@@ -1315,6 +1315,7 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> _maybeMakeOffer(String peerId) async {
     final pc = _peers[peerId];
+    if (!_shouldCreateOffer(peerId)) return;
     if (pc == null ||
         (_makingOffer[peerId] ?? false) ||
         pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
@@ -1365,9 +1366,10 @@ class CallNotifier extends StateNotifier<CallState> {
     final sdpMap = payload['sdp'] as Map<String, dynamic>?;
     if (sdpMap == null) return;
     final pc = await _ensurePeer(from, localStream);
-    // Polite peer = lower ID. Impolite = higher ID.
-    // Matches web: lower ID yields on collision, higher ID's offer wins.
-    final polite = userId.compareTo(from) < 0;
+    // Perfect negotiation: the lower UUID is the offerer, the higher UUID is
+    // polite and answers. This avoids both sides creating competing offers and
+    // getting stuck in "connecting".
+    final polite = userId.compareTo(from) > 0;
     final collision = (_makingOffer[from] ?? false) ||
         pc.signalingState != RTCSignalingState.RTCSignalingStateStable;
     _ignoreOffer[from] = !polite && collision;
@@ -1444,6 +1446,8 @@ class CallNotifier extends StateNotifier<CallState> {
       _queueRemoteCandidate(from, candidate, 'add-failed');
     }
   }
+
+  bool _shouldCreateOffer(String peerId) => userId.compareTo(peerId) < 0;
 
   void _handleMedia(Map<String, dynamic> payload) {
     final from = payload['from'] as String?;
@@ -1716,6 +1720,7 @@ class CallNotifier extends StateNotifier<CallState> {
           'roomId': roomId,
           'callId': roomId,
           'userId': userId,
+          if (signal['ended'] == true) 'ended': true,
         });
         break;
     }

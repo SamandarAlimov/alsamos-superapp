@@ -128,6 +128,17 @@ Deno.serve((req) => {
       from: client.userId,
     };
 
+    if (type === "leave" && message.ended === true) {
+      await markParticipantLeft(client, true);
+      broadcast(client.roomId, client.userId, {
+        ...normalized,
+        type: "call-ended",
+        ended: true,
+      });
+      socket.close(1000, "call_ended");
+      return;
+    }
+
     const targetUserId =
       stringOrNull(message.targetUserId) ?? stringOrNull(message.to);
 
@@ -478,7 +489,7 @@ async function touchParticipant(client: Client, includeHeartbeat: boolean) {
   }
 }
 
-async function markParticipantLeft(client: Client) {
+async function markParticipantLeft(client: Client, endCall = false) {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -495,6 +506,18 @@ async function markParticipantLeft(client: Client) {
       })
       .eq("call_id", client.roomId)
       .eq("user_id", client.userId);
+
+    if (endCall) {
+      await supabase
+        .from("video_calls")
+        .update({
+          status: "ended",
+          ended_at: now,
+          last_heartbeat_at: now,
+        })
+        .eq("id", client.roomId)
+        .is("ended_at", null);
+    }
   } catch (error) {
     console.error("WebRTC participant leave mark failed", error);
   }
