@@ -360,7 +360,10 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                                 ? 'Share stop'
                                 : 'Ekran',
                             active: callState.isScreenSharing,
-                            onTap: notifier.toggleScreenShare,
+                            onTap: () => _toggleScreenShare(
+                              callState,
+                              notifier,
+                            ),
                           ),
                         _CallBtn(
                           icon: LucideIcons.settings2,
@@ -442,6 +445,113 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
           ),
       ],
     );
+  }
+
+  Future<void> _toggleScreenShare(
+    CallState callState,
+    CallNotifier notifier,
+  ) async {
+    _showControls();
+    if (callState.isScreenSharing || kIsWeb || !_isDesktopPlatform) {
+      await notifier.toggleScreenShare();
+      return;
+    }
+
+    final source = await _pickDesktopCaptureSource();
+    if (source == null) return;
+    await notifier.toggleScreenShare(sourceId: source.id);
+  }
+
+  bool get _isDesktopPlatform {
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux;
+  }
+
+  Future<DesktopCapturerSource?> _pickDesktopCaptureSource() async {
+    try {
+      final sources = await desktopCapturer.getSources(
+        types: [SourceType.Screen, SourceType.Window],
+        thumbnailSize: ThumbnailSize(320, 180),
+      );
+      if (!mounted) return null;
+      if (sources.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ekran yoki oyna topilmadi')),
+        );
+        return null;
+      }
+      return showDialog<DesktopCapturerSource>(
+        context: context,
+        barrierColor: Colors.black87,
+        builder: (context) => Dialog(
+          backgroundColor: const Color(0xFF111827),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760, maxHeight: 620),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(LucideIcons.screenShare, color: Colors.white),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Ekran yoki oynani tanlang',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(LucideIcons.x, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Flexible(
+                    child: GridView.builder(
+                      shrinkWrap: true,
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 220,
+                        mainAxisExtent: 168,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                      ),
+                      itemCount: sources.length,
+                      itemBuilder: (context, index) {
+                        final source = sources[index];
+                        return _DesktopCaptureSourceTile(
+                          source: source,
+                          onTap: () => Navigator.of(context).pop(source),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ekran ro\'yxati ochilmadi: $e')),
+        );
+      }
+      return null;
+    }
   }
 
   Future<void> _showDeviceSheet(
@@ -675,6 +785,79 @@ class _CallBtn extends StatelessWidget {
         Text(label,
             style: const TextStyle(color: Colors.white70, fontSize: 11)),
       ]),
+    );
+  }
+}
+
+class _DesktopCaptureSourceTile extends StatelessWidget {
+  const _DesktopCaptureSourceTile({
+    required this.source,
+    required this.onTap,
+  });
+
+  final DesktopCapturerSource source;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbnail = source.thumbnail;
+    return Material(
+      color: Colors.white.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: thumbnail == null || thumbnail.isEmpty
+                  ? Container(
+                      color: Colors.black26,
+                      child: Icon(
+                        source.type == SourceType.Screen
+                            ? LucideIcons.monitor
+                            : LucideIcons.panelTop,
+                        color: Colors.white54,
+                        size: 38,
+                      ),
+                    )
+                  : Image.memory(
+                      thumbnail,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  Icon(
+                    source.type == SourceType.Screen
+                        ? LucideIcons.monitor
+                        : LucideIcons.panelTop,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      source.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

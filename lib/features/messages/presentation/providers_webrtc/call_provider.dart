@@ -457,14 +457,20 @@ class CallNotifier extends StateNotifier<CallState> {
     }
   }
 
-  Future<void> toggleScreenShare() async {
+  Future<void> toggleScreenShare({String? sourceId}) async {
     if (state.isScreenSharing) {
       await _restoreCameraTrack();
       return;
     }
     try {
+      final videoConstraints = sourceId == null
+          ? true
+          : {
+              'deviceId': {'exact': sourceId},
+              'mandatory': {'frameRate': 30.0},
+            };
       final display = await navigator.mediaDevices.getDisplayMedia({
-        'video': true,
+        'video': videoConstraints,
         'audio': false,
       });
       final track = display.getVideoTracks().firstOrNull;
