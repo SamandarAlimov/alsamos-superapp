@@ -1515,10 +1515,8 @@ class CallNotifier extends StateNotifier<CallState> {
     switch (type) {
       case 'room-joined':
       case 'joined':
-        final rawParticipants = message['participants'];
-        final peers = rawParticipants is List
-            ? rawParticipants.whereType<String>()
-            : const Iterable<String>.empty();
+        final peers = _edgePeerIdsFromJoinedMessage(message);
+        debugPrint('[WebRTC] Edge joined peers=${peers.length}');
         for (final peerId in peers) {
           if (peerId != userId) {
             unawaited(
@@ -1637,6 +1635,24 @@ class CallNotifier extends StateNotifier<CallState> {
   String? _edgeUserId(Map<String, dynamic> message) {
     return (message['userId'] ?? message['fromUserId'] ?? message['from'])
         as String?;
+  }
+
+  List<String> _edgePeerIdsFromJoinedMessage(Map<String, dynamic> message) {
+    final raw = message['participants'] ?? message['peers'] ?? message['users'];
+    if (raw is! List) return const [];
+    return raw
+        .map((value) {
+          if (value is String) return value;
+          if (value is Map) {
+            return (value['userId'] ?? value['user_id'] ?? value['id'])
+                ?.toString();
+          }
+          return null;
+        })
+        .whereType<String>()
+        .where((value) => value.isNotEmpty && value != userId)
+        .toSet()
+        .toList();
   }
 
   Map<String, dynamic> _edgeSignalPayload(
@@ -1917,7 +1933,6 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _startResyncLoop() {
     _resyncTimer?.cancel();
-    _edgeHeartbeatTimer?.cancel();
     _resyncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(_writeParticipantState());
       final localStream = state.localStream;
