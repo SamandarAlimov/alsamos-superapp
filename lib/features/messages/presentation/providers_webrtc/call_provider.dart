@@ -188,6 +188,7 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _elapsedTimer;
   Timer? _statsTimer;
   Timer? _resyncTimer;
+  Timer? _edgeHeartbeatTimer;
   MediaStream? _screenStream;
   bool _leaving = false;
   bool _startedAtStamped = false;
@@ -305,6 +306,8 @@ class CallNotifier extends StateNotifier<CallState> {
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
+    _edgeHeartbeatTimer?.cancel();
+    _edgeHeartbeatTimer = null;
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
@@ -1323,6 +1326,7 @@ class CallNotifier extends StateNotifier<CallState> {
         'callId': roomId,
         'userId': userId,
       });
+      _startEdgeHeartbeat();
       debugPrint('[WebRTC] Edge signaling joined room $roomId');
     } catch (e) {
       debugPrint(
@@ -1410,9 +1414,38 @@ class CallNotifier extends StateNotifier<CallState> {
           state = state.copyWith(error: error);
         }
         break;
+      case 'ping':
+        _edgeSocket?.send({
+          'type': 'pong',
+          'roomId': roomId,
+          'callId': roomId,
+          'userId': userId,
+        });
+        break;
+      case 'heartbeat-ack':
+      case 'ready':
+        break;
       default:
         debugPrint('[WebRTC] Edge signaling ignored message: $message');
     }
+  }
+
+  void _startEdgeHeartbeat() {
+    _edgeHeartbeatTimer?.cancel();
+    _edgeHeartbeatTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      final socket = _edgeSocket;
+      if (_leaving || socket == null || !socket.isConnected) return;
+      socket.send({
+        'type': 'heartbeat',
+        'roomId': roomId,
+        'callId': roomId,
+        'userId': userId,
+        'isMuted': state.isMuted,
+        'isVideoOn': state.isVideoOn,
+        'isScreenSharing': state.isScreenSharing,
+        'isHandRaised': state.isHandRaised,
+      });
+    });
   }
 
   Future<void> _registerEdgePeer(
@@ -1676,6 +1709,7 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _startResyncLoop() {
     _resyncTimer?.cancel();
+    _edgeHeartbeatTimer?.cancel();
     _resyncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(_writeParticipantState());
       final localStream = state.localStream;
@@ -1712,6 +1746,28 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> _writeParticipantState({String? connectionState}) async {
     try {
+      if (connectionState == null || connectionState == 'connected') {
+        try {
+          await _sb.rpc('heartbeat_video_call', params: {
+            'p_call_id': roomId,
+            'p_is_muted': state.isMuted,
+            'p_is_video_on': state.isVideoOn,
+            'p_is_screen_sharing': state.isScreenSharing,
+            'p_is_hand_raised': state.isHandRaised,
+            'p_device_info': {
+              'platform': defaultTargetPlatform.name,
+              'transport': {
+                'edge': _edgeSocket?.isConnected == true,
+                'realtime': _channel != null,
+              },
+            },
+          }).timeout(const Duration(seconds: 5));
+          return;
+        } catch (e) {
+          debugPrint('[WebRTC] heartbeat RPC fallback: $e');
+        }
+      }
+
       final row = {
         'call_id': roomId,
         'user_id': userId,

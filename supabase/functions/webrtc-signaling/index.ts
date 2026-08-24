@@ -8,9 +8,16 @@ type Client = {
   socket: WebSocket;
   roomId: string;
   userId: string;
+  joinedAt: number;
+  lastSeenAt: number;
 };
 
 const rooms = new Map<string, Map<string, Client>>();
+const roomCleanupTimers = new Map<string, number>();
+const heartbeatTimers = new WeakMap<WebSocket, number>();
+
+const HEARTBEAT_MS = 15_000;
+const STALE_CLIENT_MS = 45_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,9 +45,15 @@ Deno.serve((req) => {
 
   const { socket, response } = Deno.upgradeWebSocket(req);
   let client: Client | null = null;
+  let keepAliveResolve: (() => void) | null = null;
+  const keepAlive = new Promise<void>((resolve) => {
+    keepAliveResolve = resolve;
+  });
+  EdgeRuntime.waitUntil(keepAlive);
   const tokenUserId = getUserIdFromToken(req.headers.get("authorization"));
 
   socket.onopen = async () => {
+    startSocketHeartbeat(socket);
     if (initialRoomId != null && initialUserId != null) {
       client = await registerClient({
         socket,
@@ -59,6 +72,21 @@ Deno.serve((req) => {
 
     const type = String(message.type ?? "");
     if (type.length === 0) return;
+
+    if (client != null) {
+      client.lastSeenAt = Date.now();
+    }
+
+    if (type === "pong" || type === "heartbeat") {
+      if (client != null) {
+        await touchParticipant(client, type === "heartbeat");
+      }
+      socket.send(JSON.stringify({
+        type: "heartbeat-ack",
+        serverTime: new Date().toISOString(),
+      }));
+      return;
+    }
 
     if (type === "join" || type === "join-room") {
       const roomId =
@@ -109,7 +137,9 @@ Deno.serve((req) => {
   };
 
   socket.onclose = () => {
+    stopSocketHeartbeat(socket);
     if (client != null) leave(client);
+    keepAliveResolve?.();
   };
 
   return response;
@@ -126,7 +156,14 @@ async function registerClient({
   userId: string;
   tokenUserId: string | null;
 }): Promise<Client | null> {
-  const candidate: Client = { socket, roomId, userId };
+  const now = Date.now();
+  const candidate: Client = {
+    socket,
+    roomId,
+    userId,
+    joinedAt: now,
+    lastSeenAt: now,
+  };
 
   if (tokenUserId != null && tokenUserId !== userId) {
     send(candidate, {
@@ -153,6 +190,8 @@ async function registerClient({
     previous.socket.close(1000, "replaced");
   }
   room.set(userId, candidate);
+  scheduleRoomCleanup(roomId);
+  await touchParticipant(candidate, false);
 
   const peers = [...room.keys()].filter((id) => id !== userId);
   send(candidate, {
@@ -193,6 +232,7 @@ function leave(client: Client) {
   if (existing?.socket !== client.socket) return;
 
   room.delete(client.userId);
+  void markParticipantLeft(client);
   broadcast(client.roomId, client.userId, {
     type: "user-left",
     roomId: client.roomId,
@@ -203,6 +243,67 @@ function leave(client: Client) {
   });
 
   if (room.size === 0) rooms.delete(client.roomId);
+}
+
+function startSocketHeartbeat(socket: WebSocket) {
+  stopSocketHeartbeat(socket);
+  const timer = setInterval(() => {
+    if (socket.readyState !== WebSocket.OPEN) {
+      stopSocketHeartbeat(socket);
+      return;
+    }
+    try {
+      socket.send(JSON.stringify({
+        type: "ping",
+        serverTime: new Date().toISOString(),
+      }));
+    } catch {
+      stopSocketHeartbeat(socket);
+      try {
+        socket.close(1011, "heartbeat_failed");
+      } catch {
+        // best effort
+      }
+    }
+  }, HEARTBEAT_MS);
+  heartbeatTimers.set(socket, timer);
+}
+
+function stopSocketHeartbeat(socket: WebSocket) {
+  const timer = heartbeatTimers.get(socket);
+  if (timer != null) {
+    clearInterval(timer);
+    heartbeatTimers.delete(socket);
+  }
+}
+
+function scheduleRoomCleanup(roomId: string) {
+  if (roomCleanupTimers.has(roomId)) return;
+  const timer = setInterval(() => {
+    const room = rooms.get(roomId);
+    if (room == null) {
+      clearInterval(timer);
+      roomCleanupTimers.delete(roomId);
+      return;
+    }
+    const now = Date.now();
+    for (const client of room.values()) {
+      if (now - client.lastSeenAt > STALE_CLIENT_MS) {
+        try {
+          client.socket.close(1001, "heartbeat_timeout");
+        } catch {
+          // best effort
+        }
+        leave(client);
+      }
+    }
+    if (room.size === 0) {
+      rooms.delete(roomId);
+      clearInterval(timer);
+      roomCleanupTimers.delete(roomId);
+    }
+  }, HEARTBEAT_MS);
+  roomCleanupTimers.set(roomId, timer);
 }
 
 function broadcast(
@@ -325,5 +426,58 @@ async function verifyParticipant(
   } catch (error) {
     console.error("WebRTC participant verification failed", error);
     return false;
+  }
+}
+
+async function touchParticipant(client: Client, includeHeartbeat: boolean) {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (supabaseUrl == null || serviceKey == null) return;
+
+    const supabase = createClient(supabaseUrl, serviceKey);
+    const now = new Date().toISOString();
+    await supabase
+      .from("call_participants")
+      .upsert({
+        call_id: client.roomId,
+        user_id: client.userId,
+        joined_at: now,
+        left_at: null,
+        connection_state: "connected",
+        last_seen_at: now,
+      }, { onConflict: "call_id,user_id" });
+
+    if (includeHeartbeat) {
+      await supabase
+        .from("video_calls")
+        .update({ last_heartbeat_at: now })
+        .eq("id", client.roomId)
+        .is("ended_at", null);
+    }
+  } catch (error) {
+    console.error("WebRTC participant heartbeat failed", error);
+  }
+}
+
+async function markParticipantLeft(client: Client) {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (supabaseUrl == null || serviceKey == null) return;
+
+    const supabase = createClient(supabaseUrl, serviceKey);
+    const now = new Date().toISOString();
+    await supabase
+      .from("call_participants")
+      .update({
+        left_at: now,
+        connection_state: "left",
+        last_seen_at: now,
+      })
+      .eq("call_id", client.roomId)
+      .eq("user_id", client.userId);
+  } catch (error) {
+    console.error("WebRTC participant leave mark failed", error);
   }
 }
