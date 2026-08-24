@@ -190,9 +190,11 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _statsTimer;
   Timer? _resyncTimer;
   Timer? _edgeHeartbeatTimer;
+  Timer? _realtimeResubscribeTimer;
   MediaStream? _screenStream;
   bool _leaving = false;
   bool _startedAtStamped = false;
+  bool _heartbeatRpcUnavailable = false;
 
   Uri get _edgeSignalingUri {
     final supabaseUri = Uri.parse(ApiConstants.supabaseUrl);
@@ -308,7 +310,9 @@ class CallNotifier extends StateNotifier<CallState> {
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
+    _realtimeResubscribeTimer?.cancel();
     _edgeHeartbeatTimer = null;
+    _realtimeResubscribeTimer = null;
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
@@ -965,11 +969,23 @@ class CallNotifier extends StateNotifier<CallState> {
       } else if (status == RealtimeSubscribeStatus.closed) {
         debugPrint('[WebRTC] Channel closed unexpectedly');
         if (!_leaving && state.localStream != null) {
-          // Channel closed while call is active — attempt resubscribe
+          // A closed RealtimeChannel is not guaranteed to be reusable. Recreate
+          // it so DB participant/signaling listeners come back cleanly.
+          final activeStream = state.localStream!;
           state = state.copyWith(isReconnecting: true);
-          Future<void>.delayed(const Duration(seconds: 2), () {
-            if (!_leaving && _channel != null) {
-              _channel!.subscribe();
+          _realtimeResubscribeTimer?.cancel();
+          _realtimeResubscribeTimer =
+              Timer(const Duration(seconds: 2), () async {
+            if (_leaving || state.localStream == null) return;
+            try {
+              final closedChannel = _channel;
+              _channel = null;
+              if (closedChannel != null) {
+                await _sb.removeChannel(closedChannel);
+              }
+              await _supabaseSubscribe(activeStream);
+            } catch (e, stack) {
+              debugPrint('[WebRTC] Realtime resubscribe failed: $e\n$stack');
             }
           });
         }
@@ -988,12 +1004,7 @@ class CallNotifier extends StateNotifier<CallState> {
   Future<void> _syncDbParticipants([MediaStream? localStream]) async {
     if (_leaving) return;
     try {
-      final rows = await _sb
-          .from('call_participants')
-          .select(
-              'user_id, left_at, connection_state, is_muted, is_video_on, is_screen_sharing, is_hand_raised')
-          .eq('call_id', roomId)
-          .timeout(const Duration(seconds: 5));
+      final rows = await _fetchCallParticipantRows();
 
       final activeRows = rows
           .whereType<Map<String, dynamic>>()
@@ -1046,6 +1057,35 @@ class CallNotifier extends StateNotifier<CallState> {
     } catch (e) {
       debugPrint('[WebRTC] participant sync ignored: $e');
     }
+  }
+
+  Future<List<dynamic>> _fetchCallParticipantRows() async {
+    try {
+      return await _sb
+          .from('call_participants')
+          .select(
+              'user_id, left_at, connection_state, is_muted, is_video_on, is_screen_sharing, is_hand_raised')
+          .eq('call_id', roomId)
+          .timeout(const Duration(seconds: 5));
+    } on PostgrestException catch (e) {
+      if (!_isMissingColumnError(e)) rethrow;
+      debugPrint(
+          '[WebRTC] participant sync using legacy schema fallback: ${e.message}');
+      return _sb
+          .from('call_participants')
+          .select('user_id, left_at')
+          .eq('call_id', roomId)
+          .timeout(const Duration(seconds: 5));
+    }
+  }
+
+  bool _isMissingColumnError(PostgrestException error) {
+    final code = error.code;
+    final message = error.message.toLowerCase();
+    return code == '42703' ||
+        code == 'PGRST204' ||
+        message.contains('column') && message.contains('does not exist') ||
+        message.contains('could not find');
   }
 
   bool _isPeerReadyForRtc(String connectionState) {
@@ -1825,7 +1865,8 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> _writeParticipantState({String? connectionState}) async {
     try {
-      if (connectionState == null || connectionState == 'connected') {
+      if (!_heartbeatRpcUnavailable &&
+          (connectionState == null || connectionState == 'connected')) {
         try {
           await _sb.rpc('heartbeat_video_call', params: {
             'p_call_id': roomId,
@@ -1843,6 +1884,9 @@ class CallNotifier extends StateNotifier<CallState> {
           }).timeout(const Duration(seconds: 5));
           return;
         } catch (e) {
+          if (_isMissingHeartbeatRpcError(e)) {
+            _heartbeatRpcUnavailable = true;
+          }
           debugPrint('[WebRTC] heartbeat RPC fallback: $e');
         }
       }
@@ -1871,6 +1915,19 @@ class CallNotifier extends StateNotifier<CallState> {
     } catch (e) {
       debugPrint('[WebRTC] participant state write failed: $e');
     }
+  }
+
+  bool _isMissingHeartbeatRpcError(Object error) {
+    if (error is PostgrestException) {
+      final code = error.code;
+      final message = error.message.toLowerCase();
+      return code == 'PGRST202' ||
+          code == '42883' ||
+          message.contains('heartbeat_video_call') &&
+              (message.contains('could not find') ||
+                  message.contains('does not exist'));
+    }
+    return false;
   }
 
   Future<void> _stampCallStartedAt() async {
@@ -2093,6 +2150,8 @@ class CallNotifier extends StateNotifier<CallState> {
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
+    _edgeHeartbeatTimer?.cancel();
+    _realtimeResubscribeTimer?.cancel();
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
