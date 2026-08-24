@@ -409,6 +409,8 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
             'is_video_on': isVideo,
             'is_screen_sharing': false,
             'is_hand_raised': false,
+            'connection_state': 'connecting',
+            'last_seen_at': now,
           })
           .eq('id', existing['id'])
           .timeout(const Duration(seconds: 5));
@@ -423,6 +425,10 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
       'is_video_on': isVideo,
       'is_screen_sharing': false,
       'is_hand_raised': false,
+      'joined_at': now,
+      'left_at': null,
+      'connection_state': 'connecting',
+      'last_seen_at': now,
     };
 
     try {
@@ -438,6 +444,8 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
             ...participant,
             'joined_at': now,
             'left_at': null,
+            'connection_state': 'connecting',
+            'last_seen_at': now,
           })
           .eq('call_id', callId)
           .eq('user_id', currentUserId)

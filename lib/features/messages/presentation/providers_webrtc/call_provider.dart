@@ -181,6 +181,7 @@ class CallNotifier extends StateNotifier<CallState> {
   final Map<String, bool> _ignoreOffer = {};
   final Map<String, Timer> _reconnectTimers = {};
   final Map<String, int> _reconnectAttempts = {};
+  final Map<String, DateTime> _lastOfferAt = {};
   final Set<String> _presencePeerIds = {};
   final Set<String> _edgePeerIds = {};
   final Set<String> _seenSignalIds = {};
@@ -320,6 +321,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _pending.clear();
     _makingOffer.clear();
     _ignoreOffer.clear();
+    _lastOfferAt.clear();
     _presencePeerIds.clear();
     _edgePeerIds.clear();
     await _edgeSocket?.close();
@@ -989,7 +991,7 @@ class CallNotifier extends StateNotifier<CallState> {
       final rows = await _sb
           .from('call_participants')
           .select(
-              'user_id, left_at, is_muted, is_video_on, is_screen_sharing, is_hand_raised')
+              'user_id, left_at, connection_state, is_muted, is_video_on, is_screen_sharing, is_hand_raised')
           .eq('call_id', roomId)
           .timeout(const Duration(seconds: 5));
 
@@ -999,7 +1001,10 @@ class CallNotifier extends StateNotifier<CallState> {
           .toList();
       final peerRows = activeRows.where((row) {
         final id = row['user_id'] as String?;
-        return id != null && id != userId;
+        if (id == null || id == userId) return false;
+        final connectionState =
+            (row['connection_state'] ?? 'connecting').toString();
+        return _isPeerReadyForRtc(connectionState);
       }).toList();
       if (peerRows.isEmpty) return;
 
@@ -1043,6 +1048,13 @@ class CallNotifier extends StateNotifier<CallState> {
     }
   }
 
+  bool _isPeerReadyForRtc(String connectionState) {
+    return switch (connectionState) {
+      'joining' || 'connecting' || 'connected' || 'reconnecting' => true,
+      _ => false,
+    };
+  }
+
   void _ensureParticipant(String peerId) {
     if (state.participants.any((p) => p.id == peerId)) return;
     final updated = [...state.participants, WebRTCParticipant(id: peerId)];
@@ -1081,7 +1093,18 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<RTCPeerConnection> _ensurePeer(
       String peerId, MediaStream localStream) async {
-    if (_peers.containsKey(peerId)) return _peers[peerId]!;
+    final existing = _peers[peerId];
+    if (existing != null) {
+      if (existing.connectionState !=
+          RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+        return existing;
+      }
+      await existing.close();
+      _peers.remove(peerId);
+      _makingOffer.remove(peerId);
+      _ignoreOffer.remove(peerId);
+      _pending.remove(peerId);
+    }
     if (_peerCreating.containsKey(peerId)) return _peerCreating[peerId]!.future;
 
     final completer = Completer<RTCPeerConnection>();
@@ -1142,7 +1165,11 @@ class CallNotifier extends StateNotifier<CallState> {
           _scheduleReconnect(peerId);
         }
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
-          unawaited(_writeParticipantState(connectionState: 'closed'));
+          _peers.remove(peerId);
+          _makingOffer.remove(peerId);
+          _ignoreOffer.remove(peerId);
+          _pending.remove(peerId);
+          _peerCreating.remove(peerId);
         }
       };
 
@@ -1172,6 +1199,13 @@ class CallNotifier extends StateNotifier<CallState> {
         pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
       return;
     }
+    final now = DateTime.now();
+    final lastOffer = _lastOfferAt[peerId];
+    if (lastOffer != null &&
+        now.difference(lastOffer) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastOfferAt[peerId] = now;
     await _renegotiate(peerId);
   }
 
@@ -1896,6 +1930,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _pending.remove(peerId);
     _makingOffer.remove(peerId);
     _ignoreOffer.remove(peerId);
+    _lastOfferAt.remove(peerId);
     _reconnectTimers.remove(peerId)?.cancel();
     final updated = state.participants.where((p) => p.id != peerId).toList();
     final connected = updated.any((p) => p.stream != null);
@@ -2072,6 +2107,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _peers.clear();
     _peerCreating.clear();
     _pending.clear();
+    _lastOfferAt.clear();
     if (_channel != null) {
       _channel!.sendBroadcastMessage(event: 'leave', payload: {'from': userId});
       _sb.removeChannel(_channel!);
