@@ -54,7 +54,7 @@ Deno.serve((req) => {
 
   socket.onopen = async () => {
     startSocketHeartbeat(socket);
-    if (initialRoomId != null && initialUserId != null) {
+    if (initialRoomId != null && initialUserId != null && tokenUserId != null) {
       client = await registerClient({
         socket,
         roomId: initialRoomId,
@@ -92,6 +92,8 @@ Deno.serve((req) => {
       const roomId =
         stringOrNull(message.roomId) ?? stringOrNull(message.callId);
       const userId = stringOrNull(message.userId);
+      const joinTokenUserId =
+        tokenUserId ?? getUserIdFromToken(stringOrNull(message.accessToken));
       if (roomId == null || userId == null) {
         socket.send(JSON.stringify({
           type: "error",
@@ -99,7 +101,12 @@ Deno.serve((req) => {
         }));
         return;
       }
-      client = await registerClient({ socket, roomId, userId, tokenUserId });
+      client = await registerClient({
+        socket,
+        roomId,
+        userId,
+        tokenUserId: joinTokenUserId,
+      });
       return;
     }
 
@@ -164,6 +171,15 @@ async function registerClient({
     joinedAt: now,
     lastSeenAt: now,
   };
+
+  if (tokenUserId == null) {
+    send(candidate, {
+      type: "error",
+      message: "Authentication token is required",
+    });
+    socket.close(1008, "auth_required");
+    return null;
+  }
 
   if (tokenUserId != null && tokenUserId !== userId) {
     send(candidate, {
@@ -360,10 +376,12 @@ function stringOrNull(value: unknown): string | null {
 }
 
 function getUserIdFromToken(authHeader: string | null): string | null {
-  if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+  if (authHeader == null) return null;
 
   try {
-    const token = authHeader.substring(7);
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.substring(7)
+      : authHeader;
     const parts = token.split(".");
     if (parts.length !== 3) return null;
 

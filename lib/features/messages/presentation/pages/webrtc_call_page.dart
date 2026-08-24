@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../data/models/call_quality.dart';
 import '../providers_webrtc/call_provider.dart';
 import '../widgets/network_quality_indicator.dart';
@@ -44,6 +45,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    unawaited(WakelockPlus.enable());
     _bootstrapCall();
     _scheduleHide();
   }
@@ -113,6 +115,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
       r.dispose();
     }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    unawaited(WakelockPlus.disable());
     super.dispose();
   }
 

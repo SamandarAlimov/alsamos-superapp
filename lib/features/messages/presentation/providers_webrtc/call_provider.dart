@@ -1335,6 +1335,8 @@ class CallNotifier extends StateNotifier<CallState> {
         'roomId': roomId,
         'callId': roomId,
         'userId': userId,
+        if (_sb.auth.currentSession?.accessToken != null)
+          'accessToken': _sb.auth.currentSession!.accessToken,
       });
       _startEdgeHeartbeat();
       debugPrint('[WebRTC] Edge signaling joined room $roomId');
