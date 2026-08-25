@@ -98,7 +98,7 @@ Future<void> _initializeFirebase() async {
 }
 
 bool get _firebaseCoreSupported {
-  if (kIsWeb) return true;
+  if (kIsWeb) return false;
   return switch (defaultTargetPlatform) {
     TargetPlatform.android || TargetPlatform.iOS => true,
     _ => false,

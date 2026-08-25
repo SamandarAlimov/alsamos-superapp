@@ -196,7 +196,10 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                 isVideo: widget.isVideo,
               )
             else if (callState.participants.length == 1)
-              _buildRemoteTile(callState.participants.first)
+              _buildRemoteTile(
+                callState.participants.first,
+                participantCount: callState.participants.length,
+              )
             else
               Positioned.fill(
                 child: SafeArea(
@@ -214,7 +217,10 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                       itemCount: callState.participants.length,
                       itemBuilder: (_, i) => ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: _buildRemoteSurface(callState.participants[i]),
+                        child: _buildRemoteSurface(
+                          callState.participants[i],
+                          participantCount: callState.participants.length,
+                        ),
                       ),
                     ),
                   ),
@@ -227,8 +233,8 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                 top: 48,
                 right: 16,
                 child: Container(
-                  width: 100,
-                  height: 140,
+                  width: 132,
+                  height: 176,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.white24),
@@ -413,9 +419,24 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                     color: Colors.red[900]!.withAlpha(200),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(callState.error!,
-                      style: const TextStyle(color: Colors.white),
-                      textAlign: TextAlign.center),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(callState.error!,
+                        style: const TextStyle(color: Colors.white),
+                        textAlign: TextAlign.center),
+                    if (widget.isVideo && _isCameraError(callState.error!)) ...[
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: notifier.retryCamera,
+                        icon: const Icon(LucideIcons.refreshCw, size: 16),
+                        label: const Text('Kamerani qayta urinish'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                        ),
+                      ),
+                    ],
+                  ]),
                 ),
               ),
             if (kDebugMode) _CallDebugOverlay(callState: callState),
@@ -425,21 +446,40 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     );
   }
 
-  Widget _buildRemoteTile(WebRTCParticipant participant) {
-    return Positioned.fill(child: _buildRemoteSurface(participant));
+  Widget _buildRemoteTile(
+    WebRTCParticipant participant, {
+    required int participantCount,
+  }) {
+    return Positioned.fill(
+      child: _buildRemoteSurface(
+        participant,
+        participantCount: participantCount,
+      ),
+    );
   }
 
-  Widget _buildRemoteSurface(WebRTCParticipant participant) {
+  Widget _buildRemoteSurface(
+    WebRTCParticipant participant, {
+    required int participantCount,
+  }) {
     if (participant.stream != null) {
       unawaited(_getOrCreateRenderer(participant.id, participant.stream!));
     }
     final renderer = _remoteRenderers[participant.id];
+    final hasVideoTrack = participant.stream
+            ?.getVideoTracks()
+            .any((track) => track.enabled && track.kind == 'video') ??
+        false;
     if (renderer == null ||
         participant.stream == null ||
         !widget.isVideo ||
-        !participant.isVideoOn) {
+        !participant.isVideoOn ||
+        !hasVideoTrack) {
       return _RemoteAudioScreen(
-          name: participant.id, isMuted: participant.isMuted);
+        name: _participantDisplayName(participant, participantCount),
+        avatarUrl: _participantAvatarUrl(participantCount),
+        isMuted: participant.isMuted,
+      );
     }
     return Stack(
       fit: StackFit.expand,
@@ -459,6 +499,32 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
           ),
       ],
     );
+  }
+
+  bool _isCameraError(String error) {
+    final message = error.toLowerCase();
+    return message.contains('kamera') ||
+        message.contains('camera') ||
+        message.contains('notreadable') ||
+        message.contains('could not start video source');
+  }
+
+  String _participantDisplayName(
+    WebRTCParticipant participant,
+    int participantCount,
+  ) {
+    if (participantCount == 1 && widget.remoteName?.trim().isNotEmpty == true) {
+      return widget.remoteName!.trim();
+    }
+    return participant.id;
+  }
+
+  String? _participantAvatarUrl(int participantCount) {
+    if (participantCount == 1 &&
+        widget.remoteAvatar?.trim().isNotEmpty == true) {
+      return widget.remoteAvatar!.trim();
+    }
+    return null;
   }
 
   Future<void> _toggleScreenShare(
@@ -743,9 +809,14 @@ class _WaitingScreen extends StatelessWidget {
 
 class _RemoteAudioScreen extends StatelessWidget {
   final String name;
+  final String? avatarUrl;
   final bool isMuted;
 
-  const _RemoteAudioScreen({required this.name, required this.isMuted});
+  const _RemoteAudioScreen({
+    required this.name,
+    this.avatarUrl,
+    required this.isMuted,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -756,8 +827,12 @@ class _RemoteAudioScreen extends StatelessWidget {
           CircleAvatar(
             radius: 48,
             backgroundColor: Colors.white24,
-            child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
-                style: const TextStyle(fontSize: 32, color: Colors.white)),
+            backgroundImage:
+                avatarUrl?.isNotEmpty == true ? NetworkImage(avatarUrl!) : null,
+            child: avatarUrl?.isNotEmpty == true
+                ? null
+                : Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
+                    style: const TextStyle(fontSize: 32, color: Colors.white)),
           ),
           const SizedBox(height: 12),
           if (isMuted)

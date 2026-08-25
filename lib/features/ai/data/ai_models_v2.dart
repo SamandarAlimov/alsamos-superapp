@@ -78,7 +78,8 @@ class AiMessageV2 {
   bool get isUser => role == 'user';
   bool get hasArtifacts => artifactIds != null && artifactIds!.isNotEmpty;
   bool get hasCitations => citations != null && citations!.isNotEmpty;
-  bool get hasBranches => childMessageIds != null && childMessageIds!.isNotEmpty;
+  bool get hasBranches =>
+      childMessageIds != null && childMessageIds!.isNotEmpty;
 
   factory AiMessageV2.fromMap(Map<String, dynamic> m) {
     final citationsRaw = m['citations'] as List?;
@@ -117,7 +118,8 @@ class AiMessageV2 {
           'citations': citations!.map((c) => c.toMap()).toList(),
         if (parentMessageId != null) 'parentMessageId': parentMessageId,
         if (childMessageIds != null) 'childMessageIds': childMessageIds,
-        if (selectedChildIndex != null) 'selectedChildIndex': selectedChildIndex,
+        if (selectedChildIndex != null)
+          'selectedChildIndex': selectedChildIndex,
         'status': status.name,
         if (metadata != null) 'metadata': metadata,
       };
@@ -201,10 +203,11 @@ class AiConversationV2 {
       messages: raw
           .map((e) => AiMessageV2.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList(),
-      updatedAt: DateTime.tryParse((m['updated_at'] as String?) ?? '')
-              ?.toLocal() ??
-          DateTime.now(),
-      createdAt: DateTime.tryParse((m['created_at'] as String?) ?? '')?.toLocal(),
+      updatedAt:
+          DateTime.tryParse((m['updated_at'] as String?) ?? '')?.toLocal() ??
+              DateTime.now(),
+      createdAt:
+          DateTime.tryParse((m['created_at'] as String?) ?? '')?.toLocal(),
       projectId: m['project_id'] as String?,
       customTitle: m['title'] as String?,
       isPinned: m['is_pinned'] as bool? ?? false,
@@ -285,9 +288,12 @@ class AiProject {
       iconEmoji: m['icon_emoji'] as String?,
       color: colorValue != null ? _parseColor(colorValue) : null,
       customInstructions: m['custom_instructions'] as String?,
-      knowledgeFileIds: knowledgeRaw?.map((e) => e.toString()).toList() ?? const [],
-      createdAt: DateTime.tryParse((m['created_at'] as String?) ?? '')?.toLocal(),
-      updatedAt: DateTime.tryParse((m['updated_at'] as String?) ?? '')?.toLocal(),
+      knowledgeFileIds:
+          knowledgeRaw?.map((e) => e.toString()).toList() ?? const [],
+      createdAt:
+          DateTime.tryParse((m['created_at'] as String?) ?? '')?.toLocal(),
+      updatedAt:
+          DateTime.tryParse((m['updated_at'] as String?) ?? '')?.toLocal(),
       conversationCount: m['conversation_count'] as int? ?? 0,
     );
   }
@@ -297,8 +303,10 @@ class AiProject {
         'name': name,
         if (description != null) 'description': description,
         if (iconEmoji != null) 'icon_emoji': iconEmoji,
-        if (color != null) 'color': '#${color!.toARGB32().toRadixString(16).padLeft(8, '0')}',
-        if (customInstructions != null) 'custom_instructions': customInstructions,
+        if (color != null)
+          'color': '#${color!.toARGB32().toRadixString(16).padLeft(8, '0')}',
+        if (customInstructions != null)
+          'custom_instructions': customInstructions,
         'knowledge_file_ids': knowledgeFileIds,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
@@ -519,7 +527,8 @@ class AiConnector {
       lastSyncAt:
           DateTime.tryParse((m['last_sync_at'] as String?) ?? '')?.toLocal(),
       config: m['config'] as Map<String, dynamic>? ?? const {},
-      permissions: permissionsRaw?.map((e) => e.toString()).toList() ?? const [],
+      permissions:
+          permissionsRaw?.map((e) => e.toString()).toList() ?? const [],
     );
   }
 
@@ -640,13 +649,20 @@ class AiPlugin {
 
   static IconData _parseIcon(String? codePoint) {
     if (codePoint == null) return Icons.extension;
-    try {
-      final code = int.parse(codePoint);
-      // ignore: non_const_argument_for_const_parameter
-      return IconData(code, fontFamily: 'MaterialIcons');
-    } catch (_) {
-      return Icons.extension;
-    }
+    final code = int.tryParse(codePoint);
+    return switch (code) {
+      0xe87c => Icons.extension,
+      0xe8b6 => Icons.search,
+      0xe3c9 => Icons.edit,
+      0xe3f4 => Icons.image,
+      0xe04b => Icons.videocam,
+      0xe86f => Icons.code,
+      0xe873 => Icons.description,
+      0xe0c9 => Icons.translate,
+      0xe8d2 => Icons.summarize,
+      0xe8f4 => Icons.smart_toy,
+      _ => Icons.extension,
+    };
   }
 }
 
