@@ -22,31 +22,54 @@ class NetworkQualityIndicator extends StatelessWidget {
   int get _bars {
     if (isReconnecting) return 2;
     switch (quality) {
-      case NetworkQuality.excellent: return 4;
-      case NetworkQuality.good: return 3;
-      case NetworkQuality.fair: return 2;
-      case NetworkQuality.poor: return 1;
-      case NetworkQuality.disconnected: return 0;
+      case NetworkQuality.excellent:
+        return 4;
+      case NetworkQuality.good:
+        return 3;
+      case NetworkQuality.fair:
+        return 2;
+      case NetworkQuality.poor:
+        return 1;
+      case NetworkQuality.disconnected:
+        return 0;
     }
   }
 
   Color get _color {
     if (isReconnecting) return const Color(0xFFEAB308);
     switch (quality) {
-      case NetworkQuality.excellent: return const Color(0xFF22C55E);
-      case NetworkQuality.good: return const Color(0xFF4ADE80);
-      case NetworkQuality.fair: return const Color(0xFFEAB308);
-      case NetworkQuality.poor: return const Color(0xFFEF4444);
-      case NetworkQuality.disconnected: return Colors.grey;
+      case NetworkQuality.excellent:
+        return const Color(0xFF22C55E);
+      case NetworkQuality.good:
+        return const Color(0xFF4ADE80);
+      case NetworkQuality.fair:
+        return const Color(0xFFEAB308);
+      case NetworkQuality.poor:
+        return const Color(0xFFEF4444);
+      case NetworkQuality.disconnected:
+        return Colors.grey;
     }
+  }
+
+  String get _tooltipMessage {
+    if (isReconnecting) return 'Aloqa qayta ulanmoqda';
+    if (!showDetails) {
+      return switch (quality) {
+        NetworkQuality.excellent || NetworkQuality.good => 'Aloqa yaxshi',
+        NetworkQuality.fair => 'Aloqa o\'rtacha',
+        NetworkQuality.poor => 'Aloqa sust',
+        NetworkQuality.disconnected => 'Aloqa yo\'q',
+      };
+    }
+    return '${quality.name[0].toUpperCase()}${quality.name.substring(1)} connection\n'
+        'Latency: ${rttMs}ms\n'
+        'Packet loss: ${packetLoss.toStringAsFixed(1)}%';
   }
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: isReconnecting
-          ? 'Reconnecting\u2026'
-          : '${quality.name[0].toUpperCase()}${quality.name.substring(1)} connection\nLatency: ${rttMs}ms\nPacket loss: ${packetLoss.toStringAsFixed(1)}%',
+      message: _tooltipMessage,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -66,15 +89,22 @@ class NetworkQualityIndicator extends StatelessWidget {
                   child: Container(
                     width: 3,
                     height: 3.0 + i * 3,
-                    decoration: BoxDecoration(color: on ? _color : Colors.white24, borderRadius: BorderRadius.circular(1)),
+                    decoration: BoxDecoration(
+                      color: on ? _color : Colors.white24,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
                   ),
                 );
               }),
             ),
-          if (showDetails) Padding(
-            padding: const EdgeInsets.only(left: 6),
-            child: Text('${rttMs}ms', style: const TextStyle(fontSize: 10, color: Colors.white70)),
-          ),
+          if (showDetails)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                '${rttMs}ms',
+                style: const TextStyle(fontSize: 10, color: Colors.white70),
+              ),
+            ),
         ],
       ),
     );

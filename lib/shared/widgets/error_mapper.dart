@@ -21,6 +21,10 @@ enum CallFailureType {
   mediaConnection,
   timeout,
   cameraPermission,
+  cameraNotFound,
+  cameraBusy,
+  cameraConstraint,
+  cameraSecurity,
   microphonePermission,
   remoteRejected,
   remoteEnded,
@@ -225,6 +229,14 @@ String friendlyCallError(dynamic error) {
         'Qo\'ng\'iroqni ulash uchun vaqt tugadi. Qaytadan urinib ko\'ring.',
       CallFailureType.cameraPermission =>
         'Kamera ishlashi uchun kameraga ruxsat bering.',
+      CallFailureType.cameraNotFound =>
+        'Kamera topilmadi. Kamerani ulang yoki audio qo\'ng\'iroqda davom eting.',
+      CallFailureType.cameraBusy =>
+        'Kamera boshqa dasturda ishlayapti. Uni yopib qaytadan urinib ko\'ring.',
+      CallFailureType.cameraConstraint =>
+        'Kamera ushbu video sozlamalarini qo\'llab-quvvatlamadi.',
+      CallFailureType.cameraSecurity =>
+        'Brauzer kamera ruxsatini blokladi. Sayt sozlamalarini tekshiring.',
       CallFailureType.microphonePermission =>
         'Mikrofon ishlashi uchun mikrofon ruxsatini bering.',
       CallFailureType.remoteRejected => 'Qo\'ng\'iroq qabul qilinmadi.',
@@ -244,6 +256,25 @@ String friendlyCallError(dynamic error) {
   if (lower.contains('permission') && lower.contains('camera')) {
     return friendlyCallError(
         const CallFailure(CallFailureType.cameraPermission));
+  }
+  if (lower.contains('notfound') ||
+      lower.contains('devicesnotfound') ||
+      lower.contains('no camera')) {
+    return friendlyCallError(const CallFailure(CallFailureType.cameraNotFound));
+  }
+  if (lower.contains('notreadable') ||
+      lower.contains('trackstart') ||
+      lower.contains('camera busy')) {
+    return friendlyCallError(const CallFailure(CallFailureType.cameraBusy));
+  }
+  if (lower.contains('overconstrained') ||
+      lower.contains('constraint') ||
+      lower.contains('constraints')) {
+    return friendlyCallError(
+        const CallFailure(CallFailureType.cameraConstraint));
+  }
+  if (lower.contains('security') && lower.contains('camera')) {
+    return friendlyCallError(const CallFailure(CallFailureType.cameraSecurity));
   }
   if (lower.contains('permission') && lower.contains('microphone')) {
     return friendlyCallError(

@@ -310,7 +310,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                         rttMs: callState.quality.rttMs,
                         packetLoss: callState.quality.packetLoss,
                         isReconnecting: callState.isReconnecting,
-                        showDetails: true,
+                        showDetails: kDebugMode,
                       ),
                     ]),
                   ),

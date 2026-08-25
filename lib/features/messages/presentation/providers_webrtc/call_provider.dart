@@ -548,17 +548,10 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   Future<MediaStream?> _getLocalStream({bool video = true}) async {
+    Object? lastVideoError;
     final attempts = <Map<String, dynamic>>[
       {
-        'video': video
-            ? {
-                'facingMode': 'user',
-                'width': 1280,
-                'height': 720,
-                if (state.selectedVideoInputId != null)
-                  'deviceId': state.selectedVideoInputId,
-              }
-            : false,
+        'video': _primaryVideoConstraints(video),
         'audio': {
           if (state.selectedAudioInputId != null)
             'deviceId': state.selectedAudioInputId,
@@ -567,11 +560,7 @@ class CallNotifier extends StateNotifier<CallState> {
           'autoGainControl': true,
         },
       },
-      if (video)
-        {
-          'video': {'facingMode': 'user'},
-          'audio': true
-        },
+      if (video) {'video': _fallbackVideoConstraints(), 'audio': true},
       {'video': false, 'audio': true},
     ];
 
@@ -589,15 +578,82 @@ class CallNotifier extends StateNotifier<CallState> {
           isVideoOn: video && hasVideo,
           isMuted: false,
           error: video && !hasVideo
-              ? "Kamera ochilmadi, audio qo'ng'iroq boshlandi."
+              ? _cameraFallbackMessage(lastVideoError)
               : null,
         );
         return stream;
       } catch (e) {
-        debugPrint('[WebRTC] getUserMedia attempt failed: $e');
+        final wasVideoAttempt = constraints['video'] != false;
+        if (wasVideoAttempt) lastVideoError = e;
+        debugPrint(
+          '[WebRTC] getUserMedia attempt failed '
+          'video=$wasVideoAttempt category=${_mediaExceptionCategory(e)} '
+          'constraints=${jsonEncode(constraints)} error=$e',
+        );
       }
     }
     return null;
+  }
+
+  Object _primaryVideoConstraints(bool video) {
+    if (!video) return false;
+    final selectedDeviceId = state.selectedVideoInputId;
+    if (kIsWeb) {
+      return {
+        if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
+        'width': {'ideal': 1280},
+        'height': {'ideal': 720},
+      };
+    }
+    return {
+      'facingMode': 'user',
+      'width': 1280,
+      'height': 720,
+      if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
+    };
+  }
+
+  Object _fallbackVideoConstraints() {
+    if (kIsWeb) return true;
+    return {'facingMode': 'user'};
+  }
+
+  String _cameraFallbackMessage(Object? error) {
+    return '${friendlyCallError(CallFailure(_callFailureForMediaError(error), error))} '
+        'Audio qo\'ng\'iroq davom etadi.';
+  }
+
+  CallFailureType _callFailureForMediaError(Object? error) {
+    final lower = error.toString().toLowerCase();
+    if (lower.contains('notallowed') ||
+        lower.contains('permission') ||
+        lower.contains('denied')) {
+      return CallFailureType.cameraPermission;
+    }
+    if (lower.contains('notfound') ||
+        lower.contains('devicesnotfound') ||
+        lower.contains('no camera')) {
+      return CallFailureType.cameraNotFound;
+    }
+    if (lower.contains('notreadable') ||
+        lower.contains('trackstart') ||
+        lower.contains('busy')) {
+      return CallFailureType.cameraBusy;
+    }
+    if (lower.contains('overconstrained') ||
+        lower.contains('constraint') ||
+        lower.contains('constraints')) {
+      return CallFailureType.cameraConstraint;
+    }
+    if (lower.contains('security')) {
+      return CallFailureType.cameraSecurity;
+    }
+    return CallFailureType.unknown;
+  }
+
+  String _mediaExceptionCategory(Object? error) {
+    final type = _callFailureForMediaError(error);
+    return type.name;
   }
 
   Future<String?> _ensureMediaPermissions({required bool video}) async {

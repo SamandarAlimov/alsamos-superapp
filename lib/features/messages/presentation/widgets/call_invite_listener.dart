@@ -126,7 +126,7 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     });
 
     _pushPoll ??= Timer.periodic(
-      const Duration(seconds: 2),
+      const Duration(seconds: 15),
       (_) {
         unawaited(_consumePendingCallPushes());
         unawaited(_pollPendingDbInvites());
@@ -311,15 +311,7 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           .eq('invitee_id', uid)
           .inFilter(
             'status',
-            [
-              'pending',
-              'ringing',
-              'accepted',
-              'declined',
-              'cancelled',
-              'missed',
-              'ended'
-            ],
+            ['pending', 'ringing'],
           )
           .gte('created_at', since)
           .order('created_at', ascending: false)

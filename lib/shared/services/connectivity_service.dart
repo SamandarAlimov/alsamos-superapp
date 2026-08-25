@@ -26,6 +26,7 @@ class ConnectivityService {
   Timer? _fallbackTimer;
   bool _lastOnline = true;
   bool _fallbackMode = false;
+  Future<bool>? _reachabilityCheck;
 
   /// Stream that emits `true` when the device has real internet access.
   Stream<bool> get onlineStream => _onlineController.stream;
@@ -88,6 +89,20 @@ class ConnectivityService {
   }
 
   Future<bool> _checkReachability() async {
+    final inFlight = _reachabilityCheck;
+    if (inFlight != null) return inFlight;
+    final check = _runReachabilityCheck();
+    _reachabilityCheck = check;
+    try {
+      return await check;
+    } finally {
+      if (identical(_reachabilityCheck, check)) {
+        _reachabilityCheck = null;
+      }
+    }
+  }
+
+  Future<bool> _runReachabilityCheck() async {
     try {
       final response = await _httpClient
           .get(Uri.parse('https://clients3.google.com/generate_204'))
@@ -103,10 +118,10 @@ class ConnectivityService {
     _fallbackMode = true;
     _fallbackTimer?.cancel();
     // Immediate check
-    _verifyAndPublish();
+    unawaited(_verifyAndPublish());
     // Then poll every 15s
     _fallbackTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      _verifyAndPublish();
+      unawaited(_verifyAndPublish());
     });
   }
 

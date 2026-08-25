@@ -1,4 +1,5 @@
 import 'package:alsamos_flutter/features/messages/data/models/call_quality.dart';
+import 'package:alsamos_flutter/shared/widgets/error_mapper.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -27,6 +28,26 @@ void main() {
         connected: false,
       ),
       CallNetworkQuality.disconnected,
+    );
+  });
+
+  test('friendlyCallError maps browser camera failures to actionable messages',
+      () {
+    expect(
+      friendlyCallError(const CallFailure(CallFailureType.cameraPermission)),
+      contains('ruxsat'),
+    );
+    expect(
+      friendlyCallError(const CallFailure(CallFailureType.cameraNotFound)),
+      contains('Kamera topilmadi'),
+    );
+    expect(
+      friendlyCallError(const CallFailure(CallFailureType.cameraBusy)),
+      contains('boshqa dasturda'),
+    );
+    expect(
+      friendlyCallError(const CallFailure(CallFailureType.cameraConstraint)),
+      contains('sozlamalarini'),
     );
   });
 }
