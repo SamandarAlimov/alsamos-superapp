@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
@@ -12,20 +14,23 @@ class IncomingCallDialog extends StatefulWidget {
   final IncomingCallType callType;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
+  final Stream<void>? dismissSignal;
   const IncomingCallDialog(
       {super.key,
       required this.callerName,
       this.callerAvatar,
       required this.callType,
       required this.onAccept,
-      required this.onDecline});
+      required this.onDecline,
+      this.dismissSignal});
 
   static Future<void> show(BuildContext context,
       {required String callerName,
       String? callerAvatar,
       required IncomingCallType callType,
       required VoidCallback onAccept,
-      required VoidCallback onDecline}) {
+      required VoidCallback onDecline,
+      Stream<void>? dismissSignal}) {
     return showDialog(
       context: context,
       barrierDismissible: false,
@@ -34,7 +39,8 @@ class IncomingCallDialog extends StatefulWidget {
           callerAvatar: callerAvatar,
           callType: callType,
           onAccept: onAccept,
-          onDecline: onDecline),
+          onDecline: onDecline,
+          dismissSignal: dismissSignal),
     );
   }
 
@@ -45,6 +51,7 @@ class IncomingCallDialog extends StatefulWidget {
 class _IncomingCallDialogState extends State<IncomingCallDialog>
     with TickerProviderStateMixin {
   late AnimationController _pulse;
+  StreamSubscription<void>? _dismissSub;
 
   @override
   void initState() {
@@ -52,6 +59,11 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
     _pulse = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 1500))
       ..repeat();
+    _dismissSub = widget.dismissSignal?.listen((_) {
+      if (!mounted) return;
+      _stopRing();
+      Navigator.of(context, rootNavigator: true).maybePop();
+    });
     // Repeating haptic for ringtone vibe
     _ring();
   }
@@ -73,6 +85,7 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
   @override
   void dispose() {
     _isRinging = false;
+    _dismissSub?.cancel();
     _pulse.dispose();
     super.dispose();
   }

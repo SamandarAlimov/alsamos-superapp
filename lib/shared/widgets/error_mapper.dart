@@ -15,6 +15,30 @@ enum AppErrorType {
   unknown,
 }
 
+enum CallFailureType {
+  networkUnavailable,
+  signalingUnavailable,
+  mediaConnection,
+  timeout,
+  cameraPermission,
+  microphonePermission,
+  remoteRejected,
+  remoteEnded,
+  remoteUnavailable,
+  auth,
+  unknown,
+}
+
+class CallFailure implements Exception {
+  const CallFailure(this.type, [this.diagnostic]);
+
+  final CallFailureType type;
+  final Object? diagnostic;
+
+  @override
+  String toString() => 'CallFailure($type, $diagnostic)';
+}
+
 class MappedError {
   final AppErrorType type;
   final String message;
@@ -186,4 +210,65 @@ MappedError mapError(dynamic error) {
 String friendlyError(dynamic error, [String fallback = 'Nimadir xato ketdi.']) {
   if (error == null) return fallback;
   return mapError(error).message;
+}
+
+String friendlyCallError(dynamic error) {
+  if (error is CallFailure) {
+    return switch (error.type) {
+      CallFailureType.networkUnavailable =>
+        'Internetga ulanib bo\'lmadi. Internet aloqangizni tekshiring.',
+      CallFailureType.signalingUnavailable =>
+        'Qo\'ng\'iroq xizmatiga ulanib bo\'lmadi. Qaytadan urinib ko\'ring.',
+      CallFailureType.mediaConnection =>
+        'Qo\'ng\'iroqni ulab bo\'lmadi. Tarmoq ulanishini tekshiring va qayta urinib ko\'ring.',
+      CallFailureType.timeout =>
+        'Qo\'ng\'iroqni ulash uchun vaqt tugadi. Qaytadan urinib ko\'ring.',
+      CallFailureType.cameraPermission =>
+        'Kamera ishlashi uchun kameraga ruxsat bering.',
+      CallFailureType.microphonePermission =>
+        'Mikrofon ishlashi uchun mikrofon ruxsatini bering.',
+      CallFailureType.remoteRejected => 'Qo\'ng\'iroq qabul qilinmadi.',
+      CallFailureType.remoteEnded => 'Qo\'ng\'iroq tugatildi.',
+      CallFailureType.remoteUnavailable =>
+        'Qo\'ng\'iroqni ulab bo\'lmadi. Qaytadan urinib ko\'ring.',
+      CallFailureType.auth => 'Sessiya tugagan. Qaytadan kiring.',
+      CallFailureType.unknown =>
+        'Qo\'ng\'iroqni amalga oshirib bo\'lmadi. Qaytadan urinib ko\'ring.',
+    };
+  }
+
+  final lower = error.toString().toLowerCase();
+  if (lower.contains('timeout') || lower.contains('timed out')) {
+    return friendlyCallError(const CallFailure(CallFailureType.timeout));
+  }
+  if (lower.contains('permission') && lower.contains('camera')) {
+    return friendlyCallError(
+        const CallFailure(CallFailureType.cameraPermission));
+  }
+  if (lower.contains('permission') && lower.contains('microphone')) {
+    return friendlyCallError(
+        const CallFailure(CallFailureType.microphonePermission));
+  }
+  if (lower.contains('auth') ||
+      lower.contains('jwt') ||
+      lower.contains('token') ||
+      lower.contains('unauthorized') ||
+      lower.contains('401')) {
+    return friendlyCallError(const CallFailure(CallFailureType.auth));
+  }
+  if (lower.contains('socket') ||
+      lower.contains('websocket') ||
+      lower.contains('signaling') ||
+      lower.contains('realtime')) {
+    return friendlyCallError(
+        const CallFailure(CallFailureType.signalingUnavailable));
+  }
+  if (lower.contains('network') ||
+      lower.contains('connection refused') ||
+      lower.contains('failed host lookup') ||
+      lower.contains('no internet')) {
+    return friendlyCallError(
+        const CallFailure(CallFailureType.networkUnavailable));
+  }
+  return friendlyCallError(const CallFailure(CallFailureType.unknown));
 }

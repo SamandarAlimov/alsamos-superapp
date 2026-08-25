@@ -25,7 +25,9 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
   RealtimeChannel? _channel;
   String? _listeningUserId;
   final Set<String> _seenCallIds = {};
+  final Map<String, StreamController<void>> _dialogDismissers = {};
   Timer? _pushPoll;
+  bool _pollingDbInvites = false;
 
   @override
   void didChangeDependencies() {
@@ -94,6 +96,14 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           },
         )
         .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'video_calls',
+          callback: (payload) {
+            _handleDbCallUpdate(payload.newRecord, uid);
+          },
+        )
+        .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'call_invites',
@@ -117,8 +127,12 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
 
     _pushPoll ??= Timer.periodic(
       const Duration(seconds: 2),
-      (_) => _consumePendingCallPushes(),
+      (_) {
+        unawaited(_consumePendingCallPushes());
+        unawaited(_pollPendingDbInvites());
+      },
     );
+    unawaited(_pollPendingDbInvites());
   }
 
   Future<void> _handleDbCallInsert(
@@ -175,6 +189,16 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     });
   }
 
+  void _handleDbCallUpdate(Map<String, dynamic> record, String uid) {
+    final callId = record['id'] as String?;
+    if (callId == null) return;
+    final status = record['status']?.toString();
+    final endedAt = record['ended_at'];
+    if (_isTerminalInviteStatus(status) || endedAt != null) {
+      _dismissIncomingCall(callId);
+    }
+  }
+
   Future<void> _handleDbCallInvite(
       Map<String, dynamic> record, String uid) async {
     if (!mounted) return;
@@ -183,16 +207,12 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     if (inviteeId != uid) return;
 
     final status = (record['status'] as String?) ?? 'pending';
-    if (status == 'accepted' ||
-        status == 'declined' ||
-        status == 'cancelled' ||
-        status == 'missed' ||
-        status == 'ended') {
-      return;
-    }
-
     final callId = record['call_id'] as String?;
     if (callId == null) return;
+    if (_isTerminalInviteStatus(status)) {
+      _dismissIncomingCall(callId);
+      return;
+    }
 
     var conversationId = record['conversation_id'] as String?;
     var callerId = record['inviter_id'] as String?;
@@ -274,6 +294,48 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     await prefs.setStringList('alsamos_pending_pushes', remaining);
   }
 
+  Future<void> _pollPendingDbInvites() async {
+    final uid = _listeningUserId;
+    if (!mounted || uid == null || _pollingDbInvites) return;
+    _pollingDbInvites = true;
+    try {
+      final since = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(minutes: 3))
+          .toIso8601String();
+      final rows = await Supabase.instance.client
+          .from('call_invites')
+          .select(
+            'call_id,conversation_id,inviter_id,invitee_id,status,call_type,metadata,created_at',
+          )
+          .eq('invitee_id', uid)
+          .inFilter(
+            'status',
+            [
+              'pending',
+              'ringing',
+              'accepted',
+              'declined',
+              'cancelled',
+              'missed',
+              'ended'
+            ],
+          )
+          .gte('created_at', since)
+          .order('created_at', ascending: false)
+          .limit(5)
+          .timeout(const Duration(seconds: 6));
+
+      for (final row in rows.whereType<Map<String, dynamic>>()) {
+        await _handleDbCallInvite(row, uid);
+      }
+    } catch (e) {
+      debugPrint('[CallInviteListener] pending invite poll skipped: $e');
+    } finally {
+      _pollingDbInvites = false;
+    }
+  }
+
   Future<void> _handleIncomingCall(Map<String, dynamic> payload) async {
     if (!mounted) return;
 
@@ -301,6 +363,9 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     final currentUserId = _listeningUserId;
 
     if (currentUserId == null) return;
+    final dismissController = StreamController<void>.broadcast();
+    _dialogDismissers[callId]?.close();
+    _dialogDismissers[callId] = dismissController;
 
     await IncomingCallDialog.show(
       context,
@@ -317,6 +382,7 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           _forgetCall(callId);
         }
       },
+      dismissSignal: dismissController.stream,
       onAccept: () async {
         try {
           debugPrint('[CallInviteListener] Accepting call $callId');
@@ -348,12 +414,34 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
         }
       },
     );
+    if (identical(_dialogDismissers[callId], dismissController)) {
+      _dialogDismissers.remove(callId);
+    }
+    if (!dismissController.isClosed) {
+      await dismissController.close();
+    }
   }
 
   void _forgetCall(String callId) {
     _seenCallIds.removeWhere(
       (seen) => seen == callId || seen.startsWith('$callId:'),
     );
+  }
+
+  void _dismissIncomingCall(String callId) {
+    _seenCallIds.remove(callId);
+    final controller = _dialogDismissers.remove(callId);
+    if (controller == null || controller.isClosed) return;
+    controller.add(null);
+    unawaited(controller.close());
+  }
+
+  bool _isTerminalInviteStatus(String? status) {
+    return status == 'accepted' ||
+        status == 'declined' ||
+        status == 'cancelled' ||
+        status == 'missed' ||
+        status == 'ended';
   }
 
   Future<void> _joinCall({
@@ -546,6 +634,13 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     final dbCh = _dbChannel;
     _dbChannel = null;
     if (dbCh != null) await Supabase.instance.client.removeChannel(dbCh);
+    for (final controller in _dialogDismissers.values) {
+      if (!controller.isClosed) {
+        controller.add(null);
+        await controller.close();
+      }
+    }
+    _dialogDismissers.clear();
   }
 
   @override

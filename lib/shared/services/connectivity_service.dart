@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 
 final _log = Logger('ConnectivityService');
@@ -14,10 +14,12 @@ final _log = Logger('ConnectivityService');
 class ConnectivityService {
   static final ConnectivityService instance = ConnectivityService._();
   factory ConnectivityService() => instance;
-  ConnectivityService._() { _init(); }
+  ConnectivityService._() {
+    _init();
+  }
 
   final _connectivity = Connectivity();
-  final _httpClient = HttpClient();
+  final _httpClient = http.Client();
   final _onlineController = StreamController<bool>.broadcast();
 
   StreamSubscription<List<ConnectivityResult>>? _nativeSub;
@@ -87,21 +89,12 @@ class ConnectivityService {
 
   Future<bool> _checkReachability() async {
     try {
-      final request = await _httpClient
-          .getUrl(Uri.parse('http://clients3.google.com/generate_204'))
+      final response = await _httpClient
+          .get(Uri.parse('https://clients3.google.com/generate_204'))
           .timeout(const Duration(seconds: 4));
-      final response = await request.close().timeout(const Duration(seconds: 4));
-      await response.drain<void>();
-      return response.statusCode == 204;
+      return response.statusCode == 204 || response.statusCode == 200;
     } catch (_) {
-      try {
-        final result = await InternetAddress.lookup(
-          'clients3.google.com',
-        ).timeout(const Duration(seconds: 4));
-        return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
-      } catch (_) {
-        return false;
-      }
+      return false;
     }
   }
 
@@ -136,7 +129,7 @@ class ConnectivityService {
   void dispose() {
     _nativeSub?.cancel();
     _fallbackTimer?.cancel();
-    _httpClient.close(force: true);
+    _httpClient.close();
     _onlineController.close();
   }
 }

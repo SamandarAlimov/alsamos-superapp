@@ -96,7 +96,7 @@ dependencies:
   video_player_media_kit: ^2.0.0
   media_kit_libs_linux: any
   media_kit_libs_windows_video: any
-  flutter_webrtc: ^1.5.2
+  flutter_webrtc: 1.6.0
   syncfusion_flutter_pdfviewer: ^33.2.13
   flutter_map_cancellable_tile_provider: ^3.0.2
   flutter_map_cache: ^2.1.0

@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../core/constants/api_constants.dart';
+import '../../../../shared/widgets/error_mapper.dart';
 import '../../data/models/call_quality.dart';
 import 'call_signaling_socket.dart';
 
@@ -168,8 +169,9 @@ class CallState {
         error: identical(error, _unset) ? this.error : error as String?,
         elapsed: elapsed ?? this.elapsed,
         hasEnded: hasEnded ?? this.hasEnded,
-        endReason:
-            identical(endReason, _unset) ? this.endReason : endReason as String?,
+        endReason: identical(endReason, _unset)
+            ? this.endReason
+            : endReason as String?,
       );
 }
 
@@ -199,9 +201,18 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _statsTimer;
   Timer? _resyncTimer;
   Timer? _fastResyncTimer;
+  Timer? _connectionWatchdogTimer;
   Timer? _edgeHeartbeatTimer;
+  Timer? _edgeReconnectTimer;
   Timer? _realtimeResubscribeTimer;
+  Timer? _dbSignalPollTimer;
   MediaStream? _screenStream;
+  int _realtimeGeneration = 0;
+  int _realtimeReconnectAttempts = 0;
+  int _edgeReconnectAttempts = 0;
+  int _dbSignalPollFailures = 0;
+  int _connectionWatchdogTicks = 0;
+  bool _dbSignalPollInFlight = false;
   bool _leaving = false;
   bool _startedAtStamped = false;
   bool _heartbeatRpcUnavailable = false;
@@ -222,9 +233,8 @@ class CallNotifier extends StateNotifier<CallState> {
   bool _hasRealRtcConnection([List<WebRTCParticipant>? participants]) {
     final list = participants ?? state.participants;
     if (list.any((p) => p.stream != null)) return true;
-    return state.peerConnectionState == 'RTCPeerConnectionStateConnected' ||
-        state.iceConnectionState == 'RTCIceConnectionStateConnected' ||
-        state.iceConnectionState == 'RTCIceConnectionStateCompleted';
+    return state.quality.audioBytesReceived > 0 ||
+        state.quality.videoBytesReceived > 0;
   }
 
   void _startElapsedTimer() {
@@ -281,7 +291,7 @@ class CallNotifier extends StateNotifier<CallState> {
       if (stream == null) {
         state = state.copyWith(
           isConnecting: false,
-          error: "Kamera yoki mikrofon ochilmadi. Ruxsatlarni tekshiring.",
+          error: friendlyCallError(const CallFailure(CallFailureType.unknown)),
         );
         return;
       }
@@ -294,19 +304,20 @@ class CallNotifier extends StateNotifier<CallState> {
         );
       }
       await _connectEdgeSignaling(stream);
+      _startDbSignalPolling(stream);
       _startStatsLoop();
       _startResyncLoop();
+      _startConnectionWatchdog();
     } on TimeoutException {
       state = state.copyWith(
         isConnecting: false,
-        error:
-            "Ulanish vaqti tugadi. Internet yoki Realtime sozlamasini tekshiring.",
+        error: friendlyCallError(const CallFailure(CallFailureType.timeout)),
       );
     } catch (e) {
       debugPrint('[WebRTC] joinRoom error: $e');
       state = state.copyWith(
         isConnecting: false,
-        error: "Qo'ng'iroqqa ulanib bo'lmadi: $e",
+        error: friendlyCallError(e),
       );
     }
   }
@@ -335,19 +346,31 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   Future<void> _cleanupLocalCallResources() async {
+    _realtimeGeneration++;
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
     _fastResyncTimer?.cancel();
+    _connectionWatchdogTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
+    _edgeReconnectTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
+    _dbSignalPollTimer?.cancel();
     _edgeHeartbeatTimer = null;
     _fastResyncTimer = null;
+    _connectionWatchdogTimer = null;
     _realtimeResubscribeTimer = null;
+    _edgeReconnectTimer = null;
+    _dbSignalPollTimer = null;
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
     _reconnectTimers.clear();
+    _realtimeReconnectAttempts = 0;
+    _edgeReconnectAttempts = 0;
+    _dbSignalPollFailures = 0;
+    _dbSignalPollInFlight = false;
+    _connectionWatchdogTicks = 0;
     for (final pc in _peers.values) {
       await pc.close();
     }
@@ -585,12 +608,14 @@ class CallNotifier extends StateNotifier<CallState> {
     }
     final microphone = await Permission.microphone.request();
     if (!microphone.isGranted) {
-      return "Mikrofon ruxsati berilmadi. Audio qo'ng'iroq uchun mikrofon kerak.";
+      return friendlyCallError(
+          const CallFailure(CallFailureType.microphonePermission));
     }
     if (video) {
       final camera = await Permission.camera.request();
       if (!camera.isGranted) {
-        return "Kamera ruxsati berilmadi. Video qo'ng'iroq uchun kamera kerak.";
+        return friendlyCallError(
+            const CallFailure(CallFailureType.cameraPermission));
       }
     }
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -600,6 +625,12 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   Future<void> _configureAudioRoute({required bool speaker}) async {
+    if (kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      return;
+    }
     try {
       await Helper.setSpeakerphoneOn(speaker);
       debugPrint('[WebRTC] speakerphone=${speaker ? 'on' : 'off'}');
@@ -637,30 +668,6 @@ class CallNotifier extends StateNotifier<CallState> {
         {'urls': 'stun:stun.l.google.com:19302'},
         {'urls': 'stun:stun1.l.google.com:19302'},
       ]);
-    }
-    if (!_hasTurnServer(servers)) {
-      // Always include TURN servers for NAT traversal reliability
-      servers.add({
-        'urls': [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-          'turns:openrelay.metered.ca:443?transport=tcp',
-        ],
-        'username': 'openrelayproject',
-        'credential': 'openrelayproject',
-      });
-      servers.add({
-        'urls': [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:80?transport=tcp',
-          'turn:a.relay.metered.ca:443',
-          'turn:a.relay.metered.ca:443?transport=tcp',
-          'turns:a.relay.metered.ca:443?transport=tcp',
-        ],
-        'username': 'e46d064e3c1b60019d6052e1',
-        'credential': 'BGmFZmMFZ2rQnPCP',
-      });
     }
     if (!_hasStunServer(servers)) {
       servers.add({'urls': 'stun:stun.l.google.com:19302'});
@@ -815,16 +822,30 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   Future<void> _supabaseSubscribe(MediaStream localStream) async {
-    if (_channel != null) await _sb.removeChannel(_channel!);
+    final generation = ++_realtimeGeneration;
+    final previousChannel = _channel;
+    if (previousChannel != null) {
+      _channel = null;
+      await _sb.removeChannel(previousChannel);
+      if (_leaving || generation != _realtimeGeneration) return;
+    }
     final completer = Completer<void>();
-    _channel = _sb.channel(
+    final channel = _sb.channel(
       'webrtc:$roomId',
       opts: RealtimeChannelConfig(ack: true, key: userId, enabled: true),
     );
-    _channel!
+    _channel = channel;
+    bool isCurrentChannel() =>
+        !_leaving &&
+        mounted &&
+        generation == _realtimeGeneration &&
+        identical(_channel, channel);
+
+    channel
         .onBroadcast(
             event: 'offer',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               unawaited(_handleOffer(_signalPayload(payload), localStream)
                   .catchError((e, stack) {
                 debugPrint('[WebRTC] Error handling offer: $e\n$stack');
@@ -833,6 +854,7 @@ class CallNotifier extends StateNotifier<CallState> {
         .onBroadcast(
             event: 'answer',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               unawaited(
                   _handleAnswer(_signalPayload(payload)).catchError((e, stack) {
                 debugPrint('[WebRTC] Error handling answer: $e\n$stack');
@@ -841,6 +863,7 @@ class CallNotifier extends StateNotifier<CallState> {
         .onBroadcast(
             event: 'ice',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               unawaited(_handleIce(_signalPayload(payload)).catchError(
                 (e, stack) {
                   debugPrint('[WebRTC] Error handling ICE: $e\n$stack');
@@ -850,6 +873,7 @@ class CallNotifier extends StateNotifier<CallState> {
         .onBroadcast(
             event: 'ice-candidate',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               unawaited(_handleIce(_signalPayload(payload)).catchError(
                 (e, stack) {
                   debugPrint(
@@ -860,6 +884,7 @@ class CallNotifier extends StateNotifier<CallState> {
         .onBroadcast(
             event: 'media',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               try {
                 _handleMedia(_signalPayload(payload));
               } catch (e, stack) {
@@ -869,6 +894,7 @@ class CallNotifier extends StateNotifier<CallState> {
         .onBroadcast(
             event: 'resync',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               try {
                 final signal = _signalPayload(payload);
                 final from = signal['from'] as String?;
@@ -890,6 +916,7 @@ class CallNotifier extends StateNotifier<CallState> {
         .onBroadcast(
             event: 'leave',
             callback: (payload) {
+              if (!isCurrentChannel()) return;
               try {
                 final signal = _signalPayload(payload);
                 final from = signal['from'] as String?;
@@ -914,6 +941,7 @@ class CallNotifier extends StateNotifier<CallState> {
             value: roomId,
           ),
           callback: (_) {
+            if (!isCurrentChannel()) return;
             unawaited(_syncDbParticipants(localStream));
           },
         )
@@ -927,6 +955,7 @@ class CallNotifier extends StateNotifier<CallState> {
             value: roomId,
           ),
           callback: (payload) {
+            if (!isCurrentChannel()) return;
             final status = payload.newRecord['status']?.toString();
             if (_isTerminalCallStatus(status)) {
               unawaited(_handleRemoteCallEnded(status));
@@ -943,6 +972,7 @@ class CallNotifier extends StateNotifier<CallState> {
             value: roomId,
           ),
           callback: (payload) {
+            if (!isCurrentChannel()) return;
             unawaited(
               _handleDbSignal(payload.newRecord, localStream).catchError(
                 (e, stack) {
@@ -953,8 +983,9 @@ class CallNotifier extends StateNotifier<CallState> {
           },
         )
         .onPresenceSync((_) {
+      if (!isCurrentChannel()) return;
       try {
-        final peerIds = _channel!
+        final peerIds = channel
             .presenceState()
             .map((p) => p.key)
             .where((k) => k != userId)
@@ -985,17 +1016,27 @@ class CallNotifier extends StateNotifier<CallState> {
         debugPrint('[WebRTC] Error in onPresenceSync: $e\n$stack');
       }
     }).onPresenceLeave((payload) {
+      if (!isCurrentChannel()) return;
       if (payload.key != userId) {
         _presencePeerIds.remove(payload.key);
-        _closePeer(payload.key);
+        final stream = state.localStream;
+        if (stream != null) {
+          unawaited(_syncDbParticipants(stream));
+        }
       }
     });
 
-    _channel!.subscribe((status, [error]) async {
+    channel.subscribe((status, [error]) async {
+      if (!isCurrentChannel()) return;
       debugPrint('[WebRTC] Channel subscribe status: $status, error: $error');
       if (status == RealtimeSubscribeStatus.subscribed) {
         try {
-          await _channel!.track({
+          Timer(const Duration(seconds: 10), () {
+            if (isCurrentChannel()) {
+              _realtimeReconnectAttempts = 0;
+            }
+          });
+          await channel.track({
             'user_id': userId,
             'online_at': DateTime.now().toIso8601String(),
           });
@@ -1015,22 +1056,24 @@ class CallNotifier extends StateNotifier<CallState> {
           }
         }
       } else if (status == RealtimeSubscribeStatus.closed) {
-        debugPrint('[WebRTC] Channel closed unexpectedly');
+        debugPrint(
+            '[WebRTC] Realtime channel closed; continuing with Edge/DB fallback');
         if (!_leaving && state.localStream != null) {
           // A closed RealtimeChannel is not guaranteed to be reusable. Recreate
           // it so DB participant/signaling listeners come back cleanly.
           final activeStream = state.localStream!;
           state = state.copyWith(isReconnecting: true);
           _realtimeResubscribeTimer?.cancel();
+          _realtimeReconnectAttempts =
+              (_realtimeReconnectAttempts + 1).clamp(1, 6);
+          final delaySeconds = 2 * _realtimeReconnectAttempts;
           _realtimeResubscribeTimer =
-              Timer(const Duration(seconds: 2), () async {
+              Timer(Duration(seconds: delaySeconds), () async {
             if (_leaving || state.localStream == null) return;
             try {
-              final closedChannel = _channel;
+              if (!isCurrentChannel()) return;
               _channel = null;
-              if (closedChannel != null) {
-                await _sb.removeChannel(closedChannel);
-              }
+              await _sb.removeChannel(channel);
               await _supabaseSubscribe(activeStream);
             } catch (e, stack) {
               debugPrint('[WebRTC] Realtime resubscribe failed: $e\n$stack');
@@ -1081,15 +1124,18 @@ class CallNotifier extends StateNotifier<CallState> {
         for (final participant in state.participants)
           participant.id: participant,
       };
-      final activePeerIds =
-          peerRows.map((row) => row['user_id'] as String).toSet();
+      final activePeerIds = {
+        ...peerRows.map((row) => row['user_id'] as String),
+        ..._presencePeerIds,
+        ..._edgePeerIds,
+      }..remove(userId);
       for (final participantId in participantsById.keys.toList()) {
         if (!activePeerIds.contains(participantId)) {
           _closePeer(participantId);
           participantsById.remove(participantId);
         }
       }
-      if (peerRows.isEmpty) {
+      if (activePeerIds.isEmpty) {
         if (participantsById.isEmpty) {
           state = state.copyWith(
             participants: const [],
@@ -1098,6 +1144,11 @@ class CallNotifier extends StateNotifier<CallState> {
           );
         }
         return;
+      }
+
+      for (final peerId in activePeerIds) {
+        participantsById.putIfAbsent(
+            peerId, () => WebRTCParticipant(id: peerId));
       }
 
       for (final row in peerRows) {
@@ -1117,6 +1168,19 @@ class CallNotifier extends StateNotifier<CallState> {
           }).catchError((e, stack) {
             debugPrint(
                 '[WebRTC][$peerId] DB participant peer setup failed: $e');
+          }));
+        }
+      }
+
+      if (localStream != null) {
+        final dbPeerIds =
+            peerRows.map((row) => row['user_id'] as String).toSet();
+        for (final peerId in activePeerIds.difference(dbPeerIds)) {
+          unawaited(Future<void>(() async {
+            await _ensurePeer(peerId, localStream);
+            await _maybeMakeOffer(peerId);
+          }).catchError((e, stack) {
+            debugPrint('[WebRTC][$peerId] presence peer setup failed: $e');
           }));
         }
       }
@@ -1173,7 +1237,12 @@ class CallNotifier extends StateNotifier<CallState> {
 
   bool _isTerminalCallStatus(String? status) {
     return switch (status) {
-      'ended' || 'declined' || 'missed' || 'cancelled' || 'failed' || 'expired' =>
+      'ended' ||
+      'declined' ||
+      'missed' ||
+      'cancelled' ||
+      'failed' ||
+      'expired' =>
         true,
       _ => false,
     };
@@ -1244,7 +1313,7 @@ class CallNotifier extends StateNotifier<CallState> {
       debugPrint('[WebRTC][$peerId] Peer connection created successfully');
 
       pc.onRenegotiationNeeded = () async {
-        if (pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
+        if (!_canCreateOffer(pc)) {
           return;
         }
         await _maybeMakeOffer(peerId);
@@ -1282,7 +1351,7 @@ class CallNotifier extends StateNotifier<CallState> {
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
           _reconnectTimers.remove(peerId)?.cancel();
           _reconnectAttempts.remove(peerId);
-          _markRtcConnected();
+          state = state.copyWith(isReconnecting: false);
         }
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
             s == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
@@ -1297,13 +1366,27 @@ class CallNotifier extends StateNotifier<CallState> {
         }
       };
 
-      for (final t in localStream.getTracks()) {
+      _peers[peerId] = pc;
+      var addedTrackCount = 0;
+      final localTracks = localStream.getTracks();
+      for (final t in localTracks) {
         t.enabled = true;
         debugPrint('[WebRTC][$peerId] add local ${t.kind} track '
             'enabled=${t.enabled} muted=${t.muted}');
-        await pc.addTrack(t, localStream);
+        try {
+          await pc.addTrack(t, localStream);
+          addedTrackCount++;
+        } catch (e) {
+          debugPrint('[WebRTC][$peerId] skipped invalid local ${t.kind} '
+              'track during addTrack: $e');
+        }
       }
-      _peers[peerId] = pc;
+      if (addedTrackCount == 0) {
+        _peers.remove(peerId);
+        await pc.close();
+        throw StateError('No valid local media tracks available for call');
+      }
+      _scheduleInitialOffer(peerId, pc);
       _peerCreating.remove(peerId);
       completer.complete(pc);
       return pc;
@@ -1316,16 +1399,42 @@ class CallNotifier extends StateNotifier<CallState> {
     }
   }
 
-  Future<void> _maybeMakeOffer(String peerId) async {
+  void _scheduleInitialOffer(String peerId, RTCPeerConnection pc) {
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 200), () async {
+      if (_leaving || !identical(_peers[peerId], pc)) return;
+      for (var attempt = 1; attempt <= 5; attempt++) {
+        if (_leaving || !identical(_peers[peerId], pc)) return;
+        final signalingState = pc.signalingState;
+        if (_canCreateOffer(pc)) {
+          debugPrint('[WebRTC][$peerId] initial offer attempt $attempt');
+          await _maybeMakeOffer(peerId, force: true);
+          return;
+        }
+        debugPrint('[WebRTC][$peerId] initial offer waiting; '
+            'signalingState=$signalingState attempt=$attempt');
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+      debugPrint('[WebRTC][$peerId] initial offer skipped after retries; '
+          'signalingState=${pc.signalingState}');
+    }).catchError((e, stack) {
+      debugPrint('[WebRTC][$peerId] initial offer failed: $e\n$stack');
+    }));
+  }
+
+  Future<void> _maybeMakeOffer(String peerId, {bool force = false}) async {
     final pc = _peers[peerId];
-    if (pc == null ||
-        (_makingOffer[peerId] ?? false) ||
-        pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
+    if (pc == null || (_makingOffer[peerId] ?? false) || !_canCreateOffer(pc)) {
+      if (force) {
+        debugPrint('[WebRTC][$peerId] offer not ready; '
+            'pc=${pc != null} making=${_makingOffer[peerId] ?? false} '
+            'signalingState=${pc?.signalingState}');
+      }
       return;
     }
     final now = DateTime.now();
     final lastOffer = _lastOfferAt[peerId];
-    if (lastOffer != null &&
+    if (!force &&
+        lastOffer != null &&
         now.difference(lastOffer) < const Duration(seconds: 2)) {
       return;
     }
@@ -1338,13 +1447,20 @@ class CallNotifier extends StateNotifier<CallState> {
     if (pc == null) return;
     try {
       _makingOffer[peerId] = true;
-      final offer =
-          await pc.createOffer(iceRestart ? {'iceRestart': true} : {});
-      if (pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
+      debugPrint(
+          '[WebRTC][$peerId] creating ${iceRestart ? 'ICE restart ' : ''}offer');
+      final offer = await pc
+          .createOffer(iceRestart ? {'iceRestart': true} : {})
+          .timeout(const Duration(seconds: 8));
+      if (!_canCreateOffer(pc)) {
+        debugPrint('[WebRTC][$peerId] offer skipped because signalingState='
+            '${pc.signalingState}');
         return;
       }
-      await pc.setLocalDescription(offer);
-      final localDescription = await pc.getLocalDescription();
+      await pc.setLocalDescription(offer).timeout(const Duration(seconds: 8));
+      final localDescription =
+          await pc.getLocalDescription().timeout(const Duration(seconds: 4));
+      debugPrint('[WebRTC][$peerId] sending offer via signaling');
       _broadcast('offer', {
         'from': userId,
         'to': peerId,
@@ -1354,6 +1470,9 @@ class CallNotifier extends StateNotifier<CallState> {
         },
         'iceRestart': iceRestart,
       });
+    } catch (e, stack) {
+      debugPrint('[WebRTC][$peerId] offer negotiation failed: $e\n$stack');
+      rethrow;
     } finally {
       _makingOffer[peerId] = false;
     }
@@ -1372,8 +1491,7 @@ class CallNotifier extends StateNotifier<CallState> {
     // polite and yields on collision. This keeps startup reliable when only one
     // side sees a peer first while still preventing glare from breaking RTC.
     final polite = userId.compareTo(from) > 0;
-    final collision = (_makingOffer[from] ?? false) ||
-        pc.signalingState != RTCSignalingState.RTCSignalingStateStable;
+    final collision = (_makingOffer[from] ?? false) || !_canAcceptOffer(pc);
     _ignoreOffer[from] = !polite && collision;
     if (_ignoreOffer[from]!) return;
     if (collision && polite) {
@@ -1385,13 +1503,19 @@ class CallNotifier extends StateNotifier<CallState> {
         debugPrint('[WebRTC][$from] rollback ignored: $e');
       }
     }
-    await pc.setRemoteDescription(
-      RTCSessionDescription(sdpMap['sdp'], sdpMap['type']),
-    );
+    debugPrint('[WebRTC][$from] received offer');
+    await pc
+        .setRemoteDescription(
+          RTCSessionDescription(sdpMap['sdp'], sdpMap['type']),
+        )
+        .timeout(const Duration(seconds: 8));
     await _flushPendingCandidates(from, pc);
-    final answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    final localDescription = await pc.getLocalDescription();
+    debugPrint('[WebRTC][$from] creating answer');
+    final answer = await pc.createAnswer().timeout(const Duration(seconds: 8));
+    await pc.setLocalDescription(answer).timeout(const Duration(seconds: 8));
+    final localDescription =
+        await pc.getLocalDescription().timeout(const Duration(seconds: 4));
+    debugPrint('[WebRTC][$from] sending answer via signaling');
     _broadcast('answer', {
       'from': userId,
       'to': from,
@@ -1402,6 +1526,18 @@ class CallNotifier extends StateNotifier<CallState> {
     });
   }
 
+  bool _canCreateOffer(RTCPeerConnection pc) {
+    final signalingState = pc.signalingState;
+    return signalingState == null ||
+        signalingState == RTCSignalingState.RTCSignalingStateStable;
+  }
+
+  bool _canAcceptOffer(RTCPeerConnection pc) {
+    final signalingState = pc.signalingState;
+    return signalingState == null ||
+        signalingState == RTCSignalingState.RTCSignalingStateStable;
+  }
+
   Future<void> _handleAnswer(Map<String, dynamic> payload) async {
     final from = payload['from'] as String?;
     if (from == null || from == userId) return;
@@ -1410,10 +1546,16 @@ class CallNotifier extends StateNotifier<CallState> {
     final sdpMap = payload['sdp'] as Map<String, dynamic>?;
     if (sdpMap == null) return;
     final pc = _peers[from];
-    if (pc == null) return;
-    await pc.setRemoteDescription(
-      RTCSessionDescription(sdpMap['sdp'], sdpMap['type']),
-    );
+    if (pc == null) {
+      debugPrint('[WebRTC][$from] answer ignored; peer not ready');
+      return;
+    }
+    debugPrint('[WebRTC][$from] received answer');
+    await pc
+        .setRemoteDescription(
+          RTCSessionDescription(sdpMap['sdp'], sdpMap['type']),
+        )
+        .timeout(const Duration(seconds: 8));
     await _flushPendingCandidates(from, pc);
   }
 
@@ -1467,7 +1609,9 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   Future<void> _connectEdgeSignaling(MediaStream localStream) async {
+    _edgeReconnectTimer?.cancel();
     await _edgeSocket?.close();
+    CallSignalingSocket? currentSocket;
     final socket = CallSignalingSocket(
       uri: _edgeSignalingUri,
       headers: {
@@ -1484,8 +1628,13 @@ class CallNotifier extends StateNotifier<CallState> {
       },
       onDone: () {
         debugPrint('[WebRTC] Edge signaling closed');
+        if (currentSocket != null && identical(_edgeSocket, currentSocket)) {
+          _edgeSocket = null;
+          _scheduleEdgeReconnect(localStream);
+        }
       },
     );
+    currentSocket = socket;
     _edgeSocket = socket;
     try {
       await socket.connect();
@@ -1498,13 +1647,31 @@ class CallNotifier extends StateNotifier<CallState> {
           'accessToken': _sb.auth.currentSession!.accessToken,
       });
       _startEdgeHeartbeat();
+      _edgeReconnectAttempts = 0;
       debugPrint('[WebRTC] Edge signaling joined room $roomId');
     } catch (e) {
       debugPrint(
           '[WebRTC] Edge signaling unavailable, using realtime fallback: $e');
       await socket.close();
       if (identical(_edgeSocket, socket)) _edgeSocket = null;
+      _scheduleEdgeReconnect(localStream);
     }
+  }
+
+  void _scheduleEdgeReconnect(MediaStream localStream) {
+    if (_leaving || state.localStream == null || _edgeReconnectTimer != null) {
+      return;
+    }
+    _edgeReconnectAttempts = (_edgeReconnectAttempts + 1).clamp(1, 6);
+    final delaySeconds = 1 << (_edgeReconnectAttempts - 1);
+    debugPrint('[WebRTC] Edge reconnect scheduled in ${delaySeconds}s');
+    _edgeReconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      _edgeReconnectTimer = null;
+      if (_leaving || state.localStream == null) return;
+      unawaited(_connectEdgeSignaling(localStream).catchError((e, stack) {
+        debugPrint('[WebRTC] Edge reconnect failed: $e\n$stack');
+      }));
+    });
   }
 
   void _handleEdgeMessage(
@@ -1583,7 +1750,7 @@ class CallNotifier extends StateNotifier<CallState> {
         final error = message['message']?.toString();
         debugPrint('[WebRTC] Edge signaling server error: $error');
         if (mounted && error != null && state.participants.isEmpty) {
-          state = state.copyWith(error: error);
+          state = state.copyWith(error: friendlyCallError(error));
         }
         break;
       case 'ping':
@@ -1952,6 +2119,80 @@ class CallNotifier extends StateNotifier<CallState> {
     _runResyncTick();
   }
 
+  void _startConnectionWatchdog() {
+    _connectionWatchdogTimer?.cancel();
+    _connectionWatchdogTicks = 0;
+    _connectionWatchdogTimer =
+        Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (_leaving || state.localStream == null) {
+        timer.cancel();
+        if (identical(_connectionWatchdogTimer, timer)) {
+          _connectionWatchdogTimer = null;
+        }
+        return;
+      }
+      if (_hasRealRtcConnection()) {
+        timer.cancel();
+        if (identical(_connectionWatchdogTimer, timer)) {
+          _connectionWatchdogTimer = null;
+        }
+        return;
+      }
+
+      _connectionWatchdogTicks++;
+      final elapsed = _connectionWatchdogTicks * 3;
+      final localStream = state.localStream;
+      if (localStream == null) return;
+
+      if (_peers.isEmpty) {
+        if (elapsed % 9 == 0) {
+          debugPrint('[WebRTC] watchdog waiting for peer; elapsed=${elapsed}s');
+          _broadcast('resync', {'from': userId});
+          unawaited(_syncDbParticipants(localStream));
+        }
+        if (elapsed >= 45 && mounted) {
+          state = state.copyWith(
+            isConnecting: false,
+            isReconnecting: false,
+            error: friendlyCallError(
+                const CallFailure(CallFailureType.remoteUnavailable)),
+          );
+        }
+        return;
+      }
+
+      for (final peerId in _peers.keys.toList()) {
+        final pc = _peers[peerId];
+        if (pc == null) continue;
+        unawaited(Future<void>(() async {
+          final hasRemoteDescription = await pc.getRemoteDescription() != null;
+          if (!hasRemoteDescription) {
+            debugPrint('[WebRTC][$peerId] watchdog re-offer; '
+                'elapsed=${elapsed}s signalingState=${pc.signalingState}');
+            await _maybeMakeOffer(peerId, force: true);
+            return;
+          }
+          if (elapsed >= 18 && elapsed % 9 == 0) {
+            debugPrint('[WebRTC][$peerId] watchdog ICE restart; '
+                'elapsed=${elapsed}s connectionState=${pc.connectionState}');
+            await _renegotiate(peerId, iceRestart: true);
+          }
+        }).catchError((e, stack) {
+          debugPrint('[WebRTC] watchdog recovery failed: $e\n$stack');
+        }));
+      }
+
+      if (elapsed >= 45 && mounted) {
+        state = state.copyWith(
+          isConnecting: false,
+          isReconnecting: false,
+          error: friendlyCallError(
+              const CallFailure(CallFailureType.mediaConnection)),
+        );
+      }
+    });
+  }
+
   void _runResyncTick() {
     if (_leaving) return;
     unawaited(_writeParticipantState());
@@ -1985,6 +2226,71 @@ class CallNotifier extends StateNotifier<CallState> {
           debugPrint('[WebRTC] resync re-offer failed: $e\n$stack');
         }));
       }
+    }
+  }
+
+  void _startDbSignalPolling(MediaStream localStream) {
+    _dbSignalPollTimer?.cancel();
+    var fastTicks = 0;
+    _dbSignalPollFailures = 0;
+    _dbSignalPollInFlight = false;
+    _dbSignalPollTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_leaving || state.localStream == null) {
+        timer.cancel();
+        if (identical(_dbSignalPollTimer, timer)) {
+          _dbSignalPollTimer = null;
+        }
+        return;
+      }
+      fastTicks++;
+      if (_dbSignalPollInFlight) return;
+      if (_dbSignalPollFailures >= 3 && fastTicks.isOdd) return;
+      unawaited(_pollDbSignals(localStream));
+      if (fastTicks > 120 && _hasRealRtcConnection()) {
+        timer.cancel();
+        if (identical(_dbSignalPollTimer, timer)) {
+          _dbSignalPollTimer = null;
+        }
+      }
+    });
+    unawaited(_pollDbSignals(localStream));
+  }
+
+  Future<void> _pollDbSignals(MediaStream localStream) async {
+    if (_leaving || _dbSignalPollInFlight) return;
+    _dbSignalPollInFlight = true;
+    try {
+      final rows = await _sb
+          .from('call_signals')
+          .select('id,sender_id,target_user_id,type,payload,created_at')
+          .eq('call_id', roomId)
+          .order('created_at', ascending: false)
+          .limit(50)
+          .timeout(const Duration(seconds: 4));
+      final signals = rows.whereType<Map<String, dynamic>>().toList()
+        ..sort((a, b) {
+          final ac = a['created_at']?.toString() ?? '';
+          final bc = b['created_at']?.toString() ?? '';
+          return ac.compareTo(bc);
+        });
+      for (final row in signals) {
+        await _handleDbSignal(row, localStream);
+      }
+      _dbSignalPollFailures = 0;
+    } catch (e) {
+      _dbSignalPollFailures++;
+      final message = e.toString();
+      if (message.contains('call_signals') ||
+          message.contains('PGRST204') ||
+          message.contains('42P01')) {
+        _dbSignalPollTimer?.cancel();
+        _dbSignalPollTimer = null;
+        debugPrint('[WebRTC] DB signal polling unavailable: $e');
+        return;
+      }
+      debugPrint('[WebRTC] DB signal polling failed: $e');
+    } finally {
+      _dbSignalPollInFlight = false;
     }
   }
 
@@ -2275,12 +2581,15 @@ class CallNotifier extends StateNotifier<CallState> {
   @override
   void dispose() {
     _leaving = true;
+    _realtimeGeneration++;
     _elapsedTimer?.cancel();
     _statsTimer?.cancel();
     _resyncTimer?.cancel();
     _fastResyncTimer?.cancel();
+    _connectionWatchdogTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
+    _dbSignalPollTimer?.cancel();
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }

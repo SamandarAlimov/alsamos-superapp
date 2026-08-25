@@ -39,6 +39,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
   bool _controlsVisible = true;
   bool _leftRoom = false;
   bool _minimized = false;
+  bool _localRendererReady = false;
   Timer? _hideTimer;
 
   @override
@@ -52,6 +53,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
 
   Future<void> _bootstrapCall() async {
     await _localRenderer.initialize();
+    _localRendererReady = true;
     if (!mounted) return;
     await _markJoined();
     if (!mounted) return;
@@ -163,7 +165,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     final notifier = ref.read(callProvider(widget.roomId).notifier);
 
     // Update local renderer
-    if (callState.localStream != null) {
+    if (_localRendererReady && callState.localStream != null) {
       _localRenderer.srcObject = callState.localStream;
     }
 
