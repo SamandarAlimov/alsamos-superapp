@@ -93,139 +93,196 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      backgroundColor:
-          Theme.of(context).colorScheme.surface.withValues(alpha: 0.97),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            // Avatar with pulse ring
-            SizedBox(
-              width: 130,
-              height: 130,
-              child: Stack(alignment: Alignment.center, children: [
-                AnimatedBuilder(
-                  animation: _pulse,
-                  builder: (_, __) {
-                    return Container(
-                      width: 110 + 30 * _pulse.value,
-                      height: 110 + 30 * _pulse.value,
-                      decoration: BoxDecoration(
+    final isVideo = widget.callType == IncomingCallType.video;
+    return Dialog.fullscreen(
+      backgroundColor: const Color(0xFF151A1F).withValues(alpha: 0.96),
+      child: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 48, 24, 132),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  SizedBox(
+                    width: 178,
+                    height: 178,
+                    child: Stack(alignment: Alignment.center, children: [
+                      AnimatedBuilder(
+                        animation: _pulse,
+                        builder: (_, __) {
+                          return Container(
+                            width: 136 + 34 * _pulse.value,
+                            height: 136 + 34 * _pulse.value,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: primary.withValues(
+                                alpha: 0.18 * (1 - _pulse.value),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      Container(
+                        width: 132,
+                        height: 132,
+                        decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: primary.withValues(
-                              alpha: 0.2 * (1 - _pulse.value))),
-                    );
-                  },
-                ),
-                Container(
-                  width: 104,
-                  height: 104,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: primary.withValues(alpha: 0.4), width: 2)),
-                ),
-                StoryAvatarRing(
-                    userId: null,
-                    avatarUrl: widget.callerAvatar,
-                    fallback: widget.callerName.isNotEmpty
-                        ? widget.callerName[0].toUpperCase()
-                        : '?',
-                    size: 96),
-              ]),
+                          border: Border.all(
+                            color: primary.withValues(alpha: 0.42),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      StoryAvatarRing(
+                        userId: null,
+                        avatarUrl: widget.callerAvatar,
+                        fallback: widget.callerName.isNotEmpty
+                            ? widget.callerName[0].toUpperCase()
+                            : '?',
+                        size: 120,
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(height: 24),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 520),
+                    child: Text(
+                      widget.callerName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isVideo ? LucideIcons.video : LucideIcons.phone,
+                        size: 16,
+                        color: Colors.white70,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        isVideo
+                            ? 'video qo\'ng\'iroq qilmoqda...'
+                            : 'audio qo\'ng\'iroq qilmoqda...',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ),
+                ]),
+              ),
             ),
-            const SizedBox(height: 20),
-            Text(widget.callerName,
-                maxLines: 2,
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 28,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 28,
+                runSpacing: 14,
+                children: [
+                  _IncomingActionButton(
+                    icon: LucideIcons.phoneOff,
+                    label: 'Rad etish',
+                    color: const Color(0xFFEF4444),
+                    onTap: () {
+                      _stopRing();
+                      HapticFeedback.heavyImpact();
+                      widget.onDecline();
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                  _IncomingActionButton(
+                    icon: isVideo ? LucideIcons.video : LucideIcons.phone,
+                    label: 'Qabul qilish',
+                    color: const Color(0xFF22C55E),
+                    onTap: () {
+                      _stopRing();
+                      HapticFeedback.heavyImpact();
+                      widget.onAccept();
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                  _IncomingActionButton(
+                    icon: LucideIcons.micOff,
+                    label: 'Jim',
+                    color: Colors.white24,
+                    onTap: () {
+                      _stopRing();
+                      HapticFeedback.lightImpact();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IncomingActionButton extends StatelessWidget {
+  const _IncomingActionButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: GestureDetector(
+          onTap: onTap,
+          child: SizedBox(
+            width: 96,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      blurRadius: 12,
+                      color: color.withValues(alpha: 0.28),
+                    ),
+                  ],
+                ),
+                child: Icon(icon, color: Colors.white, size: 28),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                label,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            Wrap(
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Icon(
-                      widget.callType == IncomingCallType.video
-                          ? LucideIcons.video
-                          : LucideIcons.phone,
-                      size: 14,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  const SizedBox(width: 6),
-                  Text(
-                      widget.callType == IncomingCallType.video
-                          ? 'Incoming video call...'
-                          : 'Incoming audio call...',
-                      style: TextStyle(
-                          fontSize: 13,
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant)),
-                ]),
-            const SizedBox(height: 28),
-            Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 48,
-                runSpacing: 16,
-                children: [
-                  Column(children: [
-                    GestureDetector(
-                      onTap: () {
-                        _stopRing();
-                        HapticFeedback.heavyImpact();
-                        widget.onDecline();
-                        Navigator.of(context).pop();
-                      },
-                      child: Container(
-                        width: 64,
-                        height: 64,
-                        decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFFEF4444),
-                            boxShadow: [
-                              BoxShadow(blurRadius: 8, color: Color(0x44EF4444))
-                            ]),
-                        child: const Icon(LucideIcons.phoneOff,
-                            color: Colors.white, size: 28),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text('Decline', style: TextStyle(fontSize: 11)),
-                  ]),
-                  Column(children: [
-                    GestureDetector(
-                      onTap: () {
-                        _stopRing();
-                        HapticFeedback.heavyImpact();
-                        widget.onAccept();
-                        Navigator.of(context).pop();
-                      },
-                      child: Container(
-                        width: 64,
-                        height: 64,
-                        decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFF22C55E),
-                            boxShadow: [
-                              BoxShadow(blurRadius: 8, color: Color(0x4422C55E))
-                            ]),
-                        child: Icon(
-                            widget.callType == IncomingCallType.video
-                                ? LucideIcons.video
-                                : LucideIcons.phone,
-                            color: Colors.white,
-                            size: 28),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text('Accept', style: TextStyle(fontSize: 11)),
-                  ]),
-                ]),
-          ]),
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ]),
+          ),
         ),
       ),
     );

@@ -40,6 +40,8 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
   bool _leftRoom = false;
   bool _minimized = false;
   bool _localRendererReady = false;
+  Offset? _pipOffset;
+  String _lastParticipantLogKey = '';
   Timer? _hideTimer;
 
   @override
@@ -137,7 +139,12 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
       String id, MediaStream stream) async {
     final existing = _remoteRenderers[id];
     if (existing != null) {
-      existing.srcObject = stream;
+      if (!identical(existing.srcObject, stream)) {
+        if (kDebugMode) {
+          debugPrint('[WebRTCCallPage][$id] remote renderer stream changed');
+        }
+        existing.srcObject = stream;
+      }
       return existing;
     }
     return _remoteRendererCreates.putIfAbsent(id, () async {
@@ -153,6 +160,14 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
   @override
   Widget build(BuildContext context) {
     ref.listen<CallState>(callProvider(widget.roomId), (previous, next) {
+      if (kDebugMode) {
+        final participantKey = next.participants.map((p) => p.id).join(',');
+        if (participantKey != _lastParticipantLogKey) {
+          debugPrint('[WebRTCCallPage][${widget.roomId}] participants '
+              'count=${next.participants.length} ids=$participantKey');
+          _lastParticipantLogKey = participantKey;
+        }
+      }
       if (_leftRoom || !next.hasEnded) return;
       _leftRoom = true;
       _hideTimer?.cancel();
@@ -165,7 +180,12 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     final notifier = ref.read(callProvider(widget.roomId).notifier);
 
     // Update local renderer
-    if (_localRendererReady && callState.localStream != null) {
+    if (_localRendererReady &&
+        callState.localStream != null &&
+        !identical(_localRenderer.srcObject, callState.localStream)) {
+      if (kDebugMode) {
+        debugPrint('[WebRTCCallPage] local renderer stream changed');
+      }
       _localRenderer.srcObject = callState.localStream;
     }
 
@@ -229,49 +249,27 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
 
             // ── Local PiP ─────────────────────────────────────────────────────
             if (widget.isVideo && callState.localStream != null)
-              Positioned(
-                top: 48,
-                right: 16,
-                child: Container(
-                  width: 132,
-                  height: 176,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white24),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: callState.isVideoOn
-                      ? RTCVideoView(_localRenderer,
-                          mirror: true,
-                          objectFit:
-                              RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
-                      : Container(
-                          color: Colors.grey[800],
-                          child: const Icon(LucideIcons.videoOff,
-                              color: Colors.white54, size: 28),
-                        ),
-                ),
-              ),
+              _buildLocalPip(callState),
 
             // ── Top bar ───────────────────────────────────────────────────────
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              child: IgnorePointer(
-                ignoring: !_controlsVisible,
-                child: AnimatedOpacity(
-                  opacity: _controlsVisible ? 1 : 0,
-                  duration: const Duration(milliseconds: 300),
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.black87, Colors.transparent],
-                      ),
-                    ),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 48, 16, 52),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.black87, Colors.transparent],
+                  ),
+                ),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 220),
                     child: Row(children: [
                       IconButton(
                         tooltip: 'Kichraytirish',
@@ -293,19 +291,15 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(widget.remoteName ?? 'Qo\'ng\'iroq',
+                              Text(widget.remoteName ?? 'Foydalanuvchi',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w600,
                                       fontSize: 18)),
                               Text(
-                                callState.isConnecting
-                                    ? 'Ulanmoqda...'
-                                    : callState.isReconnecting
-                                        ? 'Qayta ulanmoqda...'
-                                        : callState.participants.isEmpty
-                                            ? 'Kutmoqda...'
-                                            : timeStr,
+                                _callStatusText(callState, timeStr),
                                 style: const TextStyle(
                                     color: Colors.white70, fontSize: 13),
                               ),
@@ -329,78 +323,103 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
               bottom: 0,
               left: 0,
               right: 0,
-              child: IgnorePointer(
-                ignoring: !_controlsVisible,
-                child: AnimatedOpacity(
-                  opacity: _controlsVisible ? 1 : 0,
-                  duration: const Duration(milliseconds: 300),
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [Colors.black87, Colors.transparent],
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 40, 16, 28),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [Colors.black87, Colors.transparent],
+                  ),
+                ),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 220),
+                    child: Center(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.38),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 14,
+                            runSpacing: 10,
+                            children: [
+                              _CallBtn(
+                                icon: callState.isMuted
+                                    ? LucideIcons.micOff
+                                    : LucideIcons.mic,
+                                label: callState.isMuted
+                                    ? 'Mikrofonni yoqish'
+                                    : 'Mikrofonni o\'chirish',
+                                active: callState.isMuted,
+                                onTap: notifier.toggleMute,
+                              ),
+                              if (widget.isVideo)
+                                _CallBtn(
+                                  icon: callState.isVideoOn
+                                      ? LucideIcons.video
+                                      : LucideIcons.videoOff,
+                                  label: callState.isVideoOn
+                                      ? 'Kamerani o\'chirish'
+                                      : 'Kamerani yoqish',
+                                  active: !callState.isVideoOn,
+                                  onTap: notifier.toggleVideo,
+                                ),
+                              _CallBtn(
+                                icon: LucideIcons.handMetal,
+                                label: callState.isHandRaised
+                                    ? 'Qo\'lni tushirish'
+                                    : 'Qo\'l ko\'tarish',
+                                active: callState.isHandRaised,
+                                onTap: notifier.toggleHandRaise,
+                              ),
+                              if (widget.isVideo)
+                                _CallBtn(
+                                  icon: callState.isScreenSharing
+                                      ? LucideIcons.screenShareOff
+                                      : LucideIcons.screenShare,
+                                  label: callState.isScreenSharing
+                                      ? 'Ekranni to\'xtatish'
+                                      : 'Ekranni ulashish',
+                                  active: callState.isScreenSharing,
+                                  onTap: () => _toggleScreenShare(
+                                    callState,
+                                    notifier,
+                                  ),
+                                ),
+                              _CallBtn(
+                                icon: LucideIcons.settings2,
+                                label: 'Qurilmalar',
+                                tooltip: 'Audio/video qurilmalari',
+                                active: false,
+                                onTap: () =>
+                                    _showDeviceSheet(callState, notifier),
+                              ),
+                              _EndCallBtn(onTap: () async {
+                                final elapsed = callState.elapsed;
+                                _leftRoom = true;
+                                ref
+                                    .read(callMiniOverlayProvider.notifier)
+                                    .state = null;
+                                await notifier.leaveRoom();
+                                if (mounted) {
+                                  Navigator.of(context).pop(elapsed);
+                                }
+                                widget.onCallEnd?.call();
+                              }),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _CallBtn(
-                          icon: callState.isMuted
-                              ? LucideIcons.micOff
-                              : LucideIcons.mic,
-                          label: callState.isMuted ? 'Ovoz yoq' : 'Ovoz o\'ch',
-                          active: callState.isMuted,
-                          onTap: notifier.toggleMute,
-                        ),
-                        if (widget.isVideo)
-                          _CallBtn(
-                            icon: callState.isVideoOn
-                                ? LucideIcons.video
-                                : LucideIcons.videoOff,
-                            label: callState.isVideoOn
-                                ? 'Kamera o\'ch'
-                                : 'Kamera yoq',
-                            active: !callState.isVideoOn,
-                            onTap: notifier.toggleVideo,
-                          ),
-                        _CallBtn(
-                          icon: LucideIcons.handMetal,
-                          label: 'Qo\'l',
-                          active: callState.isHandRaised,
-                          onTap: notifier.toggleHandRaise,
-                        ),
-                        if (widget.isVideo)
-                          _CallBtn(
-                            icon: callState.isScreenSharing
-                                ? LucideIcons.screenShareOff
-                                : LucideIcons.screenShare,
-                            label: callState.isScreenSharing
-                                ? 'Share stop'
-                                : 'Ekran',
-                            active: callState.isScreenSharing,
-                            onTap: () => _toggleScreenShare(
-                              callState,
-                              notifier,
-                            ),
-                          ),
-                        _CallBtn(
-                          icon: LucideIcons.settings2,
-                          label: 'Qurilma',
-                          active: false,
-                          onTap: () => _showDeviceSheet(callState, notifier),
-                        ),
-                        _EndCallBtn(onTap: () async {
-                          final elapsed = callState.elapsed;
-                          _leftRoom = true;
-                          ref.read(callMiniOverlayProvider.notifier).state =
-                              null;
-                          await notifier.leaveRoom();
-                          if (mounted) Navigator.of(context).pop(elapsed);
-                          widget.onCallEnd?.call();
-                        }),
-                      ],
                     ),
                   ),
                 ),
@@ -446,6 +465,90 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     );
   }
 
+  Widget _buildLocalPip(CallState callState) {
+    final size = MediaQuery.sizeOf(context);
+    final pipWidth = (size.width * 0.15).clamp(156.0, 220.0);
+    final pipHeight = pipWidth * 0.72;
+    final offset = _pipOffset ??
+        Offset(
+          size.width - pipWidth - 16,
+          size.height - pipHeight - 128,
+        );
+    final left = offset.dx.clamp(12.0, size.width - pipWidth - 12);
+    final top = offset.dy.clamp(72.0, size.height - pipHeight - 112);
+
+    return Positioned(
+      left: left,
+      top: top,
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          final next = Offset(left, top) + details.delta;
+          setState(() {
+            _pipOffset = Offset(
+              next.dx.clamp(12.0, size.width - pipWidth - 12),
+              next.dy.clamp(72.0, size.height - pipHeight - 112),
+            );
+          });
+        },
+        child: Container(
+          width: pipWidth,
+          height: pipHeight,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 18,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (callState.isVideoOn)
+                RTCVideoView(
+                  _localRenderer,
+                  mirror: true,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                )
+              else
+                Container(
+                  color: Colors.grey[850],
+                  child: const Icon(
+                    LucideIcons.videoOff,
+                    color: Colors.white54,
+                    size: 28,
+                  ),
+                ),
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: _CallBadge(
+                  icon: LucideIcons.user,
+                  label: 'Siz',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _callStatusText(CallState callState, String timeText) {
+    if (callState.isReconnecting) return 'Qayta ulanmoqda...';
+    if (callState.isConnecting) return 'Ulanmoqda...';
+    if (callState.participants.isEmpty) return 'Javob kutilmoqda...';
+    if (callState.quality.quality == CallNetworkQuality.poor) {
+      return 'Internet sifati past';
+    }
+    if (!widget.isVideo || !callState.isVideoOn) return 'Faqat audio';
+    return timeText;
+  }
+
   Widget _buildRemoteTile(
     WebRTCParticipant participant, {
     required int participantCount,
@@ -475,29 +578,40 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
         !widget.isVideo ||
         !participant.isVideoOn ||
         !hasVideoTrack) {
-      return _RemoteAudioScreen(
-        name: _participantDisplayName(participant, participantCount),
-        avatarUrl: _participantAvatarUrl(participantCount),
-        isMuted: participant.isMuted,
+      return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        child: _RemoteAudioScreen(
+          key: ValueKey('avatar-${participant.id}'),
+          name: _participantDisplayName(participant, participantCount),
+          avatarUrl: _participantAvatarUrl(participantCount),
+          isMuted: participant.isMuted,
+          status: widget.isVideo && !participant.isVideoOn
+              ? 'Kamera o\'chiq'
+              : 'Faqat audio',
+        ),
       );
     }
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        RTCVideoView(
-          renderer,
-          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-        ),
-        if (participant.isScreenSharing)
-          Positioned(
-            left: 10,
-            top: 10,
-            child: _CallBadge(
-              icon: LucideIcons.screenShare,
-              label: 'Screen',
-            ),
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: Stack(
+        key: ValueKey('video-${participant.id}'),
+        fit: StackFit.expand,
+        children: [
+          RTCVideoView(
+            renderer,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
           ),
-      ],
+          if (participant.isScreenSharing)
+            Positioned(
+              left: 10,
+              top: 10,
+              child: _CallBadge(
+                icon: LucideIcons.screenShare,
+                label: 'Ekran',
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -516,7 +630,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     if (participantCount == 1 && widget.remoteName?.trim().isNotEmpty == true) {
       return widget.remoteName!.trim();
     }
-    return participant.id;
+    return 'Foydalanuvchi';
   }
 
   String? _participantAvatarUrl(int participantCount) {
@@ -811,11 +925,14 @@ class _RemoteAudioScreen extends StatelessWidget {
   final String name;
   final String? avatarUrl;
   final bool isMuted;
+  final String? status;
 
   const _RemoteAudioScreen({
+    super.key,
     required this.name,
     this.avatarUrl,
     required this.isMuted,
+    this.status,
   });
 
   @override
@@ -835,6 +952,24 @@ class _RemoteAudioScreen extends StatelessWidget {
                     style: const TextStyle(fontSize: 32, color: Colors.white)),
           ),
           const SizedBox(height: 12),
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (status != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              status!,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+          const SizedBox(height: 12),
           if (isMuted)
             const Icon(LucideIcons.micOff, color: Colors.white54, size: 20),
         ]),
@@ -846,34 +981,51 @@ class _RemoteAudioScreen extends StatelessWidget {
 class _CallBtn extends StatelessWidget {
   final IconData icon;
   final String label;
+  final String? tooltip;
   final bool active;
   final VoidCallback onTap;
 
   const _CallBtn(
       {required this.icon,
       required this.label,
+      this.tooltip,
       required this.onTap,
       this.active = false});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            color: active ? Colors.white : Colors.white24,
-            shape: BoxShape.circle,
+    return Tooltip(
+      message: tooltip ?? label,
+      child: Semantics(
+        button: true,
+        label: tooltip ?? label,
+        child: GestureDetector(
+          onTap: onTap,
+          child: SizedBox(
+            width: 76,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: active ? Colors.white : Colors.white24,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon,
+                    color: active ? Colors.black : Colors.white, size: 22),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ]),
           ),
-          child:
-              Icon(icon, color: active ? Colors.black : Colors.white, size: 22),
         ),
-        const SizedBox(height: 6),
-        Text(label,
-            style: const TextStyle(color: Colors.white70, fontSize: 11)),
-      ]),
+      ),
     );
   }
 }
@@ -1032,21 +1184,38 @@ class _EndCallBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 64,
-          height: 64,
-          decoration:
-              const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-          child:
-              const Icon(LucideIcons.phoneOff, color: Colors.white, size: 26),
+    return Tooltip(
+      message: 'Qo\'ng\'iroqni tugatish',
+      child: Semantics(
+        button: true,
+        label: 'Qo\'ng\'iroqni tugatish',
+        child: GestureDetector(
+          onTap: onTap,
+          child: SizedBox(
+            width: 76,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFEF4444),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  LucideIcons.phoneOff,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text('Tugatish',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white70, fontSize: 11)),
+            ]),
+          ),
         ),
-        const SizedBox(height: 6),
-        const Text('Tugatish',
-            style: TextStyle(color: Colors.white70, fontSize: 11)),
-      ]),
+      ),
     );
   }
 }
