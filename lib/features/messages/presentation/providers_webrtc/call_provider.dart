@@ -403,6 +403,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgePeerIds.clear();
     _seenSignalIds.clear();
     _seenIceKeys.clear();
+    _mediaAcquisition = null;
     await _edgeSocket?.close();
     _edgeSocket = null;
     _screenStream?.getTracks().forEach((t) => t.stop());
@@ -957,21 +958,28 @@ class CallNotifier extends StateNotifier<CallState> {
   bool _acceptSignal(Map<String, dynamic> payload, String type, String source) {
     final callId =
         (payload['callId'] ?? payload['roomId'] ?? roomId).toString();
+    final key = _payloadSignalKey(payload, type);
+    final revision = _intValue(
+      payload['negotiationRevision'] ?? payload['revision'],
+    );
     if (callId != roomId) {
       debugPrint(
-          '[WebRTC][$roomId][$source][$type] ignored wrong call $callId');
+          '[WebRTC][$roomId][$source][$type][$key] ignored wrong call $callId');
       return false;
     }
     final sessionId = payload['sessionId']?.toString();
     if (sessionId == _callSessionId) {
-      debugPrint('[WebRTC][$roomId][$source][$type] ignored self session');
+      debugPrint(
+          '[WebRTC][$roomId][$source][$type][$key] ignored self session');
       return false;
     }
-    final key = _payloadSignalKey(payload, type);
     if (!_rememberBounded(_seenSignalIds, key)) {
-      debugPrint('[WebRTC][$roomId][$source][$type] ignored duplicate $key');
+      debugPrint('[WebRTC][$roomId][$source][$type][$key] '
+          'ignored duplicate rev=${revision ?? 'missing'}');
       return false;
     }
+    debugPrint('[WebRTC][$roomId][$source][$type][$key] accepted '
+        'rev=${revision ?? 'missing'}');
     return true;
   }
 
@@ -983,7 +991,9 @@ class CallNotifier extends StateNotifier<CallState> {
     final previous = _sdpOps[peerId] ?? Future<void>.value();
     final next = previous.catchError((_) {}).then((_) async {
       if (_leaving || !_peers.containsKey(peerId)) return;
-      await op();
+      await op().timeout(const Duration(seconds: 18), onTimeout: () {
+        throw TimeoutException('SDP $label operation timed out');
+      });
     });
     _sdpOps[peerId] = next.whenComplete(() {
       if (identical(_sdpOps[peerId], next)) {
@@ -1828,9 +1838,8 @@ class CallNotifier extends StateNotifier<CallState> {
       final revision = _intValue(payload['negotiationRevision']);
       final expected = _expectedAnswerRevision[from];
       if (revision != null && expected != null && revision != expected) {
-        debugPrint('[WebRTC][$roomId][$from] stale answer ignored '
-            'rev=$revision expected=$expected');
-        return;
+        debugPrint('[WebRTC][$roomId][$from] answer revision mismatch '
+            'rev=$revision expected=$expected; deferring to signalingState');
       }
       if (revision != null && _appliedAnswerRevision[from] == revision) {
         debugPrint('[WebRTC][$roomId][$from] duplicate answer ignored '
@@ -1880,9 +1889,8 @@ class CallNotifier extends StateNotifier<CallState> {
     final revision = _intValue(payload['negotiationRevision']);
     final activeRevision = _negotiationRevision[from] ?? 0;
     if (revision != null && revision < activeRevision) {
-      debugPrint('[WebRTC][$roomId][$from] stale ICE ignored '
-          'rev=$revision active=$activeRevision');
-      return;
+      debugPrint('[WebRTC][$roomId][$from] ICE revision older than active '
+          'rev=$revision active=$activeRevision; deferring to remote desc');
     }
     final iceKey =
         '$roomId:$from:${revision ?? activeRevision}:${candidate.sdpMid}:${candidate.sdpMLineIndex}:${candidate.candidate}';
