@@ -43,7 +43,7 @@ void main() {
     );
     expect(
       friendlyCallError(const CallFailure(CallFailureType.cameraBusy)),
-      contains('boshqa dasturda'),
+      contains('boshqa ilova yoki oynada band'),
     );
     expect(
       friendlyCallError(const CallFailure(CallFailureType.cameraConstraint)),

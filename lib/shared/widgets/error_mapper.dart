@@ -228,15 +228,15 @@ String friendlyCallError(dynamic error) {
       CallFailureType.timeout =>
         'Qo\'ng\'iroqni ulash uchun vaqt tugadi. Qaytadan urinib ko\'ring.',
       CallFailureType.cameraPermission =>
-        'Kamera ishlashi uchun kameraga ruxsat bering.',
+        'Kamera ishlashi uchun brauzerda kameraga ruxsat bering.',
       CallFailureType.cameraNotFound =>
         'Kamera topilmadi. Kamerani ulang yoki audio qo\'ng\'iroqda davom eting.',
       CallFailureType.cameraBusy =>
-        'Kamera boshqa dasturda ishlayapti. Uni yopib qaytadan urinib ko\'ring.',
+        'Kamera boshqa ilova yoki oynada band. Uni yoping va kamerani qayta yoqib ko\'ring.',
       CallFailureType.cameraConstraint =>
-        'Kamera ushbu video sozlamalarini qo\'llab-quvvatlamadi.',
+        'Tanlangan kamera bu video sozlamalarini qo\'llab-quvvatlamadi. Boshqa kamerani tanlang yoki qayta urinib ko\'ring.',
       CallFailureType.cameraSecurity =>
-        'Brauzer kamera ruxsatini blokladi. Sayt sozlamalarini tekshiring.',
+        'Brauzer xavfsizlik sozlamasi kamerani blokladi. HTTPS yoki localhost orqali qayta urinib ko\'ring.',
       CallFailureType.microphonePermission =>
         'Mikrofon ishlashi uchun mikrofon ruxsatini bering.',
       CallFailureType.remoteRejected => 'Qo\'ng\'iroq qabul qilinmadi.',

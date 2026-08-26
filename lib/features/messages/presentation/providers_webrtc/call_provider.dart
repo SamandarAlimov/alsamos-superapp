@@ -659,10 +659,12 @@ class CallNotifier extends StateNotifier<CallState> {
       } catch (e) {
         final wasVideoAttempt = constraints['video'] != false;
         if (wasVideoAttempt) lastVideoError = e;
+        final details = _mediaExceptionDetails(e);
         debugPrint(
           '[WebRTC] getUserMedia attempt failed '
-          'video=$wasVideoAttempt category=${_mediaExceptionCategory(e)} '
-          'constraints=${jsonEncode(constraints)} error=$e',
+          'video=$wasVideoAttempt name=${details.name} '
+          'category=${_mediaExceptionCategory(e)} '
+          'message=${details.message} constraints=${jsonEncode(constraints)}',
         );
       }
     }
@@ -698,28 +700,36 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   CallFailureType _callFailureForMediaError(Object? error) {
-    final lower = error.toString().toLowerCase();
-    if (lower.contains('notallowed') ||
+    final details = _mediaExceptionDetails(error);
+    final name = details.name.toLowerCase();
+    final message = details.message.toLowerCase();
+    final lower = '$name $message';
+    if (name == 'notallowederror' ||
+        lower.contains('notallowed') ||
         lower.contains('permission') ||
         lower.contains('denied')) {
       return CallFailureType.cameraPermission;
     }
-    if (lower.contains('notfound') ||
+    if (name == 'notfounderror' ||
+        lower.contains('notfound') ||
         lower.contains('devicesnotfound') ||
         lower.contains('no camera')) {
       return CallFailureType.cameraNotFound;
     }
-    if (lower.contains('notreadable') ||
+    if (name == 'notreadableerror' ||
+        lower.contains('notreadable') ||
+        lower.contains('could not start video source') ||
         lower.contains('trackstart') ||
         lower.contains('busy')) {
       return CallFailureType.cameraBusy;
     }
-    if (lower.contains('overconstrained') ||
+    if (name == 'overconstrainederror' ||
+        lower.contains('overconstrained') ||
         lower.contains('constraint') ||
         lower.contains('constraints')) {
       return CallFailureType.cameraConstraint;
     }
-    if (lower.contains('security')) {
+    if (name == 'securityerror' || lower.contains('security')) {
       return CallFailureType.cameraSecurity;
     }
     return CallFailureType.unknown;
@@ -728,6 +738,41 @@ class CallNotifier extends StateNotifier<CallState> {
   String _mediaExceptionCategory(Object? error) {
     final type = _callFailureForMediaError(error);
     return type.name;
+  }
+
+  ({String name, String message}) _mediaExceptionDetails(Object? error) {
+    if (error == null) return (name: 'UnknownError', message: '');
+    String? name;
+    String? message;
+    try {
+      final dynamic dynamicError = error;
+      final dynamic rawName = dynamicError.name;
+      if (rawName is String && rawName.trim().isNotEmpty) {
+        name = rawName.trim();
+      }
+      final dynamic rawMessage = dynamicError.message;
+      if (rawMessage is String && rawMessage.trim().isNotEmpty) {
+        message = rawMessage.trim();
+      }
+    } catch (_) {
+      // Some platform exceptions expose only toString().
+    }
+    final text = error.toString();
+    for (final knownName in const [
+      'NotAllowedError',
+      'NotFoundError',
+      'NotReadableError',
+      'OverconstrainedError',
+      'SecurityError',
+    ]) {
+      if (text.toLowerCase().contains(knownName.toLowerCase())) {
+        name ??= knownName;
+        break;
+      }
+    }
+    name ??= error.runtimeType.toString();
+    message ??= text;
+    return (name: name, message: message);
   }
 
   Future<String?> _ensureMediaPermissions({required bool video}) async {

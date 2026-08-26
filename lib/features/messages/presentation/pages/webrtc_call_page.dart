@@ -11,6 +11,11 @@ import '../../data/models/call_quality.dart';
 import '../providers_webrtc/call_provider.dart';
 import '../widgets/network_quality_indicator.dart';
 
+const bool _showCallDebugHud = bool.fromEnvironment(
+  'SHOW_CALL_DEBUG_HUD',
+  defaultValue: false,
+);
+
 /// Real WebRTC video/audio call page – mirrors web VideoCallOverlay.tsx
 class WebRTCCallPage extends ConsumerStatefulWidget {
   final String roomId;
@@ -310,7 +315,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                         rttMs: callState.quality.rttMs,
                         packetLoss: callState.quality.packetLoss,
                         isReconnecting: callState.isReconnecting,
-                        showDetails: kDebugMode,
+                        showDetails: _showCallDebugHud,
                       ),
                     ]),
                   ),
@@ -458,7 +463,7 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                   ]),
                 ),
               ),
-            if (kDebugMode) _CallDebugOverlay(callState: callState),
+            if (_showCallDebugHud) _CallDebugOverlay(callState: callState),
           ],
         ),
       ),
