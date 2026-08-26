@@ -5017,7 +5017,7 @@ class _MessageReactionMenuBar extends StatelessWidget {
                         child: AnimatedEmoji(
                           emoji: emoji,
                           size: 34,
-                          animate: false,
+                          animate: true,
                           replayOnTap: false,
                         ),
                       ),

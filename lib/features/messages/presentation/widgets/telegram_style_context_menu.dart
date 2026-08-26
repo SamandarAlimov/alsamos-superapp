@@ -108,7 +108,7 @@ class TelegramStyleContextMenu {
                                     child: AnimatedEmoji(
                                       emoji: e,
                                       size: 34,
-                                      animate: false,
+                                      animate: true,
                                       replayOnTap: false,
                                     ),
                                   ),

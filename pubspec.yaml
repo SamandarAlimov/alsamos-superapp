@@ -103,6 +103,7 @@ dependencies:
   table_calendar: ^3.1.2  # Calendar widget for timeline view
   dio_cache_interceptor: ^4.0.7  # Tile caching interceptor
   easy_video_editor: 0.1.6
+  crypto: ^3.0.7
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dependency overrides — single source of truth for shared transitives so the

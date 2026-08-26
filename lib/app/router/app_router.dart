@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -48,6 +48,7 @@ import '../../features/stories/presentation/pages/story_archive_page.dart';
 import '../../features/not_found/presentation/pages/not_found_page.dart';
 import '../../shared/layout/app_layout.dart';
 import '../../shared/navigation/app_routes.dart';
+import '../../shared/communication/emoji/animated_emoji_smoke_page.dart';
 import 'page_transitions.dart';
 
 /// v45: Every shell route uses `fadeSlidePage` (fade + 4% slide-from-right,
@@ -68,9 +69,11 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       final auth = ref.read(authProvider);
       if (auth.isLoading) return null;
       final loggingIn = state.matchedLocation == AppRoutes.auth;
+      final debugSmoke = kDebugMode && state.matchedLocation == '/_emoji-smoke';
+      if (debugSmoke) return null;
       if (!auth.isAuthenticated) return loggingIn ? null : AppRoutes.auth;
       if (loggingIn) return AppRoutes.home;
-      
+
       // Admin route guard: check if user has admin role
       if (state.matchedLocation.startsWith('/admin')) {
         final isAdmin = auth.profile?.isAdmin ?? false;
@@ -79,10 +82,16 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           return AppRoutes.settings;
         }
       }
-      
+
       return null;
     },
     routes: [
+      if (kDebugMode)
+        GoRoute(
+          path: '/_emoji-smoke',
+          pageBuilder: (c, s) =>
+              fadeSlidePage(c, s, const AnimatedEmojiSmokePage()),
+        ),
       GoRoute(
         path: AppRoutes.auth,
         pageBuilder: (c, s) => fadeSlidePage(c, s, const AuthPage()),
@@ -174,11 +183,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/marketplace/shipping-addresses',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const ShippingAddressesPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const ShippingAddressesPage()),
           ),
           GoRoute(
             path: '/marketplace/store-profile',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const StoreProfilePage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const StoreProfilePage()),
           ),
           GoRoute(
             path: AppRoutes.map,
@@ -211,19 +222,23 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           // Settings sub-pages (Telegram-style navigation)
           GoRoute(
             path: '/settings/profile',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const ProfileSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const ProfileSettingsPage()),
           ),
           GoRoute(
             path: '/settings/wallet',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const WalletSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const WalletSettingsPage()),
           ),
           GoRoute(
             path: '/settings/devices',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const DevicesSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const DevicesSettingsPage()),
           ),
           GoRoute(
             path: '/settings/security',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const SecuritySettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const SecuritySettingsPage()),
           ),
           GoRoute(
             path: '/settings/history',
@@ -231,11 +246,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/settings/messages',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const MessagesSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const MessagesSettingsPage()),
           ),
           GoRoute(
             path: '/settings/marketplace',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const MarketplaceSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const MarketplaceSettingsPage()),
           ),
           GoRoute(
             path: '/settings/map',
@@ -243,7 +260,8 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/settings/video',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const VideoSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const VideoSettingsPage()),
           ),
           GoRoute(
             path: '/settings/ai',
@@ -251,19 +269,23 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/settings/notifications',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const NotificationsSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const NotificationsSettingsPage()),
           ),
           GoRoute(
             path: '/settings/privacy',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const PrivacySettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const PrivacySettingsPage()),
           ),
           GoRoute(
             path: '/settings/appearance',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const AppearanceSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const AppearanceSettingsPage()),
           ),
           GoRoute(
             path: '/settings/data-storage',
-            pageBuilder: (c, s) => fadeSlidePage(c, s, const DataStorageSettingsPage()),
+            pageBuilder: (c, s) =>
+                fadeSlidePage(c, s, const DataStorageSettingsPage()),
           ),
           GoRoute(
             path: '/settings/payment',

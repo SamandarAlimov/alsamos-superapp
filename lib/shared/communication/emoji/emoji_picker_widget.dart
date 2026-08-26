@@ -186,7 +186,7 @@ class _EmojiPickerWidgetState extends ConsumerState<EmojiPickerWidget>
           child: AnimatedEmoji(
             emoji: emojis[i],
             size: 30,
-            animate: false,
+            animate: true,
             replayOnTap: false,
           ),
         ),

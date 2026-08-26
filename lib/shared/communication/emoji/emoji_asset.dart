@@ -8,6 +8,7 @@ enum EmojiAnimationFormat {
 }
 
 enum EmojiAssetSource {
+  bundled,
   alsamos,
   licensed,
   noto,

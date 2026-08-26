@@ -386,7 +386,7 @@ class _EmojiPickerSheetState extends State<EmojiPickerSheet>
                               ? AnimatedEmoji(
                                   emoji: emoji,
                                   size: 40,
-                                  animate: false,
+                                  animate: true,
                                   replayOnTap: false,
                                 )
                               : Text(

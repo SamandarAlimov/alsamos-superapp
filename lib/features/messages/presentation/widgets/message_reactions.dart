@@ -69,7 +69,7 @@ class MessageReactions extends StatelessWidget {
                       AnimatedEmoji(
                         emoji: r.emoji,
                         size: 18,
-                        animate: false,
+                        animate: true,
                         replayOnTap: false,
                       ),
                       const SizedBox(width: 3),

@@ -80,7 +80,7 @@ class MessageReactionChips extends StatelessWidget {
                     AnimatedEmoji(
                       emoji: r.emoji,
                       size: 18,
-                      animate: false,
+                      animate: true,
                       replayOnTap: false,
                     ),
                     const SizedBox(width: 3),
@@ -270,7 +270,7 @@ class _ReactionBar extends StatelessWidget {
                     child: AnimatedEmoji(
                       emoji: e,
                       size: 34,
-                      animate: false,
+                      animate: true,
                       replayOnTap: false,
                     ),
                   ),

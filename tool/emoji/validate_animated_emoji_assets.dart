@@ -2,24 +2,115 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:alsamos_flutter/shared/communication/emoji/animated_emoji_catalog.dart';
+import 'package:alsamos_flutter/shared/communication/emoji/bundled_animated_emoji_pack.dart';
 
 const _catalogFiles = [
   'assets/animated_emoji/alsamos/metadata/catalog.json',
   'assets/animated_emoji/licensed/metadata/catalog.json',
 ];
 
+const _bundledManifestFile = 'assets/animated_emoji/manifest.json';
 const _assetRoot = 'assets/animated_emoji';
-const _supportedFormats = {'lottie', 'tgs', 'json'};
-const _allowedExtensions = {'.json', '.md'};
+const _supportedFormats = {'lottie', 'tgs', 'json', 'lottie_json'};
+const _allowedExtensions = {'.json', '.tgs', '.webm', '.webp', '.md'};
 
 void main() {
   var hasError = false;
   var catalogEntryCount = 0;
   var duplicateMappingCount = 0;
   var brokenAssetCount = 0;
+  var bundledManifestMappings = 0;
   final seenEmojis = <String>{};
   final seenKeys = <String>{};
   final catalogAssetPaths = <String>{};
+  final bundledManifestAssetPaths = <String>{};
+
+  final bundledManifest = File(_bundledManifestFile);
+  if (!bundledManifest.existsSync()) {
+    stderr.writeln('Missing bundled manifest: $_bundledManifestFile');
+    hasError = true;
+  } else {
+    try {
+      final data = jsonDecode(bundledManifest.readAsStringSync());
+      if (data is! Map<String, dynamic>) {
+        stderr.writeln('Bundled manifest must be a JSON object.');
+        hasError = true;
+      } else {
+        final entries = data['entries'];
+        if (entries is! List) {
+          stderr.writeln('Bundled manifest entries must be a list.');
+          hasError = true;
+        } else {
+          final bundledKeys = <String>{};
+          final bundledEmojis = <String>{};
+          for (final rawEntry in entries) {
+            if (rawEntry is! Map<String, dynamic>) {
+              stderr.writeln('Bundled manifest entry must be an object.');
+              hasError = true;
+              continue;
+            }
+            final emoji = rawEntry['emoji'];
+            final id = rawEntry['id'];
+            final asset = rawEntry['asset'];
+            final format = rawEntry['format'];
+            final checksum = rawEntry['checksumSha256'];
+            if (emoji is! String || emoji.isEmpty) {
+              stderr.writeln(
+                  'Bundled manifest entry has invalid emoji: $rawEntry');
+              hasError = true;
+            } else if (!bundledEmojis.add(emoji)) {
+              stderr.writeln('Duplicate bundled emoji: $emoji');
+              duplicateMappingCount++;
+              hasError = true;
+            }
+            if (id is! String || id.isEmpty) {
+              stderr
+                  .writeln('Bundled manifest entry has invalid id: $rawEntry');
+              hasError = true;
+            } else if (!bundledKeys.add(id)) {
+              stderr.writeln('Duplicate bundled id: $id');
+              duplicateMappingCount++;
+              hasError = true;
+            } else if (!bundledAnimatedEmojiAssetKeys.contains(id)) {
+              stderr.writeln(
+                  'Bundled manifest id missing from Dart catalog: $id');
+              hasError = true;
+            }
+            if (asset is! String || asset.isEmpty) {
+              stderr.writeln(
+                  'Bundled manifest entry has invalid asset: $rawEntry');
+              hasError = true;
+            } else if (!_isSafeAssetPath(asset) || !File(asset).existsSync()) {
+              stderr.writeln('Invalid bundled asset path for $id: $asset');
+              hasError = true;
+            } else {
+              bundledManifestAssetPaths.add(_normalizePath(asset));
+            }
+            if (format is! String || !_supportedFormats.contains(format)) {
+              stderr.writeln('Unsupported bundled format for $id: $format');
+              hasError = true;
+            }
+            if (checksum is! String ||
+                !RegExp(r'^[0-9a-f]{64}$').hasMatch(checksum)) {
+              stderr.writeln('Invalid bundled checksum for $id: $checksum');
+              hasError = true;
+            }
+          }
+          bundledManifestMappings = entries.length;
+          if (bundledKeys.length != bundledAnimatedEmojiAssetKeys.length) {
+            stderr.writeln(
+              'Bundled manifest/Dart catalog count mismatch: '
+              '${bundledKeys.length} vs ${bundledAnimatedEmojiAssetKeys.length}',
+            );
+            hasError = true;
+          }
+        }
+      }
+    } on Object catch (error) {
+      stderr.writeln('Bundled manifest is not valid JSON: $error');
+      hasError = true;
+    }
+  }
 
   for (final catalogPath in _catalogFiles) {
     final file = File(catalogPath);
@@ -136,7 +227,9 @@ void main() {
       continue;
     }
 
-    if (extension == '.json' && !path.contains('/metadata/')) {
+    if (extension == '.json' &&
+        !path.contains('/metadata/') &&
+        path != _bundledManifestFile) {
       animationJsonAssets.add(path);
     }
   }
@@ -159,6 +252,7 @@ void main() {
       .map((key) => 'assets/animated_emoji/noto/$key.json')
       .toSet();
   final reachableAssetPaths = <String>{
+    ...bundledManifestAssetPaths,
     ...generatedNotoAssetPaths,
     ...catalogAssetPaths,
   };
@@ -179,6 +273,7 @@ void main() {
 
   stdout.writeln('Animated emoji asset catalogs are valid.');
   stdout.writeln('Total animation assets: ${animationJsonAssets.length}');
+  stdout.writeln('Bundled manifest mappings: $bundledManifestMappings');
   stdout.writeln('Generated Noto mappings: ${animatedEmojiAssetKeys.length}');
   stdout.writeln('Catalog mappings: $catalogEntryCount');
   stdout.writeln('Reachable assets: ${reachableAssetPaths.length}');
@@ -188,6 +283,14 @@ void main() {
 }
 
 String _normalizePath(String path) => path.replaceAll('\\', '/');
+
+bool _isSafeAssetPath(String path) {
+  final normalized = _normalizePath(path);
+  return normalized.startsWith('assets/animated_emoji/') &&
+      !normalized.contains('..') &&
+      !normalized.startsWith('/') &&
+      !RegExp(r'^[A-Za-z]:').hasMatch(normalized);
+}
 
 String _extensionOf(String path) {
   final dotIndex = path.lastIndexOf('.');

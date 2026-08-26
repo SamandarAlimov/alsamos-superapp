@@ -1,5 +1,6 @@
 import 'package:alsamos_flutter/shared/communication/emoji/emoji_asset.dart';
 import 'package:alsamos_flutter/shared/communication/emoji/emoji_asset_provider.dart';
+import 'package:alsamos_flutter/shared/communication/emoji/bundled_animated_emoji_pack.dart';
 import 'package:alsamos_flutter/shared/communication/emoji/emoji_pack_catalog.dart';
 import 'package:alsamos_flutter/shared/communication/emoji/emoji_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,21 @@ void main() {
   });
 
   group('EmojiAssetProvider', () {
+    test('default engine resolves bundled repository pack first', () {
+      final asset = AlsamosAnimatedEmojiEngine.resolve('\u{1F602}');
+
+      expect(asset, isNotNull);
+      expect(asset!.source, EmojiAssetSource.bundled);
+      expect(asset.assetPath, 'assets/animated_emoji/noto/1f602.json');
+    });
+
+    test('generated bundled catalog contains committed asset keys', () {
+      expect(bundledAnimatedEmojiAssetPrefix, 'assets/animated_emoji/noto');
+      expect(bundledAnimatedEmojiAssetKeys, contains('1f602'));
+      expect(bundledAnimatedEmojiAssetKeys, contains('2764_fe0f'));
+      expect(bundledAnimatedEmojiAssetKeys, contains('1f44d'));
+    });
+
     test('uses catalog provider before prefix fallback', () {
       const catalog = CatalogEmojiAssetProvider([
         EmojiAssetCatalogEntry(

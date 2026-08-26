@@ -1,4 +1,5 @@
 import 'animated_emoji_catalog.dart';
+import 'bundled_animated_emoji_pack.dart';
 import 'emoji_asset.dart';
 import 'emoji_pack_catalog.dart';
 import 'emoji_registry.dart';
@@ -80,6 +81,13 @@ class AlsamosAnimatedEmojiEngine {
   AlsamosAnimatedEmojiEngine._();
 
   static const EmojiAssetProvider _provider = CompositeEmojiAssetProvider([
+    PrefixEmojiAssetProvider(
+      source: EmojiAssetSource.bundled,
+      assetPrefix: bundledAnimatedEmojiAssetPrefix,
+      availableKeys: bundledAnimatedEmojiAssetKeys,
+      fps: 60,
+      loop: false,
+    ),
     CatalogEmojiAssetProvider(alsamosEmojiAssetCatalog),
     CatalogEmojiAssetProvider(licensedEmojiAssetCatalog),
     PrefixEmojiAssetProvider(
