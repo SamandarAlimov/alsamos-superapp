@@ -1448,8 +1448,8 @@ class CallNotifier extends StateNotifier<CallState> {
       }..remove(userId);
       for (final participantId in participantsById.keys.toList()) {
         if (!activePeerIds.contains(participantId)) {
-          _closePeer(participantId);
-          participantsById.remove(participantId);
+          debugPrint('[WebRTC][$participantId] participant sync missing peer; '
+              'keeping media transport alive');
         }
       }
       if (activePeerIds.isEmpty) {
