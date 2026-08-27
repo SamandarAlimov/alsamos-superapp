@@ -222,6 +222,7 @@ class CallNotifier extends StateNotifier<CallState> {
   int _connectionWatchdogTicks = 0;
   int _signalSequence = 0;
   DateTime? _lastParticipantStateWriteAt;
+  DateTime? _lastEdgeHeartbeatAt;
   bool _leaving = false;
   bool _startedAtStamped = false;
   bool _heartbeatRpcUnavailable = false;
@@ -237,6 +238,16 @@ class CallNotifier extends StateNotifier<CallState> {
 
   late final String _callSessionId =
       '${DateTime.now().microsecondsSinceEpoch}-$userId';
+
+  bool get _edgeHealthy {
+    final socket = _edgeSocket;
+    final lastHeartbeat = _lastEdgeHeartbeatAt;
+    return socket != null &&
+        socket.isConnected &&
+        _edgeReconnectTimer == null &&
+        lastHeartbeat != null &&
+        DateTime.now().difference(lastHeartbeat) < const Duration(seconds: 20);
+  }
 
   Uri get _edgeSignalingUri {
     final supabaseUri = Uri.parse(ApiConstants.supabaseUrl);
@@ -388,6 +399,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgeReconnectAttempts = 0;
     _connectionWatchdogTicks = 0;
     _lastParticipantStateWriteAt = null;
+    _lastEdgeHeartbeatAt = null;
     for (final pc in _peers.values) {
       await pc.close();
     }
@@ -1185,6 +1197,62 @@ class CallNotifier extends StateNotifier<CallState> {
               ).catchError((e, stack) {
                 debugPrint('[WebRTC] Error handling answer: $e\n$stack');
               }));
+            })
+        .onBroadcast(
+            event: 'ice',
+            callback: (payload) {
+              if (!isCurrentChannel()) return;
+              unawaited(_handleIce(
+                _signalPayload(payload),
+                source: 'realtime',
+              ).catchError((e, stack) {
+                debugPrint('[WebRTC] Error handling ICE: $e\n$stack');
+              }));
+            })
+        .onBroadcast(
+            event: 'ice-candidate',
+            callback: (payload) {
+              if (!isCurrentChannel()) return;
+              unawaited(_handleIce(
+                _signalPayload(payload),
+                source: 'realtime',
+              ).catchError((e, stack) {
+                debugPrint('[WebRTC] Error handling ICE candidate: $e\n$stack');
+              }));
+            })
+        .onBroadcast(
+            event: 'media',
+            callback: (payload) {
+              if (!isCurrentChannel()) return;
+              _handleMedia(_signalPayload(payload));
+            })
+        .onBroadcast(
+            event: 'media-state',
+            callback: (payload) {
+              if (!isCurrentChannel()) return;
+              _handleMedia(_signalPayload(payload));
+            })
+        .onBroadcast(
+            event: 'resync',
+            callback: (payload) {
+              if (!isCurrentChannel()) return;
+              final from = _signalPayload(payload)['from'] as String?;
+              if (from == null || from == userId) return;
+              unawaited(_syncDbParticipants(localStream));
+            })
+        .onBroadcast(
+            event: 'leave',
+            callback: (payload) {
+              if (!isCurrentChannel()) return;
+              final signal = _signalPayload(payload);
+              final from = signal['from'] as String?;
+              if (from == null || from == userId) return;
+              _presencePeerIds.remove(from);
+              _edgePeerIds.remove(from);
+              _closePeer(from);
+              if (signal['ended'] == true) {
+                unawaited(_handleRemoteCallEnded('remote_left'));
+              }
             })
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
@@ -2032,6 +2100,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgeSocket = socket;
     try {
       await socket.connect();
+      _lastEdgeHeartbeatAt = DateTime.now();
       socket.send({
         'type': 'join',
         'roomId': roomId,
@@ -2048,6 +2117,7 @@ class CallNotifier extends StateNotifier<CallState> {
           '[WebRTC] Edge signaling unavailable, using realtime fallback: $e');
       await socket.close();
       if (identical(_edgeSocket, socket)) _edgeSocket = null;
+      _lastEdgeHeartbeatAt = null;
       _scheduleEdgeReconnect(localStream);
     }
   }
@@ -2156,6 +2226,7 @@ class CallNotifier extends StateNotifier<CallState> {
         }
         break;
       case 'ping':
+        _lastEdgeHeartbeatAt = DateTime.now();
         _edgeSocket?.send({
           'type': 'pong',
           'roomId': roomId,
@@ -2165,6 +2236,7 @@ class CallNotifier extends StateNotifier<CallState> {
         break;
       case 'heartbeat-ack':
       case 'ready':
+        _lastEdgeHeartbeatAt = DateTime.now();
         break;
       default:
         debugPrint('[WebRTC] Edge signaling ignored message: $message');
@@ -2176,6 +2248,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgeHeartbeatTimer = Timer.periodic(const Duration(seconds: 12), (_) {
       final socket = _edgeSocket;
       if (_leaving || socket == null || !socket.isConnected) return;
+      _lastEdgeHeartbeatAt ??= DateTime.now();
       socket.send({
         'type': 'heartbeat',
         'roomId': roomId,
@@ -2866,7 +2939,11 @@ class CallNotifier extends StateNotifier<CallState> {
     final channel = _channel;
     final signal = Map<String, dynamic>.from(payload);
     _sendEdgeSignal(event, signal);
-    if (channel == null || (event != 'offer' && event != 'answer')) return;
+    final shouldBroadcastRealtime = !_edgeHealthy ||
+        event == 'offer' ||
+        event == 'answer' ||
+        event == 'leave';
+    if (channel == null || !shouldBroadcastRealtime) return;
     unawaited(Future<void>(() async {
       try {
         await channel.sendBroadcastMessage(event: event, payload: signal);
