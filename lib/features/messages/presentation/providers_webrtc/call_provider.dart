@@ -461,7 +461,7 @@ class CallNotifier extends StateNotifier<CallState> {
   Future<void> retryCamera() async {
     MediaStream? stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await _getUserMediaWithCameraBusyRetry({
         'video': _primaryVideoConstraints(true),
         'audio': false,
       });
@@ -640,7 +640,7 @@ class CallNotifier extends StateNotifier<CallState> {
 
     for (final constraints in attempts) {
       try {
-        final stream = await navigator.mediaDevices.getUserMedia(constraints);
+        final stream = await _getUserMediaWithCameraBusyRetry(constraints);
         final hasVideo = stream.getVideoTracks().isNotEmpty;
         for (final track in stream.getTracks()) {
           track.enabled = true;
@@ -669,6 +669,22 @@ class CallNotifier extends StateNotifier<CallState> {
       }
     }
     return null;
+  }
+
+  Future<MediaStream> _getUserMediaWithCameraBusyRetry(
+    Map<String, dynamic> constraints,
+  ) async {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      if (constraints['video'] == false ||
+          _callFailureForMediaError(e) != CallFailureType.cameraBusy) {
+        rethrow;
+      }
+      debugPrint('[WebRTC] camera busy; retrying getUserMedia once');
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      return navigator.mediaDevices.getUserMedia(constraints);
+    }
   }
 
   Object _primaryVideoConstraints(bool video) {
@@ -2393,7 +2409,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _screenStream = null;
     MediaStream? stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await _getUserMediaWithCameraBusyRetry({
         'video': {
           'width': 1280,
           'height': 720,
