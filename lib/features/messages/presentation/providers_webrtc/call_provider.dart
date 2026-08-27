@@ -221,6 +221,7 @@ class CallNotifier extends StateNotifier<CallState> {
   int _dbSignalPollFailures = 0;
   int _connectionWatchdogTicks = 0;
   int _signalSequence = 0;
+  String? _lastDbSignalCreatedAt;
   bool _dbSignalPollInFlight = false;
   bool _leaving = false;
   bool _startedAtStamped = false;
@@ -403,6 +404,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgePeerIds.clear();
     _seenSignalIds.clear();
     _seenIceKeys.clear();
+    _lastDbSignalCreatedAt = null;
     _mediaAcquisition = null;
     await _edgeSocket?.close();
     _edgeSocket = null;
@@ -2701,11 +2703,16 @@ class CallNotifier extends StateNotifier<CallState> {
     if (_leaving || _dbSignalPollInFlight) return;
     _dbSignalPollInFlight = true;
     try {
-      final rows = await _sb
+      final lastSeenCreatedAt = _lastDbSignalCreatedAt;
+      var query = _sb
           .from('call_signals')
           .select('id,sender_id,target_user_id,type,payload,created_at')
-          .eq('call_id', roomId)
-          .order('created_at', ascending: false)
+          .eq('call_id', roomId);
+      if (lastSeenCreatedAt != null) {
+        query = query.gt('created_at', lastSeenCreatedAt);
+      }
+      final rows = await query
+          .order('created_at', ascending: lastSeenCreatedAt != null)
           .limit(50)
           .timeout(const Duration(seconds: 4));
       final signals = rows.whereType<Map<String, dynamic>>().toList()
@@ -2954,6 +2961,7 @@ class CallNotifier extends StateNotifier<CallState> {
     Map<String, dynamic> row,
     MediaStream localStream,
   ) async {
+    _advanceDbSignalCursor(row);
     final signalId = row['id']?.toString();
     final type = row['type']?.toString();
     if (signalId != null &&
@@ -3010,6 +3018,15 @@ class CallNotifier extends StateNotifier<CallState> {
         break;
       default:
         debugPrint('[WebRTC] ignored DB signal: $row');
+    }
+  }
+
+  void _advanceDbSignalCursor(Map<String, dynamic> row) {
+    final createdAt = row['created_at']?.toString();
+    if (createdAt == null) return;
+    if (_lastDbSignalCreatedAt == null ||
+        createdAt.compareTo(_lastDbSignalCreatedAt!) > 0) {
+      _lastDbSignalCreatedAt = createdAt;
     }
   }
 
