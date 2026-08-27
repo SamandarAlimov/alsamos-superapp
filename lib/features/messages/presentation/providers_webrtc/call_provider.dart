@@ -248,7 +248,7 @@ class CallNotifier extends StateNotifier<CallState> {
         socket.isConnected &&
         _edgeReconnectTimer == null &&
         lastHeartbeat != null &&
-        DateTime.now().difference(lastHeartbeat) < const Duration(seconds: 20);
+        DateTime.now().difference(lastHeartbeat) < const Duration(seconds: 40);
   }
 
   Uri get _edgeSignalingUri {
@@ -643,7 +643,7 @@ class CallNotifier extends StateNotifier<CallState> {
       },
       if (video)
         {
-          'video': _fallbackVideoConstraints(),
+          'video': _hdVideoConstraints(),
           'audio': _callAudioConstraints(deviceId: state.selectedAudioInputId),
         },
       {
@@ -709,14 +709,35 @@ class CallNotifier extends StateNotifier<CallState> {
     if (kIsWeb) {
       return {
         if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
+        'width': {'ideal': 3840},
+        'height': {'ideal': 2160},
+        'frameRate': {'ideal': 30},
+      };
+    }
+    return {
+      'facingMode': 'user',
+      'width': 3840,
+      'height': 2160,
+      'frameRate': 30,
+      if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
+    };
+  }
+
+  Object _hdVideoConstraints() {
+    final selectedDeviceId = state.selectedVideoInputId;
+    if (kIsWeb) {
+      return {
+        if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
         'width': {'ideal': 1280},
         'height': {'ideal': 720},
+        'frameRate': {'ideal': 30},
       };
     }
     return {
       'facingMode': 'user',
       'width': 1280,
       'height': 720,
+      'frameRate': 30,
       if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
     };
   }
@@ -746,11 +767,14 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   void _configureInitialVideoBitrate(MediaStream stream) {
-    final maxLevel =
-        _maxVideoBitrateLevelForHeight(_captureVideoHeight(stream));
+    final captureHeight = _captureVideoHeight(stream);
+    final maxLevel = _maxVideoBitrateLevelForHeight(captureHeight);
     _videoBitrateLevel = maxLevel;
     _appliedVideoBitrateLevel = null;
     _lastVideoBitrateStepAt = null;
+    debugPrint('[WebRTC] negotiated video capture height=$captureHeight '
+        'initialBitrateLevel=$maxLevel '
+        'target=${_videoBitrateLadder[maxLevel]['height']}p');
   }
 
   int _maxVideoBitrateLevelForHeight(int captureHeight) {
@@ -768,11 +792,6 @@ class CallNotifier extends StateNotifier<CallState> {
     if (height is num) return height.round();
     if (height is String) return int.tryParse(height) ?? 0;
     return 0;
-  }
-
-  Object _fallbackVideoConstraints() {
-    if (kIsWeb) return true;
-    return {'facingMode': 'user'};
   }
 
   String _cameraFallbackMessage(Object? error) {
@@ -1264,7 +1283,14 @@ class CallNotifier extends StateNotifier<CallState> {
               if (!isCurrentChannel()) return;
               final from = _signalPayload(payload)['from'] as String?;
               if (from == null || from == userId) return;
-              unawaited(_syncDbParticipants(localStream));
+              _presencePeerIds.add(from);
+              _ensureParticipant(from);
+              unawaited(Future<void>(() async {
+                await _ensurePeer(from, localStream);
+                await _syncDbParticipants(localStream);
+              }).catchError((e, stack) {
+                debugPrint('[WebRTC] Error handling resync: $e\n$stack');
+              }));
             })
         .onBroadcast(
             event: 'leave',
@@ -1708,6 +1734,11 @@ class CallNotifier extends StateNotifier<CallState> {
         final name = _enumName(s);
         debugPrint('[WebRTC][$peerId] iceConnectionState=$name');
         state = state.copyWith(iceConnectionState: name);
+        if (s == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+            s == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+          _lastIceRestartAt.remove(peerId);
+          _iceRestartAttempts.remove(peerId);
+        }
         if (s == RTCIceConnectionState.RTCIceConnectionStateFailed ||
             s == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
           _startRecoveryWatchdog(peerId);
@@ -1719,6 +1750,8 @@ class CallNotifier extends StateNotifier<CallState> {
         state = state.copyWith(peerConnectionState: name);
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
           _offerRetryAttempts.remove(peerId);
+          _lastIceRestartAt.remove(peerId);
+          _iceRestartAttempts.remove(peerId);
           state = state.copyWith(isReconnecting: false);
         }
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
@@ -2686,6 +2719,7 @@ class CallNotifier extends StateNotifier<CallState> {
         if (parameters.encodings!.isEmpty) {
           parameters.encodings!.add(RTCRtpEncoding());
         }
+        parameters.degradationPreference = RTCDegradationPreference.BALANCED;
         parameters.encodings!.first
           ..maxBitrate = maxBitrate
           ..maxFramerate = maxFramerate
@@ -2724,6 +2758,7 @@ class CallNotifier extends StateNotifier<CallState> {
   void _startConnectionWatchdog() {
     _connectionWatchdogTimer?.cancel();
     _connectionWatchdogTicks = 0;
+    _offerRetryAttempts.clear();
     _connectionWatchdogTimer =
         Timer.periodic(const Duration(seconds: 3), (timer) {
       if (_leaving || state.localStream == null) {
@@ -2733,7 +2768,7 @@ class CallNotifier extends StateNotifier<CallState> {
         }
         return;
       }
-      if (_hasRealRtcConnection()) {
+      if (_allKnownPeersConnected()) {
         timer.cancel();
         if (identical(_connectionWatchdogTimer, timer)) {
           _connectionWatchdogTimer = null;
@@ -2810,6 +2845,19 @@ class CallNotifier extends StateNotifier<CallState> {
         );
       }
     });
+  }
+
+  bool _allKnownPeersConnected() {
+    if (_peers.isEmpty) return false;
+    for (final entry in _peers.entries) {
+      final peerId = entry.key;
+      final hasRemoteStream =
+          state.participants.any((p) => p.id == peerId && p.stream != null);
+      if (!hasRemoteStream || !_peerIceConnected(peerId)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _retryOfferIfDue(String peerId, int elapsedSeconds) {
