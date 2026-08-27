@@ -510,12 +510,7 @@ class CallNotifier extends StateNotifier<CallState> {
   Future<void> switchMicrophone(String deviceId) async {
     final stream = await navigator.mediaDevices.getUserMedia({
       'video': false,
-      'audio': {
-        'deviceId': deviceId,
-        'echoCancellation': true,
-        'noiseSuppression': true,
-        'autoGainControl': true,
-      },
+      'audio': _callAudioConstraints(deviceId: deviceId),
     });
     final track = stream.getAudioTracks().firstOrNull;
     if (track == null) {
@@ -616,16 +611,17 @@ class CallNotifier extends StateNotifier<CallState> {
     final attempts = <Map<String, dynamic>>[
       {
         'video': _primaryVideoConstraints(video),
-        'audio': {
-          if (state.selectedAudioInputId != null)
-            'deviceId': state.selectedAudioInputId,
-          'echoCancellation': true,
-          'noiseSuppression': true,
-          'autoGainControl': true,
-        },
+        'audio': _callAudioConstraints(deviceId: state.selectedAudioInputId),
       },
-      if (video) {'video': _fallbackVideoConstraints(), 'audio': true},
-      {'video': false, 'audio': true},
+      if (video)
+        {
+          'video': _fallbackVideoConstraints(),
+          'audio': _callAudioConstraints(deviceId: state.selectedAudioInputId),
+        },
+      {
+        'video': false,
+        'audio': _callAudioConstraints(deviceId: state.selectedAudioInputId),
+      },
     ];
 
     for (final constraints in attempts) {
@@ -635,7 +631,8 @@ class CallNotifier extends StateNotifier<CallState> {
         for (final track in stream.getTracks()) {
           track.enabled = true;
           debugPrint('[WebRTC] local ${track.kind} track ready '
-              'enabled=${track.enabled} muted=${track.muted}');
+              'enabled=${track.enabled} muted=${track.muted} '
+              'settings=${jsonEncode(track.getSettings())}');
         }
         state = state.copyWith(
           localStream: stream,
@@ -693,6 +690,30 @@ class CallNotifier extends StateNotifier<CallState> {
       'height': 720,
       if (selectedDeviceId != null) 'deviceId': selectedDeviceId,
     };
+  }
+
+  Map<String, dynamic> _callAudioConstraints({String? deviceId}) {
+    final constraints = <String, dynamic>{
+      if (deviceId != null) 'deviceId': deviceId,
+      'echoCancellation': true,
+      'noiseSuppression': true,
+      'autoGainControl': true,
+      'channelCount': 1,
+      'sampleRate': 48000,
+      'sampleSize': 16,
+    };
+    if (kIsWeb) {
+      return {
+        if (deviceId != null) 'deviceId': {'exact': deviceId},
+        'echoCancellation': {'ideal': true},
+        'noiseSuppression': {'ideal': true},
+        'autoGainControl': {'ideal': true},
+        'channelCount': {'ideal': 1},
+        'sampleRate': {'ideal': 48000},
+        'sampleSize': {'ideal': 16},
+      };
+    }
+    return constraints;
   }
 
   Object _fallbackVideoConstraints() {
@@ -1696,7 +1717,10 @@ class CallNotifier extends StateNotifier<CallState> {
           .createOffer(iceRestart ? {'iceRestart': true} : {})
           .timeout(const Duration(seconds: 8));
       if (!_canCreateOffer(pc)) return;
-      await pc.setLocalDescription(offer).timeout(const Duration(seconds: 8));
+      final resilientOffer = _withAudioResilience(offer);
+      await pc
+          .setLocalDescription(resilientOffer)
+          .timeout(const Duration(seconds: 8));
       final localDescription =
           await pc.getLocalDescription().timeout(const Duration(seconds: 4));
       final signalId = _nextSignalId('offer', peerId);
@@ -1757,7 +1781,10 @@ class CallNotifier extends StateNotifier<CallState> {
       debugPrint('[WebRTC][$from] creating answer');
       final answer =
           await pc.createAnswer().timeout(const Duration(seconds: 8));
-      await pc.setLocalDescription(answer).timeout(const Duration(seconds: 8));
+      final resilientAnswer = _withAudioResilience(answer);
+      await pc
+          .setLocalDescription(resilientAnswer)
+          .timeout(const Duration(seconds: 8));
       final localDescription =
           await pc.getLocalDescription().timeout(const Duration(seconds: 4));
       final signalId = _nextSignalId('answer', from);
@@ -1781,6 +1808,79 @@ class CallNotifier extends StateNotifier<CallState> {
     final signalingState = pc.signalingState;
     return signalingState == null ||
         signalingState == RTCSignalingState.RTCSignalingStateStable;
+  }
+
+  RTCSessionDescription _withAudioResilience(
+    RTCSessionDescription description,
+  ) {
+    final sdp = description.sdp;
+    if (sdp == null || sdp.isEmpty) return description;
+    return RTCSessionDescription(_forceOpusParameters(sdp), description.type);
+  }
+
+  String _forceOpusParameters(String sdp) {
+    final newline = sdp.contains('\r\n') ? '\r\n' : '\n';
+    final lines = sdp.replaceAll('\r\n', '\n').split('\n');
+    final opusPayloads = <String>{};
+    final fmtpPayloads = <String>{};
+    final rtpmapPattern = RegExp(
+      r'^a=rtpmap:(\d+)\s+opus/48000',
+      caseSensitive: false,
+    );
+    final fmtpPattern = RegExp(r'^a=fmtp:(\d+)\s*(.*)$');
+
+    for (final line in lines) {
+      final rtpmapMatch = rtpmapPattern.firstMatch(line);
+      if (rtpmapMatch != null) {
+        opusPayloads.add(rtpmapMatch.group(1)!);
+        continue;
+      }
+      final fmtpMatch = fmtpPattern.firstMatch(line);
+      if (fmtpMatch != null) {
+        fmtpPayloads.add(fmtpMatch.group(1)!);
+      }
+    }
+    if (opusPayloads.isEmpty) return sdp;
+
+    final output = <String>[];
+    for (final line in lines) {
+      final fmtpMatch = fmtpPattern.firstMatch(line);
+      if (fmtpMatch != null && opusPayloads.contains(fmtpMatch.group(1))) {
+        output.add(
+          'a=fmtp:${fmtpMatch.group(1)} '
+          '${_mergeOpusFmtp(fmtpMatch.group(2) ?? '')}',
+        );
+      } else {
+        output.add(line);
+      }
+
+      final rtpmapMatch = rtpmapPattern.firstMatch(line);
+      final payloadType = rtpmapMatch?.group(1);
+      if (payloadType != null && !fmtpPayloads.contains(payloadType)) {
+        output.add('a=fmtp:$payloadType ${_mergeOpusFmtp('')}');
+      }
+    }
+    return output.join(newline);
+  }
+
+  String _mergeOpusFmtp(String existing) {
+    final params = <String, String>{};
+    for (final chunk in existing.split(';')) {
+      final trimmed = chunk.trim();
+      if (trimmed.isEmpty) continue;
+      final parts = trimmed.split('=');
+      if (parts.length < 2) continue;
+      params[parts.first.trim().toLowerCase()] =
+          parts.sublist(1).join('=').trim();
+    }
+    params
+      ..['useinbandfec'] = '1'
+      ..['usedtx'] = '1'
+      ..['stereo'] = '0'
+      ..['maxaveragebitrate'] = '32000';
+    return params.entries
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join(';');
   }
 
   bool _canAcceptOffer(RTCPeerConnection pc) {
