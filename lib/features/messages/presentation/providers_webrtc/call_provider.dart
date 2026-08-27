@@ -202,6 +202,10 @@ class CallNotifier extends StateNotifier<CallState> {
   final Set<String> _watchdogIceRestarted = {};
   final LinkedHashSet<String> _seenSignalIds = LinkedHashSet<String>();
   final LinkedHashSet<String> _seenIceKeys = LinkedHashSet<String>();
+  int _videoBitrateLevel = _maxVideoBitrateLevel;
+  int? _appliedVideoBitrateLevel;
+  DateTime? _lastVideoBitrateStepAt;
+  bool _videoBitrateUpdateInFlight = false;
   Map<String, dynamic>? _iceConfig;
   Timer? _elapsedTimer;
   Timer? _statsTimer;
@@ -222,6 +226,14 @@ class CallNotifier extends StateNotifier<CallState> {
   bool _startedAtStamped = false;
   bool _heartbeatRpcUnavailable = false;
   Future<MediaStream?>? _mediaAcquisition;
+
+  static const int _maxVideoBitrateLevel = 3;
+  static const List<Map<String, int>> _videoBitrateLadder = [
+    {'label': 360, 'kbps': 400, 'fps': 24},
+    {'label': 720, 'kbps': 1200, 'fps': 30},
+    {'label': 1080, 'kbps': 2500, 'fps': 30},
+    {'label': 2160, 'kbps': 10000, 'fps': 30},
+  ];
 
   late final String _callSessionId =
       '${DateTime.now().microsecondsSinceEpoch}-$userId';
@@ -393,6 +405,10 @@ class CallNotifier extends StateNotifier<CallState> {
     _watchdogIceRestarted.clear();
     _seenSignalIds.clear();
     _seenIceKeys.clear();
+    _videoBitrateLevel = _maxVideoBitrateLevel;
+    _appliedVideoBitrateLevel = null;
+    _lastVideoBitrateStepAt = null;
+    _videoBitrateUpdateInFlight = false;
     _mediaAcquisition = null;
     await _edgeSocket?.close();
     _edgeSocket = null;
@@ -2492,6 +2508,7 @@ class CallNotifier extends StateNotifier<CallState> {
           ),
         );
         if (mounted) state = state.copyWith(quality: snapshot);
+        _updateAdaptiveVideoBitrate(snapshot);
         _qualityWriteCount++;
         if (_qualityWriteCount % 15 == 0) {
           unawaited(_writeQuality(snapshot));
@@ -2500,6 +2517,69 @@ class CallNotifier extends StateNotifier<CallState> {
         debugPrint('[WebRTC] stats failed: $e');
       }
     });
+  }
+
+  void _updateAdaptiveVideoBitrate(CallQualitySnapshot snapshot) {
+    if (state.localStream?.getVideoTracks().isEmpty ?? true) return;
+    final now = DateTime.now();
+    final badLink = snapshot.packetLoss > 5 || snapshot.rttMs > 250;
+    final cleanLink = snapshot.packetLoss < 1 &&
+        snapshot.rttMs < 150 &&
+        snapshot.jitterMs < 30;
+    var targetLevel = _videoBitrateLevel;
+
+    if (badLink && _videoBitrateLevel > 0) {
+      final lastStep = _lastVideoBitrateStepAt;
+      if (lastStep == null ||
+          now.difference(lastStep) >= const Duration(seconds: 3)) {
+        targetLevel--;
+      }
+    } else if (cleanLink && _videoBitrateLevel < _maxVideoBitrateLevel) {
+      final lastStep = _lastVideoBitrateStepAt;
+      if (lastStep != null &&
+          now.difference(lastStep) >= const Duration(seconds: 15)) {
+        targetLevel++;
+      }
+    }
+
+    if (targetLevel != _videoBitrateLevel) {
+      _videoBitrateLevel = targetLevel;
+      _lastVideoBitrateStepAt = now;
+    }
+    if (_appliedVideoBitrateLevel == _videoBitrateLevel ||
+        _videoBitrateUpdateInFlight) {
+      return;
+    }
+    _videoBitrateUpdateInFlight = true;
+    unawaited(_applyVideoBitrateLevel(_videoBitrateLevel).catchError((e) {
+      debugPrint('[WebRTC] adaptive video bitrate update failed: $e');
+    }).whenComplete(() {
+      _videoBitrateUpdateInFlight = false;
+    }));
+  }
+
+  Future<void> _applyVideoBitrateLevel(int level) async {
+    final config = _videoBitrateLadder[level];
+    final maxBitrate = config['kbps']! * 1000;
+    final maxFramerate = config['fps']!;
+    for (final entry in _peers.entries) {
+      final senders = await entry.value.getSenders();
+      for (final sender in senders) {
+        if (sender.track?.kind != 'video') continue;
+        final parameters = sender.parameters;
+        parameters.encodings ??= <RTCRtpEncoding>[RTCRtpEncoding()];
+        if (parameters.encodings!.isEmpty) {
+          parameters.encodings!.add(RTCRtpEncoding());
+        }
+        parameters.encodings!.first
+          ..maxBitrate = maxBitrate
+          ..maxFramerate = maxFramerate;
+        await sender.setParameters(parameters);
+      }
+    }
+    _appliedVideoBitrateLevel = level;
+    debugPrint('[WebRTC] adaptive video bitrate ${config['label']}p '
+        '${config['kbps']}kbps/${maxFramerate}fps');
   }
 
   void _startResyncLoop() {
@@ -2855,6 +2935,10 @@ class CallNotifier extends StateNotifier<CallState> {
     _lastParticipantStateWriteAt = null;
     _lastOfferAt.clear();
     _watchdogIceRestarted.clear();
+    _videoBitrateLevel = _maxVideoBitrateLevel;
+    _appliedVideoBitrateLevel = null;
+    _lastVideoBitrateStepAt = null;
+    _videoBitrateUpdateInFlight = false;
     _sendEdgeSignal('leave', {'from': userId});
     if (_channel != null) {
       _sb.removeChannel(_channel!);
