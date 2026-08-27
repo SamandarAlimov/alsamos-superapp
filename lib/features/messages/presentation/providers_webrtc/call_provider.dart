@@ -15,10 +15,6 @@ import 'call_signaling_socket.dart';
 
 const Object _unset = Object();
 
-void _tlog(String tag, String message) {
-  debugPrint('${DateTime.now().toIso8601String()} [$tag] $message');
-}
-
 class WebRTCParticipant {
   const WebRTCParticipant({
     required this.id,
@@ -219,16 +215,13 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _edgeHeartbeatTimer;
   Timer? _edgeReconnectTimer;
   Timer? _realtimeResubscribeTimer;
-  Timer? _dbSignalPollTimer;
   MediaStream? _screenStream;
   int _realtimeGeneration = 0;
   int _realtimeReconnectAttempts = 0;
   int _edgeReconnectAttempts = 0;
-  int _dbSignalPollFailures = 0;
   int _connectionWatchdogTicks = 0;
   int _signalSequence = 0;
-  String? _lastDbSignalCreatedAt;
-  bool _dbSignalPollInFlight = false;
+  DateTime? _lastParticipantStateWriteAt;
   bool _leaving = false;
   bool _startedAtStamped = false;
   bool _heartbeatRpcUnavailable = false;
@@ -324,7 +317,6 @@ class CallNotifier extends StateNotifier<CallState> {
         );
       }
       await _connectEdgeSignaling(stream);
-      _startDbSignalPolling(stream);
       _startStatsLoop();
       _startResyncLoop();
       _startConnectionWatchdog();
@@ -375,22 +367,19 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgeHeartbeatTimer?.cancel();
     _edgeReconnectTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
-    _dbSignalPollTimer?.cancel();
     _edgeHeartbeatTimer = null;
     _fastResyncTimer = null;
     _connectionWatchdogTimer = null;
     _realtimeResubscribeTimer = null;
     _edgeReconnectTimer = null;
-    _dbSignalPollTimer = null;
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
     _reconnectTimers.clear();
     _realtimeReconnectAttempts = 0;
     _edgeReconnectAttempts = 0;
-    _dbSignalPollFailures = 0;
-    _dbSignalPollInFlight = false;
     _connectionWatchdogTicks = 0;
+    _lastParticipantStateWriteAt = null;
     for (final pc in _peers.values) {
       await pc.close();
     }
@@ -412,7 +401,6 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgePeerIds.clear();
     _seenSignalIds.clear();
     _seenIceKeys.clear();
-    _lastDbSignalCreatedAt = null;
     _mediaAcquisition = null;
     await _edgeSocket?.close();
     _edgeSocket = null;
@@ -1175,82 +1163,6 @@ class CallNotifier extends StateNotifier<CallState> {
                 debugPrint('[WebRTC] Error handling answer: $e\n$stack');
               }));
             })
-        .onBroadcast(
-            event: 'ice',
-            callback: (payload) {
-              if (!isCurrentChannel()) return;
-              unawaited(_handleIce(
-                _signalPayload(payload),
-                source: 'realtime',
-              ).catchError(
-                (e, stack) {
-                  debugPrint('[WebRTC] Error handling ICE: $e\n$stack');
-                },
-              ));
-            })
-        .onBroadcast(
-            event: 'ice-candidate',
-            callback: (payload) {
-              if (!isCurrentChannel()) return;
-              unawaited(_handleIce(
-                _signalPayload(payload),
-                source: 'realtime',
-              ).catchError(
-                (e, stack) {
-                  debugPrint(
-                      '[WebRTC] Error handling ICE candidate: $e\n$stack');
-                },
-              ));
-            })
-        .onBroadcast(
-            event: 'media',
-            callback: (payload) {
-              if (!isCurrentChannel()) return;
-              try {
-                _handleMedia(_signalPayload(payload));
-              } catch (e, stack) {
-                debugPrint('[WebRTC] Error handling media: $e\n$stack');
-              }
-            })
-        .onBroadcast(
-            event: 'resync',
-            callback: (payload) {
-              if (!isCurrentChannel()) return;
-              try {
-                final signal = _signalPayload(payload);
-                final from = signal['from'] as String?;
-                if (from != null && from != userId) {
-                  _presencePeerIds.add(from);
-                  _ensureParticipant(from);
-                  unawaited(Future<void>(() async {
-                    await _ensurePeer(from, localStream);
-                  }).catchError((e, stack) {
-                    debugPrint(
-                        '[WebRTC] Error handling resync peer: $e\n$stack');
-                  }));
-                }
-              } catch (e, stack) {
-                debugPrint('[WebRTC] Error handling resync: $e\n$stack');
-              }
-            })
-        .onBroadcast(
-            event: 'leave',
-            callback: (payload) {
-              if (!isCurrentChannel()) return;
-              try {
-                final signal = _signalPayload(payload);
-                final from = signal['from'] as String?;
-                if (from != null && from != userId) {
-                  _presencePeerIds.remove(from);
-                  _closePeer(from);
-                  if (signal['ended'] == true) {
-                    unawaited(_handleRemoteCallEnded('remote_left'));
-                  }
-                }
-              } catch (e, stack) {
-                debugPrint('[WebRTC] Error handling leave: $e\n$stack');
-              }
-            })
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -1280,26 +1192,6 @@ class CallNotifier extends StateNotifier<CallState> {
             if (_isTerminalCallStatus(status)) {
               unawaited(_handleRemoteCallEnded(status));
             }
-          },
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: 'call_signals',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'call_id',
-            value: roomId,
-          ),
-          callback: (payload) {
-            if (!isCurrentChannel()) return;
-            unawaited(
-              _handleDbSignal(payload.newRecord, localStream).catchError(
-                (e, stack) {
-                  debugPrint('[WebRTC] DB signal handling failed: $e\n$stack');
-                },
-              ),
-            );
           },
         )
         .onPresenceSync((_) {
@@ -2686,7 +2578,13 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _runResyncTick() {
     if (_leaving) return;
-    unawaited(_writeParticipantState());
+    final now = DateTime.now();
+    final lastWrite = _lastParticipantStateWriteAt;
+    if (lastWrite == null ||
+        now.difference(lastWrite) >= const Duration(seconds: 10)) {
+      _lastParticipantStateWriteAt = now;
+      unawaited(_writeParticipantState());
+    }
     final localStream = state.localStream;
     if (localStream != null) {
       unawaited(_syncDbParticipants(localStream));
@@ -2717,90 +2615,6 @@ class CallNotifier extends StateNotifier<CallState> {
           debugPrint('[WebRTC] resync re-offer failed: $e\n$stack');
         }));
       }
-    }
-  }
-
-  void _startDbSignalPolling(MediaStream localStream) {
-    _dbSignalPollTimer?.cancel();
-    var fastTicks = 0;
-    _dbSignalPollFailures = 0;
-    _dbSignalPollInFlight = false;
-    _dbSignalPollTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (_leaving || state.localStream == null) {
-        timer.cancel();
-        if (identical(_dbSignalPollTimer, timer)) {
-          _dbSignalPollTimer = null;
-        }
-        return;
-      }
-      fastTicks++;
-      if (_dbSignalPollInFlight) return;
-      if (_dbSignalPollFailures >= 3 && fastTicks.isOdd) return;
-      unawaited(_pollDbSignals(localStream));
-      if (fastTicks > 120 && _hasRealRtcConnection()) {
-        timer.cancel();
-        if (identical(_dbSignalPollTimer, timer)) {
-          _dbSignalPollTimer = null;
-        }
-      }
-    });
-    unawaited(_pollDbSignals(localStream));
-  }
-
-  Future<void> _pollDbSignals(MediaStream localStream) async {
-    if (_leaving || _dbSignalPollInFlight) return;
-    _dbSignalPollInFlight = true;
-    final pollStartedAt = DateTime.now();
-    try {
-      final lastSeenCreatedAt = _lastDbSignalCreatedAt;
-      _tlog('CallSignalPoll',
-          'cycle start call=$roomId cursor=${lastSeenCreatedAt ?? 'none'}');
-      var query = _sb
-          .from('call_signals')
-          .select('id,sender_id,target_user_id,type,payload,created_at')
-          .eq('call_id', roomId);
-      if (lastSeenCreatedAt != null) {
-        query = query.gt('created_at', lastSeenCreatedAt);
-      }
-      final rows = await query
-          .order('created_at', ascending: lastSeenCreatedAt != null)
-          .limit(50)
-          .timeout(const Duration(seconds: 4));
-      final signals = rows.whereType<Map<String, dynamic>>().toList()
-        ..sort((a, b) {
-          final ac = a['created_at']?.toString() ?? '';
-          final bc = b['created_at']?.toString() ?? '';
-          return ac.compareTo(bc);
-        });
-      for (final row in signals) {
-        await _handleDbSignal(row, localStream);
-      }
-      _dbSignalPollFailures = 0;
-      _tlog('CallSignalPoll',
-          'cycle end rows=${signals.length} elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
-    } on TimeoutException catch (e) {
-      _dbSignalPollFailures++;
-      _tlog('CallSignalPoll',
-          'cycle timeout after 4s elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
-      debugPrint('[WebRTC] DB signal polling failed: $e');
-    } catch (e) {
-      _dbSignalPollFailures++;
-      final message = e.toString();
-      if (message.contains('call_signals') ||
-          message.contains('PGRST204') ||
-          message.contains('42P01')) {
-        _dbSignalPollTimer?.cancel();
-        _dbSignalPollTimer = null;
-        _tlog('CallSignalPoll',
-            'cycle end error=$e elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
-        debugPrint('[WebRTC] DB signal polling unavailable: $e');
-        return;
-      }
-      _tlog('CallSignalPoll',
-          'cycle end error=$e elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
-      debugPrint('[WebRTC] DB signal polling failed: $e');
-    } finally {
-      _dbSignalPollInFlight = false;
     }
   }
 
@@ -2955,27 +2769,20 @@ class CallNotifier extends StateNotifier<CallState> {
     final channel = _channel;
     final signal = Map<String, dynamic>.from(payload);
     _sendEdgeSignal(event, signal);
-    _sendDbSignal(event, signal);
-    if (channel == null) return;
+    if (channel == null || (event != 'offer' && event != 'answer')) return;
     unawaited(Future<void>(() async {
       try {
         await channel.sendBroadcastMessage(event: event, payload: signal);
       } catch (e) {
         debugPrint('[WebRTC] broadcast $event failed: $e');
-        // Retry once for critical signaling messages
-        if (event == 'offer' ||
-            event == 'answer' ||
-            event == 'ice' ||
-            event == 'ice-candidate') {
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-          try {
-            await channel.sendBroadcastMessage(
-              event: event,
-              payload: Map<String, dynamic>.from(payload),
-            );
-          } catch (retryError) {
-            debugPrint('[WebRTC] broadcast $event retry failed: $retryError');
-          }
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        try {
+          await channel.sendBroadcastMessage(
+            event: event,
+            payload: Map<String, dynamic>.from(payload),
+          );
+        } catch (retryError) {
+          debugPrint('[WebRTC] broadcast $event retry failed: $retryError');
         }
       }
     }));
@@ -2992,119 +2799,6 @@ class CallNotifier extends StateNotifier<CallState> {
     debugPrint('[WebRTC][$roomId][$peerId] resending cached offer '
         'rev=${revision ?? 'missing'} reason=$reason');
     _broadcast('offer', Map<String, dynamic>.from(signal));
-  }
-
-  void _sendDbSignal(String event, Map<String, dynamic> signal) {
-    const durableEvents = {
-      'offer',
-      'answer',
-      'ice',
-      'ice-candidate',
-      'media',
-      'media-state',
-      'leave',
-      'resync',
-    };
-    if (!durableEvents.contains(event)) return;
-    if (_sb.auth.currentUser == null) return;
-
-    final targetUserId = signal['to']?.toString();
-    unawaited(Future<void>(() async {
-      try {
-        await _sb.from('call_signals').insert({
-          'call_id': roomId,
-          'sender_id': userId,
-          'target_user_id': targetUserId,
-          'type': event,
-          'payload': signal,
-        }).timeout(const Duration(seconds: 5));
-      } catch (e) {
-        final message = e.toString();
-        if (message.contains('call_signals') ||
-            message.contains('PGRST204') ||
-            message.contains('42P01')) {
-          debugPrint(
-            '[WebRTC] DB signaling unavailable; apply call_signals migration: '
-            '$e',
-          );
-          return;
-        }
-        debugPrint('[WebRTC] DB signal $event failed: $e');
-      }
-    }));
-  }
-
-  Future<void> _handleDbSignal(
-    Map<String, dynamic> row,
-    MediaStream localStream,
-  ) async {
-    _advanceDbSignalCursor(row);
-    final signalId = row['id']?.toString();
-    final type = row['type']?.toString();
-    if (signalId != null &&
-        type != 'offer' &&
-        type != 'answer' &&
-        type != 'ice' &&
-        type != 'ice-candidate' &&
-        !_rememberBounded(_seenSignalIds, 'db-row:$signalId')) {
-      return;
-    }
-
-    final from = row['sender_id']?.toString();
-    if (from == null || from == userId) return;
-
-    final target = row['target_user_id']?.toString();
-    if (target != null && target != userId) return;
-
-    final rawPayload = row['payload'];
-    final signal = rawPayload is Map
-        ? Map<String, dynamic>.from(rawPayload)
-        : <String, dynamic>{};
-    signal.putIfAbsent('from', () => from);
-    if (target != null) signal.putIfAbsent('to', () => target);
-    if (signalId != null) signal.putIfAbsent('messageId', () => signalId);
-    signal.putIfAbsent('callId', () => row['call_id']?.toString() ?? roomId);
-
-    switch (type) {
-      case 'offer':
-        await _handleOffer(signal, localStream, source: 'db');
-        break;
-      case 'answer':
-        await _handleAnswer(signal, source: 'db');
-        break;
-      case 'ice':
-      case 'ice-candidate':
-        await _handleIce(signal, source: 'db');
-        break;
-      case 'media':
-      case 'media-state':
-        _handleMedia(signal);
-        break;
-      case 'resync':
-        _presencePeerIds.add(from);
-        _ensureParticipant(from);
-        await _ensurePeer(from, localStream);
-        break;
-      case 'leave':
-        _presencePeerIds.remove(from);
-        _edgePeerIds.remove(from);
-        _closePeer(from);
-        if (signal['ended'] == true) {
-          unawaited(_handleRemoteCallEnded('remote_left'));
-        }
-        break;
-      default:
-        debugPrint('[WebRTC] ignored DB signal: $row');
-    }
-  }
-
-  void _advanceDbSignalCursor(Map<String, dynamic> row) {
-    final createdAt = row['created_at']?.toString();
-    if (createdAt == null) return;
-    if (_lastDbSignalCreatedAt == null ||
-        createdAt.compareTo(_lastDbSignalCreatedAt!) > 0) {
-      _lastDbSignalCreatedAt = createdAt;
-    }
   }
 
   Map<String, dynamic> _signalPayload(Map<String, dynamic> payload) {
@@ -3139,7 +2833,6 @@ class CallNotifier extends StateNotifier<CallState> {
     _connectionWatchdogTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
-    _dbSignalPollTimer?.cancel();
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
@@ -3155,9 +2848,10 @@ class CallNotifier extends StateNotifier<CallState> {
     _peerCreating.clear();
     _pending.clear();
     _peerMissingSince.clear();
+    _lastParticipantStateWriteAt = null;
     _lastOfferAt.clear();
+    _sendEdgeSignal('leave', {'from': userId});
     if (_channel != null) {
-      _channel!.sendBroadcastMessage(event: 'leave', payload: {'from': userId});
       _sb.removeChannel(_channel!);
       _channel = null;
     }
