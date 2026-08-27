@@ -204,6 +204,7 @@ class CallNotifier extends StateNotifier<CallState> {
   final Map<String, String> _peerConnectionIds = {};
   final Map<String, Timer> _reconnectTimers = {};
   final Map<String, int> _reconnectAttempts = {};
+  final Map<String, DateTime> _peerMissingSince = {};
   final Map<String, DateTime> _lastOfferAt = {};
   final Set<String> _presencePeerIds = {};
   final Set<String> _edgePeerIds = {};
@@ -405,6 +406,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _lastRemoteOfferKey.clear();
     _lastLocalOfferSignal.clear();
     _peerConnectionIds.clear();
+    _peerMissingSince.clear();
     _lastOfferAt.clear();
     _presencePeerIds.clear();
     _edgePeerIds.clear();
@@ -1446,10 +1448,36 @@ class CallNotifier extends StateNotifier<CallState> {
         ..._presencePeerIds,
         ..._edgePeerIds,
       }..remove(userId);
+      final now = DateTime.now();
       for (final participantId in participantsById.keys.toList()) {
-        if (!activePeerIds.contains(participantId)) {
-          debugPrint('[WebRTC][$participantId] participant sync missing peer; '
-              'keeping media transport alive');
+        if (activePeerIds.contains(participantId)) {
+          if (_peerMissingSince.remove(participantId) != null) {
+            debugPrint('[WebRTC][$participantId] participant sync recovered');
+          }
+          continue;
+        }
+
+        if (_peerIceConnected(participantId)) {
+          if (_peerMissingSince.remove(participantId) != null) {
+            debugPrint('[WebRTC][$participantId] participant sync recovered; '
+                'ice still connected');
+          }
+          continue;
+        }
+
+        final missingSince = _peerMissingSince[participantId];
+        if (missingSince == null) {
+          _peerMissingSince[participantId] = now;
+          debugPrint(
+              '[WebRTC][$participantId] participant sync missing-started');
+          continue;
+        }
+        if (now.difference(missingSince) >= const Duration(seconds: 25)) {
+          debugPrint(
+              '[WebRTC][$participantId] participant sync missing expired; '
+              'closing peer');
+          _closePeer(participantId);
+          participantsById.remove(participantId);
         }
       }
       if (activePeerIds.isEmpty) {
@@ -1548,6 +1576,12 @@ class CallNotifier extends StateNotifier<CallState> {
       'joining' || 'connecting' || 'connected' || 'reconnecting' => true,
       _ => false,
     };
+  }
+
+  bool _peerIceConnected(String peerId) {
+    final state = _peers[peerId]?.iceConnectionState;
+    return state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+        state == RTCIceConnectionState.RTCIceConnectionStateCompleted;
   }
 
   bool _isTerminalCallStatus(String? status) {
@@ -2902,6 +2936,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _lastRemoteOfferKey.remove(peerId);
     _lastLocalOfferSignal.remove(peerId);
     _peerConnectionIds.remove(peerId);
+    _peerMissingSince.remove(peerId);
     _reconnectTimers.remove(peerId)?.cancel();
     final updated = state.participants.where((p) => p.id != peerId).toList();
     final connected = updated.any((p) => p.stream != null);
@@ -3119,6 +3154,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _peers.clear();
     _peerCreating.clear();
     _pending.clear();
+    _peerMissingSince.clear();
     _lastOfferAt.clear();
     if (_channel != null) {
       _channel!.sendBroadcastMessage(event: 'leave', payload: {'from': userId});
