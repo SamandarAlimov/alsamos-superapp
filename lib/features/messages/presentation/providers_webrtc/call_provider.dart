@@ -193,13 +193,13 @@ class CallNotifier extends StateNotifier<CallState> {
   final Map<String, bool> _ignoreOffer = {};
   final Map<String, Future<void>> _sdpOps = {};
   final Map<String, String> _peerConnectionIds = {};
-  final Map<String, Timer> _reconnectTimers = {};
-  final Map<String, int> _reconnectAttempts = {};
   final Map<String, DateTime> _peerMissingSince = {};
   final Map<String, DateTime> _lastOfferAt = {};
+  final Map<String, int> _offerRetryAttempts = {};
+  final Map<String, DateTime> _lastIceRestartAt = {};
+  final Map<String, int> _iceRestartAttempts = {};
   final Set<String> _presencePeerIds = {};
   final Set<String> _edgePeerIds = {};
-  final Set<String> _watchdogIceRestarted = {};
   final LinkedHashSet<String> _seenSignalIds = LinkedHashSet<String>();
   final LinkedHashSet<String> _seenIceKeys = LinkedHashSet<String>();
   int _videoBitrateLevel = _maxVideoBitrateLevel;
@@ -229,6 +229,8 @@ class CallNotifier extends StateNotifier<CallState> {
   Future<MediaStream?>? _mediaAcquisition;
 
   static const int _maxVideoBitrateLevel = 3;
+  static const List<int> _offerRetryScheduleSeconds = [8, 16, 28];
+  static const List<int> _iceRestartBackoffSeconds = [30, 60, 120, 120];
   static const List<Map<String, int>> _videoBitrateLadder = [
     {'label': 360, 'kbps': 400, 'fps': 24},
     {'label': 720, 'kbps': 1200, 'fps': 30},
@@ -391,10 +393,6 @@ class CallNotifier extends StateNotifier<CallState> {
     _connectionWatchdogTimer = null;
     _realtimeResubscribeTimer = null;
     _edgeReconnectTimer = null;
-    for (final timer in _reconnectTimers.values) {
-      timer.cancel();
-    }
-    _reconnectTimers.clear();
     _realtimeReconnectAttempts = 0;
     _edgeReconnectAttempts = 0;
     _connectionWatchdogTicks = 0;
@@ -412,9 +410,11 @@ class CallNotifier extends StateNotifier<CallState> {
     _peerConnectionIds.clear();
     _peerMissingSince.clear();
     _lastOfferAt.clear();
+    _offerRetryAttempts.clear();
+    _lastIceRestartAt.clear();
+    _iceRestartAttempts.clear();
     _presencePeerIds.clear();
     _edgePeerIds.clear();
-    _watchdogIceRestarted.clear();
     _seenSignalIds.clear();
     _seenIceKeys.clear();
     _videoBitrateLevel = _maxVideoBitrateLevel;
@@ -1631,7 +1631,9 @@ class CallNotifier extends StateNotifier<CallState> {
       _pending.remove(peerId);
       _sdpOps.remove(peerId);
       _peerConnectionIds.remove(peerId);
-      _watchdogIceRestarted.remove(peerId);
+      _offerRetryAttempts.remove(peerId);
+      _lastIceRestartAt.remove(peerId);
+      _iceRestartAttempts.remove(peerId);
     }
     if (_peerCreating.containsKey(peerId)) return _peerCreating[peerId]!.future;
 
@@ -1682,7 +1684,7 @@ class CallNotifier extends StateNotifier<CallState> {
         state = state.copyWith(iceConnectionState: name);
         if (s == RTCIceConnectionState.RTCIceConnectionStateFailed ||
             s == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-          _scheduleReconnect(peerId);
+          _startRecoveryWatchdog(peerId);
         }
       };
       pc.onConnectionState = (s) {
@@ -1690,13 +1692,12 @@ class CallNotifier extends StateNotifier<CallState> {
         debugPrint('[WebRTC][$peerId] connectionState=$name');
         state = state.copyWith(peerConnectionState: name);
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-          _reconnectTimers.remove(peerId)?.cancel();
-          _reconnectAttempts.remove(peerId);
+          _offerRetryAttempts.remove(peerId);
           state = state.copyWith(isReconnecting: false);
         }
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
             s == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-          _scheduleReconnect(peerId);
+          _startRecoveryWatchdog(peerId);
         }
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
           _peers.remove(peerId);
@@ -1706,7 +1707,9 @@ class CallNotifier extends StateNotifier<CallState> {
           _peerCreating.remove(peerId);
           _sdpOps.remove(peerId);
           _peerConnectionIds.remove(peerId);
-          _watchdogIceRestarted.remove(peerId);
+          _offerRetryAttempts.remove(peerId);
+          _lastIceRestartAt.remove(peerId);
+          _iceRestartAttempts.remove(peerId);
         }
       };
 
@@ -2402,23 +2405,12 @@ class CallNotifier extends StateNotifier<CallState> {
     }
   }
 
-  void _scheduleReconnect(String peerId) {
-    if (_leaving || _reconnectTimers.containsKey(peerId)) return;
-    final attempt = (_reconnectAttempts[peerId] ?? 0) + 1;
-    _reconnectAttempts[peerId] = attempt;
+  void _startRecoveryWatchdog(String peerId) {
     state = state.copyWith(isReconnecting: true, isConnected: false);
     unawaited(_writeParticipantState(connectionState: 'reconnecting'));
-    _reconnectTimers[peerId] =
-        Timer(Duration(milliseconds: 500 * attempt.clamp(1, 8)), () async {
-      _reconnectTimers.remove(peerId);
-      if (_leaving) return;
-      try {
-        await _renegotiate(peerId, iceRestart: true);
-      } catch (e) {
-        debugPrint('[WebRTC] reconnect failed: $e');
-        if ((_reconnectAttempts[peerId] ?? 0) < 8) _scheduleReconnect(peerId);
-      }
-    });
+    if (_connectionWatchdogTimer == null) {
+      _startConnectionWatchdog();
+    }
   }
 
   Future<void> _replaceSenderTrack(String kind, MediaStreamTrack track) async {
@@ -2689,7 +2681,6 @@ class CallNotifier extends StateNotifier<CallState> {
         return;
       }
       if (_hasRealRtcConnection()) {
-        _watchdogIceRestarted.clear();
         timer.cancel();
         if (identical(_connectionWatchdogTimer, timer)) {
           _connectionWatchdogTimer = null;
@@ -2723,16 +2714,34 @@ class CallNotifier extends StateNotifier<CallState> {
         final pc = _peers[peerId];
         if (pc == null) continue;
         unawaited(Future<void>(() async {
-          if (elapsed < 12 || _watchdogIceRestarted.contains(peerId)) {
-            return;
-          }
           final hasRemoteDescription = await _safeRemoteDescription(pc) != null;
-          if (!hasRemoteDescription || !_canCreateOffer(pc)) {
+          if (!hasRemoteDescription) {
+            _retryOfferIfDue(peerId, elapsed);
             return;
           }
-          _watchdogIceRestarted.add(peerId);
+
+          final now = DateTime.now();
+          final attempts = _iceRestartAttempts[peerId] ?? 0;
+          if (attempts >= 4 || !_canCreateOffer(pc)) {
+            return;
+          }
+          final backoffIndex =
+              (attempts - 1).clamp(0, _iceRestartBackoffSeconds.length - 1);
+          final delaySeconds =
+              attempts == 0 ? 12 : _iceRestartBackoffSeconds[backoffIndex];
+          final lastRestart = _lastIceRestartAt[peerId];
+          if (lastRestart != null &&
+              now.difference(lastRestart) < Duration(seconds: delaySeconds)) {
+            return;
+          }
+          if (lastRestart == null && elapsed < delaySeconds) {
+            return;
+          }
+          _lastIceRestartAt[peerId] = now;
+          _iceRestartAttempts[peerId] = attempts + 1;
           debugPrint('[WebRTC][$peerId] watchdog ICE restart; '
-              'elapsed=${elapsed}s connectionState=${pc.connectionState}');
+              'attempt=${attempts + 1} elapsed=${elapsed}s '
+              'connectionState=${pc.connectionState}');
           await _renegotiate(peerId, iceRestart: true);
         }).catchError((e, stack) {
           debugPrint('[WebRTC] watchdog recovery failed: $e\n$stack');
@@ -2748,6 +2757,30 @@ class CallNotifier extends StateNotifier<CallState> {
         );
       }
     });
+  }
+
+  void _retryOfferIfDue(String peerId, int elapsedSeconds) {
+    final attempts = _offerRetryAttempts[peerId] ?? 0;
+    if (attempts >= _offerRetryScheduleSeconds.length) {
+      if (mounted) {
+        state = state.copyWith(
+          isConnecting: false,
+          isReconnecting: false,
+          error: friendlyCallError(
+            const CallFailure(CallFailureType.mediaConnection),
+          ),
+        );
+      }
+      return;
+    }
+    final nextDelay = _offerRetryScheduleSeconds[attempts];
+    if (elapsedSeconds < nextDelay) return;
+    _offerRetryAttempts[peerId] = attempts + 1;
+    debugPrint('[WebRTC][$peerId] watchdog offer retry '
+        'attempt=${attempts + 1} elapsed=${elapsedSeconds}s');
+    unawaited(_maybeMakeOffer(peerId, force: true).catchError((e, stack) {
+      debugPrint('[WebRTC] watchdog offer retry failed: $e\n$stack');
+    }));
   }
 
   void _runResyncTick() {
@@ -2920,8 +2953,9 @@ class CallNotifier extends StateNotifier<CallState> {
     _sdpOps.remove(peerId);
     _peerConnectionIds.remove(peerId);
     _peerMissingSince.remove(peerId);
-    _watchdogIceRestarted.remove(peerId);
-    _reconnectTimers.remove(peerId)?.cancel();
+    _offerRetryAttempts.remove(peerId);
+    _lastIceRestartAt.remove(peerId);
+    _iceRestartAttempts.remove(peerId);
     final updated = state.participants.where((p) => p.id != peerId).toList();
     final connected = updated.any((p) => p.stream != null);
     if (!connected) _stopElapsedTimer();
@@ -2994,10 +3028,6 @@ class CallNotifier extends StateNotifier<CallState> {
     _connectionWatchdogTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
-    for (final timer in _reconnectTimers.values) {
-      timer.cancel();
-    }
-    _reconnectTimers.clear();
     _screenStream?.getTracks().forEach((t) => t.stop());
     _screenStream = null;
     state.localStream?.getTracks().forEach((t) => t.stop());
@@ -3011,7 +3041,9 @@ class CallNotifier extends StateNotifier<CallState> {
     _peerMissingSince.clear();
     _lastParticipantStateWriteAt = null;
     _lastOfferAt.clear();
-    _watchdogIceRestarted.clear();
+    _offerRetryAttempts.clear();
+    _lastIceRestartAt.clear();
+    _iceRestartAttempts.clear();
     _videoBitrateLevel = _maxVideoBitrateLevel;
     _appliedVideoBitrateLevel = null;
     _lastVideoBitrateStepAt = null;
