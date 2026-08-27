@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../audio/speech_audio_config.dart';
+import '../../audio/wav_speech_processor.dart';
+
 final voiceRecorderManagerProvider =
     StateNotifierProvider<VoiceRecorderManager, VoiceRecorderState>(
         (ref) => VoiceRecorderManager());
@@ -48,12 +51,14 @@ class VoiceRecordingResult {
   final Duration duration;
   final List<double> waveform;
   final String mimeType;
+  final WavProcessingResult? processing;
 
   const VoiceRecordingResult({
     required this.path,
     required this.duration,
     required this.waveform,
     required this.mimeType,
+    this.processing,
   });
 }
 
@@ -81,12 +86,7 @@ class VoiceRecorderManager extends StateNotifier<VoiceRecorderState> {
 
     try {
       await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          bitRate: 128000,
-          sampleRate: 44100,
-          numChannels: 1,
-        ),
+        SpeechAudioConfig.voiceRecordConfig,
         path: path,
       );
     } catch (e) {
@@ -105,7 +105,8 @@ class VoiceRecorderManager extends StateNotifier<VoiceRecorderState> {
       state = state.copyWith(elapsed: elapsed);
     });
 
-    _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 80), (_) async {
+    _amplitudeTimer =
+        Timer.periodic(const Duration(milliseconds: 80), (_) async {
       if (!mounted) return;
       try {
         final amp = await _recorder.getAmplitude();
@@ -137,7 +138,8 @@ class VoiceRecorderManager extends StateNotifier<VoiceRecorderState> {
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (!mounted) return;
       final now = DateTime.now();
-      final elapsed = prevElapsed + now.difference(_startedAt!) - _pausedDuration;
+      final elapsed =
+          prevElapsed + now.difference(_startedAt!) - _pausedDuration;
       state = state.copyWith(elapsed: elapsed);
     });
 
@@ -162,11 +164,19 @@ class VoiceRecorderManager extends StateNotifier<VoiceRecorderState> {
 
     if (path == null || path.isEmpty) return null;
 
+    WavProcessingResult? processing;
+    try {
+      processing = await const WavSpeechProcessor().normalizeFile(path);
+    } catch (e) {
+      debugPrint('[VoiceRecorderManager] normalization skipped: $e');
+    }
+
     return VoiceRecordingResult(
       path: path,
       duration: duration,
       waveform: waveform,
-      mimeType: 'audio/mp4',
+      mimeType: 'audio/wav',
+      processing: processing,
     );
   }
 
@@ -189,7 +199,7 @@ class VoiceRecorderManager extends StateNotifier<VoiceRecorderState> {
     if (kIsWeb) return '';
     final dir = Directory.systemTemp;
     final ts = DateTime.now().microsecondsSinceEpoch;
-    return '${dir.path}/voice_$ts.m4a';
+    return '${dir.path}/voice_$ts.wav';
   }
 
   @override

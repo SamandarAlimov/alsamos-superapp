@@ -34,7 +34,8 @@ class ChatMediaUploadService {
     String? localThumbPath,
   }) async {
     if (kIsWeb) {
-      throw UnsupportedError('Media offline upload is not available on web yet');
+      throw UnsupportedError(
+          'Media offline upload is not available on web yet');
     }
     final extension = _extensionFor(mimeType, localPath);
     final mediaPath =
@@ -95,7 +96,9 @@ class ChatMediaUploadService {
 
   Future<String?> signedThumbUrl(String path) async {
     try {
-      return supabase.storage.from('chat-thumbs').createSignedUrl(path, 60 * 60);
+      return supabase.storage
+          .from('chat-thumbs')
+          .createSignedUrl(path, 60 * 60);
     } catch (e) {
       debugPrint('[ChatMediaUploadService] thumb signed url ignored: $e');
       return null;
@@ -153,7 +156,9 @@ class ChatMediaUploadService {
 
   List<String> _candidateBuckets(String mediaType) {
     final preferred = _bucketFor(mediaType);
-    if (preferred == 'message-attachments') return const ['message-attachments'];
+    if (preferred == 'message-attachments') {
+      return const ['message-attachments'];
+    }
     return [preferred, 'message-attachments'];
   }
 
@@ -164,9 +169,12 @@ class ChatMediaUploadService {
 
   String _extensionFor(String mimeType, String path) {
     final fromPath = path.contains('.') ? path.split('.').last : '';
-    if (fromPath.isNotEmpty && fromPath.length <= 5) return fromPath;
+    if (fromPath.isNotEmpty && fromPath.length <= 5) {
+      return fromPath;
+    }
     return switch (mimeType) {
       'audio/mp4' || 'audio/m4a' || 'audio/aac' => 'm4a',
+      'audio/wav' || 'audio/wave' || 'audio/x-wav' => 'wav',
       'audio/ogg' => 'ogg',
       'audio/webm' => 'webm',
       'video/quicktime' => 'mov',

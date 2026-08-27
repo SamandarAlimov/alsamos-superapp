@@ -107,6 +107,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     setState(() => _loading = true);
     try {
       await _player.setUrl(widget.url);
+      await _player.setVolume(1.0);
       _ready = true;
     } catch (_) {
       // Yuklash xatoligi (URL noto'g'ri yoki tarmoq) — UI ko'rsatib qo'yiladi.

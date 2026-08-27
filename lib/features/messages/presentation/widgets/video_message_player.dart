@@ -65,8 +65,7 @@ class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 260, maxHeight: 260),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+      child: ClipOval(
         child: AspectRatio(
           aspectRatio: 1,
           child: GestureDetector(

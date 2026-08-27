@@ -20,6 +20,8 @@ import '../../../../shared/widgets/verified_badge.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/error_mapper.dart';
 import '../../../../shared/services/camera_capability.dart';
+import '../../../../shared/audio/speech_audio_config.dart';
+import '../../../../shared/audio/wav_speech_processor.dart';
 import '../../../../shared/utils/video_controller_lifecycle.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_interaction_model.dart';
@@ -363,9 +365,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
       if (await _audioRecorder.hasPermission()) {
         final dir = await getTemporaryDirectory();
         final path =
-            '${dir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
-        await _audioRecorder
-            .start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+            '${dir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+        await _audioRecorder.start(
+          SpeechAudioConfig.voiceRecordConfig,
+          path: path,
+        );
         setState(() {
           _recordingMedia = true;
           _isMediaVideoMode = false;
@@ -567,6 +571,12 @@ class _ChatPageState extends ConsumerState<ChatPage>
     if (path != null && secs > 0) {
       try {
         final file = File(path);
+        WavProcessingResult? processing;
+        try {
+          processing = await const WavSpeechProcessor().normalizeFile(path);
+        } catch (e) {
+          debugPrint('[ChatPage] voice normalization skipped: $e');
+        }
         final bytes = await file.readAsBytes();
         await ref.read(messagesProvider(widget.conversationId).notifier).send(
           '',
@@ -578,7 +588,30 @@ class _ChatPageState extends ConsumerState<ChatPage>
                 ? ChatMediaUploadService.waveformFromBytes(bytes)
                 : waveform,
             'size_bytes': bytes.length,
-            'mime_type': 'audio/mp4',
+            'mime_type': 'audio/wav',
+            if (processing != null) ...{
+              'audio_processing': {
+                'target_lufs': SpeechAudioConfig.targetLufs,
+                'true_peak_ceiling_dbfs': SpeechAudioConfig.truePeakCeilingDbfs,
+                'max_gain_db': SpeechAudioConfig.maxNormalizationGainDb,
+                'applied_gain_db': processing.appliedGainDb,
+                'normalized': processing.normalized,
+                'before': {
+                  'peak_dbfs': processing.before.peakDbfs,
+                  'rms_dbfs': processing.before.rmsDbfs,
+                  'lufs': processing.before.integratedLufs,
+                  'noise_floor_dbfs': processing.before.noiseFloorDbfs,
+                  'clipped_samples': processing.before.clippedSamples,
+                },
+                'after': {
+                  'peak_dbfs': processing.after.peakDbfs,
+                  'rms_dbfs': processing.after.rmsDbfs,
+                  'lufs': processing.after.integratedLufs,
+                  'noise_floor_dbfs': processing.after.noiseFloorDbfs,
+                  'clipped_samples': processing.after.clippedSamples,
+                },
+              },
+            },
             'upload_progress': 0.02,
           },
         );

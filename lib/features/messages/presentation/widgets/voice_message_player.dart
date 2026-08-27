@@ -61,9 +61,9 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     final v = _ctrl!.value;
     if (mounted) {
       setState(() {
-      _playing = v.isPlaying;
-      _position = v.position;
-    });
+        _playing = v.isPlaying;
+        _position = v.position;
+      });
     }
     if (v.position >= v.duration && v.duration > Duration.zero) {
       _ctrl!.seekTo(Duration.zero);
@@ -84,6 +84,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
       await _ctrl!.pause();
     } else {
       await _ctrl!.setPlaybackSpeed(_rate);
+      await _ctrl!.setVolume(1.0);
       await _ctrl!.play();
     }
   }
@@ -105,8 +106,11 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     final theme = Theme.of(context);
     final c = AlsamosColors.of(context);
     final tint = widget.isMine ? Colors.white : theme.colorScheme.primary;
-    final dim = widget.isMine ? Colors.white.withValues(alpha: 0.5) : c.mutedForeground;
-    final progress = (_duration.inMilliseconds == 0) ? 0.0 : _position.inMilliseconds / _duration.inMilliseconds;
+    final dim =
+        widget.isMine ? Colors.white.withValues(alpha: 0.5) : c.mutedForeground;
+    final progress = (_duration.inMilliseconds == 0)
+        ? 0.0
+        : _position.inMilliseconds / _duration.inMilliseconds;
     return SizedBox(
       width: 240,
       child: Row(
@@ -114,12 +118,19 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
           GestureDetector(
             onTap: _ready ? _toggle : null,
             child: Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: tint.withValues(alpha: 0.15), shape: BoxShape.circle),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                  color: tint.withValues(alpha: 0.15), shape: BoxShape.circle),
               alignment: Alignment.center,
               child: !_ready
-                  ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: tint))
-                  : Icon(_playing ? LucideIcons.pause : LucideIcons.play, size: 18, color: tint),
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: tint))
+                  : Icon(_playing ? LucideIcons.pause : LucideIcons.play,
+                      size: 18, color: tint),
             ),
           ),
           const SizedBox(width: 8),
@@ -131,7 +142,8 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
                 if (box == null) return;
                 final w = box.size.width - 36 - 8 - 8 - 44;
                 final ratio = (d.localPosition.dx / w).clamp(0.0, 1.0);
-                _ctrl?.seekTo(Duration(milliseconds: (_duration.inMilliseconds * ratio).round()));
+                _ctrl?.seekTo(Duration(
+                    milliseconds: (_duration.inMilliseconds * ratio).round()));
               },
               child: SizedBox(
                 height: 36,
@@ -157,18 +169,33 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
             ),
           ),
           const SizedBox(width: 8),
-          Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(_fmt(_position == Duration.zero ? _duration : _position), style: TextStyle(fontSize: 11, color: dim, fontFeatures: const [FontFeature.tabularFigures()])),
-            const SizedBox(height: 2),
-            GestureDetector(
-              onTap: _cycleRate,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: tint.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
-                child: Text('${_rate.toStringAsFixed(_rate == _rate.truncate() ? 0 : 1)}x', style: TextStyle(fontSize: 10, color: tint, fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ]),
+          Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(_fmt(_position == Duration.zero ? _duration : _position),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: dim,
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+                const SizedBox(height: 2),
+                GestureDetector(
+                  onTap: _cycleRate,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                        color: tint.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6)),
+                    child: Text(
+                        '${_rate.toStringAsFixed(_rate == _rate.truncate() ? 0 : 1)}x',
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: tint,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ]),
         ],
       ),
     );
