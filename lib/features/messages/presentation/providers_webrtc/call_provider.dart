@@ -1000,6 +1000,15 @@ class CallNotifier extends StateNotifier<CallState> {
     return '$roomId:$type:$from:$to:$revision:$sdpHash:$candidateHash';
   }
 
+  bool _isOwnSignal(Map<String, dynamic> payload) {
+    final from = payload['from'] ??
+        payload['fromUserId'] ??
+        payload['sender_id'] ??
+        payload['senderId'] ??
+        payload['userId'];
+    return from?.toString() == userId;
+  }
+
   bool _acceptSignal(Map<String, dynamic> payload, String type, String source) {
     final callId =
         (payload['callId'] ?? payload['roomId'] ?? roomId).toString();
@@ -1010,6 +1019,10 @@ class CallNotifier extends StateNotifier<CallState> {
     if (callId != roomId) {
       debugPrint(
           '[WebRTC][$roomId][$source][$type][$key] ignored wrong call $callId');
+      return false;
+    }
+    if (_isOwnSignal(payload)) {
+      debugPrint('[WebRTC][$roomId][$source][$type][$key] ignored self sender');
       return false;
     }
     final sessionId = payload['sessionId']?.toString();
@@ -1026,6 +1039,16 @@ class CallNotifier extends StateNotifier<CallState> {
     debugPrint('[WebRTC][$roomId][$source][$type][$key] accepted '
         'rev=${revision ?? 'missing'}');
     return true;
+  }
+
+  Future<RTCSessionDescription?> _safeRemoteDescription(
+    RTCPeerConnection pc,
+  ) async {
+    try {
+      return await pc.getRemoteDescription();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _runSdpOp(
@@ -1948,7 +1971,7 @@ class CallNotifier extends StateNotifier<CallState> {
       _queueRemoteCandidate(from, candidate, 'peer-not-ready');
       return;
     }
-    final remoteDescription = await pc.getRemoteDescription();
+    final remoteDescription = await _safeRemoteDescription(pc);
     if (remoteDescription == null) {
       _queueRemoteCandidate(from, candidate, 'remote-description-not-set');
       return;
@@ -2567,7 +2590,7 @@ class CallNotifier extends StateNotifier<CallState> {
         final pc = _peers[peerId];
         if (pc == null) continue;
         unawaited(Future<void>(() async {
-          final hasRemoteDescription = await pc.getRemoteDescription() != null;
+          final hasRemoteDescription = await _safeRemoteDescription(pc) != null;
           if (!hasRemoteDescription) {
             debugPrint('[WebRTC][$peerId] watchdog re-offer; '
                 'elapsed=${elapsed}s signalingState=${pc.signalingState}');
