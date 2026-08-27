@@ -1,11 +1,16 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 
 final _log = Logger('ConnectivityService');
+
+void _tlog(String tag, String message) {
+  debugPrint('${DateTime.now().toIso8601String()} [$tag] $message');
+}
 
 /// Professional connectivity service that combines [connectivity_plus] (interface
 /// presence) with a real internet reachability probe (DNS/HTTP). Never throws
@@ -103,12 +108,22 @@ class ConnectivityService {
   }
 
   Future<bool> _runReachabilityCheck() async {
+    _tlog('Connectivity',
+        'probe start url=https://clients3.google.com/generate_204');
     try {
       final response = await _httpClient
           .get(Uri.parse('https://clients3.google.com/generate_204'))
           .timeout(const Duration(seconds: 4));
-      return response.statusCode == 204 || response.statusCode == 200;
-    } catch (_) {
+      final reachable =
+          response.statusCode == 204 || response.statusCode == 200;
+      _tlog('Connectivity',
+          'probe end reachable=$reachable status=${response.statusCode}');
+      return reachable;
+    } on TimeoutException {
+      _tlog('Connectivity', 'probe timeout after 4s');
+      return false;
+    } catch (e) {
+      _tlog('Connectivity', 'probe end reachable=false error=$e');
       return false;
     }
   }

@@ -10,6 +10,10 @@ import '../models/message_model.dart';
 import '../services/chat_media_upload_service.dart';
 import '../services/content_ai_service.dart';
 
+void _tlog(String tag, String message) {
+  debugPrint('${DateTime.now().toIso8601String()} [$tag] $message');
+}
+
 /// Ported 1:1 from web useMessages.ts (useConversations + useMessages logic).
 class MessagesRepository {
   const MessagesRepository();
@@ -701,6 +705,7 @@ class MessagesRepository {
     String conversationId,
   ) async {
     try {
+      _tlog('MessagesFetch', 'rich attempt start conversation=$conversationId');
       final rows = await supabase
           .from('messages')
           .select(
@@ -709,13 +714,20 @@ class MessagesRepository {
           .order('created_at', ascending: false)
           .limit(_initialMessagePageSize)
           .timeout(const Duration(seconds: 8));
-      return _sortMessageRowsAscending(_mapRows(rows));
+      final mappedRows = _mapRows(rows);
+      _tlog('MessagesFetch',
+          'rich attempt success rows=${mappedRows.length} conversation=$conversationId');
+      return _sortMessageRowsAscending(mappedRows);
     } on TimeoutException catch (error) {
+      _tlog('MessagesFetch',
+          'rich attempt timeout after 8s conversation=$conversationId');
       debugPrint(
         '[MessagesRepo] rich messages query timed out; '
         'retrying without sender embed: $error',
       );
       try {
+        _tlog('MessagesFetch',
+            'minimal attempt start conversation=$conversationId');
         final rows = await supabase
             .from('messages')
             .select('*')
@@ -723,21 +735,37 @@ class MessagesRepository {
             .order('created_at', ascending: false)
             .limit(_initialMessagePageSize)
             .timeout(const Duration(seconds: 8));
-        return _hydrateMessageSenders(_sortMessageRowsAscending(_mapRows(rows)));
+        final mappedRows = _mapRows(rows);
+        _tlog('MessagesFetch',
+            'minimal attempt success rows=${mappedRows.length} conversation=$conversationId');
+        return _hydrateMessageSenders(_sortMessageRowsAscending(mappedRows));
       } on TimeoutException catch (minimalError) {
+        _tlog('MessagesFetch',
+            'minimal attempt timeout after 8s conversation=$conversationId');
         debugPrint(
           '[MessagesRepo] minimal messages query timed out; '
           'retrying ultra-light: $minimalError',
         );
-        final rows = await supabase
-            .from('messages')
-            .select(
-                'id, conversation_id, sender_id, content, media_url, media_type, reply_to_id, is_edited, is_deleted, created_at')
-            .eq('conversation_id', conversationId)
-            .order('created_at', ascending: false)
-            .limit(50)
-            .timeout(const Duration(seconds: 8));
-        return _sortMessageRowsAscending(_mapRows(rows));
+        _tlog('MessagesFetch',
+            'ultra-light attempt start conversation=$conversationId');
+        try {
+          final rows = await supabase
+              .from('messages')
+              .select(
+                  'id, conversation_id, sender_id, content, media_url, media_type, reply_to_id, is_edited, is_deleted, created_at')
+              .eq('conversation_id', conversationId)
+              .order('created_at', ascending: false)
+              .limit(50)
+              .timeout(const Duration(seconds: 8));
+          final mappedRows = _mapRows(rows);
+          _tlog('MessagesFetch',
+              'ultra-light attempt success rows=${mappedRows.length} conversation=$conversationId');
+          return _sortMessageRowsAscending(mappedRows);
+        } on TimeoutException {
+          _tlog('MessagesFetch',
+              'ultra-light attempt timeout after 8s conversation=$conversationId');
+          rethrow;
+        }
       }
     }
   }

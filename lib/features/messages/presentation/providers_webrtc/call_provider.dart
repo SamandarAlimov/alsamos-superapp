@@ -15,6 +15,10 @@ import 'call_signaling_socket.dart';
 
 const Object _unset = Object();
 
+void _tlog(String tag, String message) {
+  debugPrint('${DateTime.now().toIso8601String()} [$tag] $message');
+}
+
 class WebRTCParticipant {
   const WebRTCParticipant({
     required this.id,
@@ -2702,8 +2706,11 @@ class CallNotifier extends StateNotifier<CallState> {
   Future<void> _pollDbSignals(MediaStream localStream) async {
     if (_leaving || _dbSignalPollInFlight) return;
     _dbSignalPollInFlight = true;
+    final pollStartedAt = DateTime.now();
     try {
       final lastSeenCreatedAt = _lastDbSignalCreatedAt;
+      _tlog('CallSignalPoll',
+          'cycle start call=$roomId cursor=${lastSeenCreatedAt ?? 'none'}');
       var query = _sb
           .from('call_signals')
           .select('id,sender_id,target_user_id,type,payload,created_at')
@@ -2725,6 +2732,13 @@ class CallNotifier extends StateNotifier<CallState> {
         await _handleDbSignal(row, localStream);
       }
       _dbSignalPollFailures = 0;
+      _tlog('CallSignalPoll',
+          'cycle end rows=${signals.length} elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
+    } on TimeoutException catch (e) {
+      _dbSignalPollFailures++;
+      _tlog('CallSignalPoll',
+          'cycle timeout after 4s elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
+      debugPrint('[WebRTC] DB signal polling failed: $e');
     } catch (e) {
       _dbSignalPollFailures++;
       final message = e.toString();
@@ -2733,9 +2747,13 @@ class CallNotifier extends StateNotifier<CallState> {
           message.contains('42P01')) {
         _dbSignalPollTimer?.cancel();
         _dbSignalPollTimer = null;
+        _tlog('CallSignalPoll',
+            'cycle end error=$e elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
         debugPrint('[WebRTC] DB signal polling unavailable: $e');
         return;
       }
+      _tlog('CallSignalPoll',
+          'cycle end error=$e elapsedMs=${DateTime.now().difference(pollStartedAt).inMilliseconds}');
       debugPrint('[WebRTC] DB signal polling failed: $e');
     } finally {
       _dbSignalPollInFlight = false;
