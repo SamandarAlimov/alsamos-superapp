@@ -192,11 +192,6 @@ class CallNotifier extends StateNotifier<CallState> {
   final Map<String, bool> _makingOffer = {};
   final Map<String, bool> _ignoreOffer = {};
   final Map<String, Future<void>> _sdpOps = {};
-  final Map<String, int> _negotiationRevision = {};
-  final Map<String, int> _expectedAnswerRevision = {};
-  final Map<String, int> _appliedAnswerRevision = {};
-  final Map<String, String> _lastRemoteOfferKey = {};
-  final Map<String, Map<String, dynamic>> _lastLocalOfferSignal = {};
   final Map<String, String> _peerConnectionIds = {};
   final Map<String, Timer> _reconnectTimers = {};
   final Map<String, int> _reconnectAttempts = {};
@@ -204,6 +199,7 @@ class CallNotifier extends StateNotifier<CallState> {
   final Map<String, DateTime> _lastOfferAt = {};
   final Set<String> _presencePeerIds = {};
   final Set<String> _edgePeerIds = {};
+  final Set<String> _watchdogIceRestarted = {};
   final LinkedHashSet<String> _seenSignalIds = LinkedHashSet<String>();
   final LinkedHashSet<String> _seenIceKeys = LinkedHashSet<String>();
   Map<String, dynamic>? _iceConfig;
@@ -389,16 +385,12 @@ class CallNotifier extends StateNotifier<CallState> {
     _makingOffer.clear();
     _ignoreOffer.clear();
     _sdpOps.clear();
-    _negotiationRevision.clear();
-    _expectedAnswerRevision.clear();
-    _appliedAnswerRevision.clear();
-    _lastRemoteOfferKey.clear();
-    _lastLocalOfferSignal.clear();
     _peerConnectionIds.clear();
     _peerMissingSince.clear();
     _lastOfferAt.clear();
     _presencePeerIds.clear();
     _edgePeerIds.clear();
+    _watchdogIceRestarted.clear();
     _seenSignalIds.clear();
     _seenIceKeys.clear();
     _mediaAcquisition = null;
@@ -1005,13 +997,12 @@ class CallNotifier extends StateNotifier<CallState> {
     if (explicit is String && explicit.isNotEmpty) return explicit;
     final from = payload['from'] ?? payload['fromUserId'] ?? payload['userId'];
     final to = payload['to'] ?? payload['targetUserId'] ?? userId;
-    final revision = payload['negotiationRevision'] ?? payload['revision'] ?? 0;
     final sdp = payload['sdp'];
     final sdpHash = sdp == null ? '' : sdp.toString().hashCode.toString();
     final candidate = payload['candidate'];
     final candidateHash =
         candidate == null ? '' : candidate.toString().hashCode.toString();
-    return '$roomId:$type:$from:$to:$revision:$sdpHash:$candidateHash';
+    return '$roomId:$type:$from:$to:$sdpHash:$candidateHash';
   }
 
   bool _isOwnSignal(Map<String, dynamic> payload) {
@@ -1027,9 +1018,6 @@ class CallNotifier extends StateNotifier<CallState> {
     final callId =
         (payload['callId'] ?? payload['roomId'] ?? roomId).toString();
     final key = _payloadSignalKey(payload, type);
-    final revision = _intValue(
-      payload['negotiationRevision'] ?? payload['revision'],
-    );
     if (callId != roomId) {
       debugPrint(
           '[WebRTC][$roomId][$source][$type][$key] ignored wrong call $callId');
@@ -1046,12 +1034,10 @@ class CallNotifier extends StateNotifier<CallState> {
       return false;
     }
     if (!_rememberBounded(_seenSignalIds, key)) {
-      debugPrint('[WebRTC][$roomId][$source][$type][$key] '
-          'ignored duplicate rev=${revision ?? 'missing'}');
+      debugPrint('[WebRTC][$roomId][$source][$type][$key] ignored duplicate');
       return false;
     }
-    debugPrint('[WebRTC][$roomId][$source][$type][$key] accepted '
-        'rev=${revision ?? 'missing'}');
+    debugPrint('[WebRTC][$roomId][$source][$type][$key] accepted');
     return true;
   }
 
@@ -1539,12 +1525,8 @@ class CallNotifier extends StateNotifier<CallState> {
       _ignoreOffer.remove(peerId);
       _pending.remove(peerId);
       _sdpOps.remove(peerId);
-      _negotiationRevision.remove(peerId);
-      _expectedAnswerRevision.remove(peerId);
-      _appliedAnswerRevision.remove(peerId);
-      _lastRemoteOfferKey.remove(peerId);
-      _lastLocalOfferSignal.remove(peerId);
       _peerConnectionIds.remove(peerId);
+      _watchdogIceRestarted.remove(peerId);
     }
     if (_peerCreating.containsKey(peerId)) return _peerCreating[peerId]!.future;
 
@@ -1578,7 +1560,6 @@ class CallNotifier extends StateNotifier<CallState> {
           'sessionId': _callSessionId,
           'from': userId,
           'to': peerId,
-          'negotiationRevision': _negotiationRevision[peerId] ?? 0,
           'pcId': _peerConnectionIds[peerId],
           'candidate': {
             'candidate': candidate.candidate,
@@ -1619,11 +1600,8 @@ class CallNotifier extends StateNotifier<CallState> {
           _pending.remove(peerId);
           _peerCreating.remove(peerId);
           _sdpOps.remove(peerId);
-          _negotiationRevision.remove(peerId);
-          _expectedAnswerRevision.remove(peerId);
-          _appliedAnswerRevision.remove(peerId);
-          _lastRemoteOfferKey.remove(peerId);
           _peerConnectionIds.remove(peerId);
+          _watchdogIceRestarted.remove(peerId);
         }
       };
 
@@ -1717,26 +1695,18 @@ class CallNotifier extends StateNotifier<CallState> {
       final offer = await pc
           .createOffer(iceRestart ? {'iceRestart': true} : {})
           .timeout(const Duration(seconds: 8));
-      if (!_canCreateOffer(pc)) {
-        debugPrint('[WebRTC][$peerId] offer skipped because signalingState='
-            '${pc.signalingState}');
-        return;
-      }
+      if (!_canCreateOffer(pc)) return;
       await pc.setLocalDescription(offer).timeout(const Duration(seconds: 8));
       final localDescription =
           await pc.getLocalDescription().timeout(const Duration(seconds: 4));
-      final revision = (_negotiationRevision[peerId] ?? 0) + 1;
-      _negotiationRevision[peerId] = revision;
-      _expectedAnswerRevision[peerId] = revision;
       final signalId = _nextSignalId('offer', peerId);
-      debugPrint('[WebRTC][$roomId][$peerId] sending offer rev=$revision');
+      debugPrint('[WebRTC][$roomId][$peerId] sending offer');
       final signal = {
         'messageId': signalId,
         'callId': roomId,
         'sessionId': _callSessionId,
         'from': userId,
         'to': peerId,
-        'negotiationRevision': revision,
         'pcId': _peerConnectionIds[peerId],
         'sdp': {
           'type': localDescription?.type ?? offer.type,
@@ -1744,7 +1714,6 @@ class CallNotifier extends StateNotifier<CallState> {
         },
         'iceRestart': iceRestart,
       };
-      _lastLocalOfferSignal[peerId] = Map<String, dynamic>.from(signal);
       _broadcast('offer', signal);
     }).whenComplete(() => _makingOffer[peerId] = false);
   }
@@ -1763,12 +1732,6 @@ class CallNotifier extends StateNotifier<CallState> {
     if (sdpMap == null) return;
     final pc = await _ensurePeer(from, localStream);
     await _runSdpOp(from, 'remote-offer', () async {
-      final offerKey = _payloadSignalKey(payload, 'offer');
-      if (_lastRemoteOfferKey[from] == offerKey) {
-        debugPrint('[WebRTC][$roomId][$from] duplicate offer ignored');
-        return;
-      }
-      _lastRemoteOfferKey[from] = offerKey;
       final polite = userId.compareTo(from) > 0;
       final collision = (_makingOffer[from] ?? false) || !_canAcceptOffer(pc);
       _ignoreOffer[from] = !polite && collision;
@@ -1783,36 +1746,28 @@ class CallNotifier extends StateNotifier<CallState> {
           debugPrint('[WebRTC][$from] rollback ignored: $e');
         }
       }
-      final revision = _intValue(payload['negotiationRevision']) ??
-          ((_negotiationRevision[from] ?? 0) + 1);
-      _negotiationRevision[from] = revision;
-      debugPrint('[WebRTC][$roomId][$from] received offer rev=$revision');
+      debugPrint('[WebRTC][$roomId][$from] received offer');
       await pc
           .setRemoteDescription(
             RTCSessionDescription(sdpMap['sdp'], sdpMap['type']),
           )
           .timeout(const Duration(seconds: 8));
       await _flushPendingCandidates(from, pc);
-      if (!_canCreateAnswer(pc)) {
-        debugPrint('[WebRTC][$roomId][$from] answer skipped state='
-            '${pc.signalingState}');
-        return;
-      }
-      debugPrint('[WebRTC][$from] creating answer rev=$revision');
+      if (!_canCreateAnswer(pc)) return;
+      debugPrint('[WebRTC][$from] creating answer');
       final answer =
           await pc.createAnswer().timeout(const Duration(seconds: 8));
       await pc.setLocalDescription(answer).timeout(const Duration(seconds: 8));
       final localDescription =
           await pc.getLocalDescription().timeout(const Duration(seconds: 4));
       final signalId = _nextSignalId('answer', from);
-      debugPrint('[WebRTC][$roomId][$from] sending answer rev=$revision');
+      debugPrint('[WebRTC][$roomId][$from] sending answer');
       _broadcast('answer', {
         'messageId': signalId,
         'callId': roomId,
         'sessionId': _callSessionId,
         'from': userId,
         'to': from,
-        'negotiationRevision': revision,
         'pcId': _peerConnectionIds[from],
         'sdp': {
           'type': localDescription?.type ?? answer.type,
@@ -1856,39 +1811,20 @@ class CallNotifier extends StateNotifier<CallState> {
       return;
     }
     await _runSdpOp(from, 'remote-answer', () async {
-      final revision = _intValue(payload['negotiationRevision']);
-      final expected = _expectedAnswerRevision[from];
-      if (revision != null && expected != null && revision != expected) {
-        debugPrint('[WebRTC][$roomId][$from] answer revision mismatch '
-            'rev=$revision expected=$expected; deferring to signalingState');
-      }
-      if (revision != null && _appliedAnswerRevision[from] == revision) {
-        debugPrint('[WebRTC][$roomId][$from] duplicate answer ignored '
-            'rev=$revision');
-        return;
-      }
       if (pc.signalingState !=
           RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
         debugPrint('[WebRTC][$roomId][$from] answer ignored in state '
-            '${pc.signalingState} rev=${revision ?? 'unknown'}');
+            '${pc.signalingState}');
         return;
       }
-      debugPrint('[WebRTC][$roomId][$from] received answer rev=$revision');
+      debugPrint('[WebRTC][$roomId][$from] received answer');
       await pc
           .setRemoteDescription(
             RTCSessionDescription(sdpMap['sdp'], sdpMap['type']),
           )
           .timeout(const Duration(seconds: 8));
-      if (revision != null) _appliedAnswerRevision[from] = revision;
       await _flushPendingCandidates(from, pc);
     });
-  }
-
-  int? _intValue(Object? value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value);
-    return null;
   }
 
   Future<void> _handleIce(
@@ -1907,14 +1843,8 @@ class CallNotifier extends StateNotifier<CallState> {
       candMap['sdpMid'],
       candMap['sdpMLineIndex'],
     );
-    final revision = _intValue(payload['negotiationRevision']);
-    final activeRevision = _negotiationRevision[from] ?? 0;
-    if (revision != null && revision < activeRevision) {
-      debugPrint('[WebRTC][$roomId][$from] ICE revision older than active '
-          'rev=$revision active=$activeRevision; deferring to remote desc');
-    }
     final iceKey =
-        '$roomId:$from:${revision ?? activeRevision}:${candidate.sdpMid}:${candidate.sdpMLineIndex}:${candidate.candidate}';
+        '$roomId:$from:${candidate.sdpMid}:${candidate.sdpMLineIndex}:${candidate.candidate}';
     if (!_rememberBounded(_seenIceKeys, iceKey, max: 800)) {
       debugPrint('[WebRTC][$roomId][$from] duplicate ICE ignored');
       return;
@@ -2194,8 +2124,6 @@ class CallNotifier extends StateNotifier<CallState> {
       'callId',
       'roomId',
       'sessionId',
-      'negotiationRevision',
-      'revision',
       'pcId',
     ]) {
       final value = message[key];
@@ -2242,7 +2170,6 @@ class CallNotifier extends StateNotifier<CallState> {
           'callId': roomId,
           'messageId': signal['messageId'],
           'sessionId': signal['sessionId'],
-          'negotiationRevision': signal['negotiationRevision'],
           'pcId': signal['pcId'],
           'userId': userId,
           'targetUserId': to,
@@ -2258,7 +2185,6 @@ class CallNotifier extends StateNotifier<CallState> {
           'callId': roomId,
           'messageId': signal['messageId'],
           'sessionId': signal['sessionId'],
-          'negotiationRevision': signal['negotiationRevision'],
           'pcId': signal['pcId'],
           'userId': userId,
           'targetUserId': to,
@@ -2510,6 +2436,7 @@ class CallNotifier extends StateNotifier<CallState> {
         return;
       }
       if (_hasRealRtcConnection()) {
+        _watchdogIceRestarted.clear();
         timer.cancel();
         if (identical(_connectionWatchdogTimer, timer)) {
           _connectionWatchdogTimer = null;
@@ -2543,23 +2470,17 @@ class CallNotifier extends StateNotifier<CallState> {
         final pc = _peers[peerId];
         if (pc == null) continue;
         unawaited(Future<void>(() async {
-          final hasRemoteDescription = await _safeRemoteDescription(pc) != null;
-          if (!hasRemoteDescription) {
-            debugPrint('[WebRTC][$peerId] watchdog re-offer; '
-                'elapsed=${elapsed}s signalingState=${pc.signalingState}');
-            if (pc.signalingState ==
-                RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
-              _resendLastLocalOffer(peerId, reason: 'watchdog');
-              return;
-            }
-            await _maybeMakeOffer(peerId, force: true);
+          if (elapsed < 12 || _watchdogIceRestarted.contains(peerId)) {
             return;
           }
-          if (elapsed >= 18 && elapsed % 9 == 0) {
-            debugPrint('[WebRTC][$peerId] watchdog ICE restart; '
-                'elapsed=${elapsed}s connectionState=${pc.connectionState}');
-            await _renegotiate(peerId, iceRestart: true);
+          final hasRemoteDescription = await _safeRemoteDescription(pc) != null;
+          if (!hasRemoteDescription || !_canCreateOffer(pc)) {
+            return;
           }
+          _watchdogIceRestarted.add(peerId);
+          debugPrint('[WebRTC][$peerId] watchdog ICE restart; '
+              'elapsed=${elapsed}s connectionState=${pc.connectionState}');
+          await _renegotiate(peerId, iceRestart: true);
         }).catchError((e, stack) {
           debugPrint('[WebRTC] watchdog recovery failed: $e\n$stack');
         }));
@@ -2744,13 +2665,9 @@ class CallNotifier extends StateNotifier<CallState> {
     _ignoreOffer.remove(peerId);
     _lastOfferAt.remove(peerId);
     _sdpOps.remove(peerId);
-    _negotiationRevision.remove(peerId);
-    _expectedAnswerRevision.remove(peerId);
-    _appliedAnswerRevision.remove(peerId);
-    _lastRemoteOfferKey.remove(peerId);
-    _lastLocalOfferSignal.remove(peerId);
     _peerConnectionIds.remove(peerId);
     _peerMissingSince.remove(peerId);
+    _watchdogIceRestarted.remove(peerId);
     _reconnectTimers.remove(peerId)?.cancel();
     final updated = state.participants.where((p) => p.id != peerId).toList();
     final connected = updated.any((p) => p.stream != null);
@@ -2786,19 +2703,6 @@ class CallNotifier extends StateNotifier<CallState> {
         }
       }
     }));
-  }
-
-  void _resendLastLocalOffer(String peerId, {required String reason}) {
-    final signal = _lastLocalOfferSignal[peerId];
-    if (signal == null) {
-      debugPrint('[WebRTC][$peerId] no cached local offer to resend; '
-          'reason=$reason');
-      return;
-    }
-    final revision = _intValue(signal['negotiationRevision']);
-    debugPrint('[WebRTC][$roomId][$peerId] resending cached offer '
-        'rev=${revision ?? 'missing'} reason=$reason');
-    _broadcast('offer', Map<String, dynamic>.from(signal));
   }
 
   Map<String, dynamic> _signalPayload(Map<String, dynamic> payload) {
@@ -2850,6 +2754,7 @@ class CallNotifier extends StateNotifier<CallState> {
     _peerMissingSince.clear();
     _lastParticipantStateWriteAt = null;
     _lastOfferAt.clear();
+    _watchdogIceRestarted.clear();
     _sendEdgeSignal('leave', {'from': userId});
     if (_channel != null) {
       _sb.removeChannel(_channel!);
