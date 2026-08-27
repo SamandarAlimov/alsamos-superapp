@@ -231,11 +231,11 @@ class CallNotifier extends StateNotifier<CallState> {
   static const int _maxVideoBitrateLevel = 3;
   static const List<int> _offerRetryScheduleSeconds = [8, 16, 28];
   static const List<int> _iceRestartBackoffSeconds = [30, 60, 120, 120];
-  static const List<Map<String, int>> _videoBitrateLadder = [
-    {'label': 360, 'kbps': 400, 'fps': 24},
-    {'label': 720, 'kbps': 1200, 'fps': 30},
-    {'label': 1080, 'kbps': 2500, 'fps': 30},
-    {'label': 2160, 'kbps': 10000, 'fps': 30},
+  static const List<Map<String, num>> _videoBitrateLadder = [
+    {'height': 360, 'kbps': 400, 'fps': 24, 'scaleResolutionDownBy': 6.0},
+    {'height': 720, 'kbps': 1200, 'fps': 30, 'scaleResolutionDownBy': 3.0},
+    {'height': 1080, 'kbps': 2500, 'fps': 30, 'scaleResolutionDownBy': 2.0},
+    {'height': 2160, 'kbps': 10000, 'fps': 30, 'scaleResolutionDownBy': 1.0},
   ];
 
   late final String _callSessionId =
@@ -670,6 +670,7 @@ class CallNotifier extends StateNotifier<CallState> {
               ? _cameraFallbackMessage(lastVideoError)
               : null,
         );
+        _configureInitialVideoBitrate(stream);
         return stream;
       } catch (e) {
         final wasVideoAttempt = constraints['video'] != false;
@@ -742,6 +743,31 @@ class CallNotifier extends StateNotifier<CallState> {
       };
     }
     return constraints;
+  }
+
+  void _configureInitialVideoBitrate(MediaStream stream) {
+    final maxLevel =
+        _maxVideoBitrateLevelForHeight(_captureVideoHeight(stream));
+    _videoBitrateLevel = maxLevel;
+    _appliedVideoBitrateLevel = null;
+    _lastVideoBitrateStepAt = null;
+  }
+
+  int _maxVideoBitrateLevelForHeight(int captureHeight) {
+    if (captureHeight <= 0) return _maxVideoBitrateLevel;
+    for (var i = _videoBitrateLadder.length - 1; i >= 0; i--) {
+      if (captureHeight >= _videoBitrateLadder[i]['height']!) return i;
+    }
+    return 0;
+  }
+
+  int _captureVideoHeight([MediaStream? stream]) {
+    final tracks = (stream ?? state.localStream)?.getVideoTracks();
+    if (tracks == null || tracks.isEmpty) return 0;
+    final height = tracks.first.getSettings()['height'];
+    if (height is num) return height.round();
+    if (height is String) return int.tryParse(height) ?? 0;
+    return 0;
   }
 
   Object _fallbackVideoConstraints() {
@@ -1733,6 +1759,9 @@ class CallNotifier extends StateNotifier<CallState> {
         await pc.close();
         throw StateError('No valid local media tracks available for call');
       }
+      unawaited(_applyVideoBitrateLevel(_videoBitrateLevel).catchError((e) {
+        debugPrint('[WebRTC] initial video bitrate apply failed: $e');
+      }));
       _scheduleInitialOffer(peerId, pc);
       _peerCreating.remove(peerId);
       completer.complete(pc);
@@ -1826,6 +1855,9 @@ class CallNotifier extends StateNotifier<CallState> {
         'iceRestart': iceRestart,
       };
       _broadcast('offer', signal);
+      unawaited(_applyVideoBitrateLevel(_videoBitrateLevel).catchError((e) {
+        debugPrint('[WebRTC] offer video bitrate apply failed: $e');
+      }));
     }).whenComplete(() => _makingOffer[peerId] = false);
   }
 
@@ -1888,6 +1920,9 @@ class CallNotifier extends StateNotifier<CallState> {
           'sdp': localDescription?.sdp ?? answer.sdp,
         }
       });
+      unawaited(_applyVideoBitrateLevel(_videoBitrateLevel).catchError((e) {
+        debugPrint('[WebRTC] answer video bitrate apply failed: $e');
+      }));
     });
   }
 
@@ -1964,7 +1999,10 @@ class CallNotifier extends StateNotifier<CallState> {
       ..['useinbandfec'] = '1'
       ..['usedtx'] = '1'
       ..['stereo'] = '0'
-      ..['maxaveragebitrate'] = '32000';
+      ..['sprop-stereo'] = '0'
+      ..['maxaveragebitrate'] = '32000'
+      ..['minptime'] = '10'
+      ..['ptime'] = '20';
     return params.entries
         .map((entry) => '${entry.key}=${entry.value}')
         .join(';');
@@ -2591,6 +2629,11 @@ class CallNotifier extends StateNotifier<CallState> {
     final cleanLink = snapshot.packetLoss < 1 &&
         snapshot.rttMs < 150 &&
         snapshot.jitterMs < 30;
+    final maxLevel = _maxVideoBitrateLevelForHeight(_captureVideoHeight());
+    if (_videoBitrateLevel > maxLevel) {
+      _videoBitrateLevel = maxLevel;
+      _appliedVideoBitrateLevel = null;
+    }
     var targetLevel = _videoBitrateLevel;
 
     if (badLink && _videoBitrateLevel > 0) {
@@ -2599,7 +2642,7 @@ class CallNotifier extends StateNotifier<CallState> {
           now.difference(lastStep) >= const Duration(seconds: 3)) {
         targetLevel--;
       }
-    } else if (cleanLink && _videoBitrateLevel < _maxVideoBitrateLevel) {
+    } else if (cleanLink && _videoBitrateLevel < maxLevel) {
       final lastStep = _lastVideoBitrateStepAt;
       if (lastStep != null &&
           now.difference(lastStep) >= const Duration(seconds: 15)) {
@@ -2624,9 +2667,16 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   Future<void> _applyVideoBitrateLevel(int level) async {
-    final config = _videoBitrateLadder[level];
-    final maxBitrate = config['kbps']! * 1000;
-    final maxFramerate = config['fps']!;
+    final maxLevel = _maxVideoBitrateLevelForHeight(_captureVideoHeight());
+    final effectiveLevel = level.clamp(0, maxLevel);
+    final config = _videoBitrateLadder[effectiveLevel];
+    final targetHeight = config['height']!.toInt();
+    final captureHeight = _captureVideoHeight();
+    final maxBitrate = (config['kbps']! * 1000).toInt();
+    final maxFramerate = config['fps']!.toInt();
+    final scaleResolutionDownBy = captureHeight > 0
+        ? (captureHeight / targetHeight).clamp(1.0, double.infinity)
+        : config['scaleResolutionDownBy']!.toDouble();
     for (final entry in _peers.entries) {
       final senders = await entry.value.getSenders();
       for (final sender in senders) {
@@ -2638,13 +2688,16 @@ class CallNotifier extends StateNotifier<CallState> {
         }
         parameters.encodings!.first
           ..maxBitrate = maxBitrate
-          ..maxFramerate = maxFramerate;
+          ..maxFramerate = maxFramerate
+          ..scaleResolutionDownBy = scaleResolutionDownBy;
         await sender.setParameters(parameters);
       }
     }
-    _appliedVideoBitrateLevel = level;
-    debugPrint('[WebRTC] adaptive video bitrate ${config['label']}p '
-        '${config['kbps']}kbps/${maxFramerate}fps');
+    _videoBitrateLevel = effectiveLevel;
+    _appliedVideoBitrateLevel = effectiveLevel;
+    debugPrint('[WebRTC] adaptive video bitrate ${targetHeight}p '
+        '${config['kbps']}kbps/${maxFramerate}fps '
+        'scale=${scaleResolutionDownBy.toStringAsFixed(2)}');
   }
 
   void _startResyncLoop() {
