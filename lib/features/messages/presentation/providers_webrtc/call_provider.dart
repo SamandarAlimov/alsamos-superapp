@@ -216,6 +216,7 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _edgeReconnectTimer;
   Timer? _realtimeResubscribeTimer;
   MediaStream? _screenStream;
+  Future<void>? _realtimeSubscribeInFlight;
   int _realtimeGeneration = 0;
   int _realtimeReconnectAttempts = 0;
   int _edgeReconnectAttempts = 0;
@@ -226,6 +227,10 @@ class CallNotifier extends StateNotifier<CallState> {
   bool _leaving = false;
   bool _startedAtStamped = false;
   bool _heartbeatRpcUnavailable = false;
+  DateTime? _realtimeChannelCreatedAt;
+  DateTime? _realtimeChannelSubscribedAt;
+  Object? _lastRealtimeSocketClose;
+  Object? _lastRealtimeSocketError;
   Future<MediaStream?>? _mediaAcquisition;
 
   static const int _maxVideoBitrateLevel = 3;
@@ -331,7 +336,8 @@ class CallNotifier extends StateNotifier<CallState> {
       }
       await _configureAudioRoute(speaker: videoOn);
       try {
-        await _supabaseSubscribe(stream).timeout(const Duration(seconds: 15));
+        await _ensureSupabaseSubscribed(stream)
+            .timeout(const Duration(seconds: 15));
       } catch (e) {
         debugPrint(
           '[WebRTC] Realtime signaling unavailable, continuing with edge: $e',
@@ -421,6 +427,11 @@ class CallNotifier extends StateNotifier<CallState> {
     _appliedVideoBitrateLevel = null;
     _lastVideoBitrateStepAt = null;
     _videoBitrateUpdateInFlight = false;
+    _realtimeSubscribeInFlight = null;
+    _realtimeChannelCreatedAt = null;
+    _realtimeChannelSubscribedAt = null;
+    _lastRealtimeSocketClose = null;
+    _lastRealtimeSocketError = null;
     _mediaAcquisition = null;
     await _edgeSocket?.close();
     _edgeSocket = null;
@@ -1199,12 +1210,46 @@ class CallNotifier extends StateNotifier<CallState> {
     }
   }
 
+  Future<void> _ensureSupabaseSubscribed(MediaStream localStream) {
+    final inFlight = _realtimeSubscribeInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _supabaseSubscribe(localStream);
+    _realtimeSubscribeInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_realtimeSubscribeInFlight, future)) {
+        _realtimeSubscribeInFlight = null;
+      }
+    });
+  }
+
+  String _realtimeChannelAge() {
+    final now = DateTime.now();
+    final createdAt = _realtimeChannelCreatedAt;
+    final subscribedAt = _realtimeChannelSubscribedAt;
+    final createdAge = createdAt == null
+        ? 'unknown'
+        : '${now.difference(createdAt).inMilliseconds}ms';
+    final subscribedAge = subscribedAt == null
+        ? 'not-yet-subscribed'
+        : '${now.difference(subscribedAt).inMilliseconds}ms';
+    return 'createdAge=$createdAge, subscribedAge=$subscribedAge';
+  }
+
+  String _formatRealtimeDiagnostic(Object? value) {
+    if (value == null) return 'null';
+    return '${value.runtimeType}: $value';
+  }
+
   Future<void> _supabaseSubscribe(MediaStream localStream) async {
     final generation = ++_realtimeGeneration;
     final previousChannel = _channel;
     if (previousChannel != null) {
       _channel = null;
-      await _sb.removeChannel(previousChannel);
+      final removeStatus = await _sb.removeChannel(previousChannel);
+      debugPrint(
+        '[WebRTC] Removed previous realtime channel before subscribe: '
+        '$removeStatus generation=$generation topic=webrtc:$roomId',
+      );
       if (_leaving || generation != _realtimeGeneration) return;
     }
     final completer = Completer<void>();
@@ -1213,11 +1258,43 @@ class CallNotifier extends StateNotifier<CallState> {
       opts: RealtimeChannelConfig(ack: true, key: userId, enabled: true),
     );
     _channel = channel;
+    _realtimeChannelCreatedAt = DateTime.now();
+    _realtimeChannelSubscribedAt = null;
+    _lastRealtimeSocketClose = null;
+    _lastRealtimeSocketError = null;
     bool isCurrentChannel() =>
         !_leaving &&
         mounted &&
         generation == _realtimeGeneration &&
         identical(_channel, channel);
+
+    debugPrint(
+      '[WebRTC] Creating realtime channel topic=webrtc:$roomId '
+      'generation=$generation user=$userId at='
+      '${_realtimeChannelCreatedAt!.toIso8601String()} '
+      'socketState=${_sb.realtime.connState} '
+      'socketConnected=${_sb.realtime.isConnected} '
+      'channels=${_sb.realtime.channels.length}',
+    );
+
+    _sb.realtime.onClose((event) {
+      if (!isCurrentChannel()) return;
+      _lastRealtimeSocketClose = event;
+      debugPrint(
+        '[WebRTC] Realtime socket closed generation=$generation '
+        '${_realtimeChannelAge()} '
+        'event=${_formatRealtimeDiagnostic(event)}',
+      );
+    });
+    _sb.realtime.onError((error) {
+      if (!isCurrentChannel()) return;
+      _lastRealtimeSocketError = error;
+      debugPrint(
+        '[WebRTC] Realtime socket error generation=$generation '
+        '${_realtimeChannelAge()} '
+        'error=${_formatRealtimeDiagnostic(error)}',
+      );
+    });
 
     channel
         .onBroadcast(
@@ -1382,9 +1459,18 @@ class CallNotifier extends StateNotifier<CallState> {
 
     channel.subscribe((status, [error]) async {
       if (!isCurrentChannel()) return;
-      debugPrint('[WebRTC] Channel subscribe status: $status, error: $error');
+      debugPrint(
+        '[WebRTC] Channel subscribe status: $status, '
+        'generation=$generation, ${_realtimeChannelAge()}, '
+        'socketState=${_sb.realtime.connState}, '
+        'socketConnected=${_sb.realtime.isConnected}, '
+        'error=${_formatRealtimeDiagnostic(error)}, '
+        'lastSocketClose=${_formatRealtimeDiagnostic(_lastRealtimeSocketClose)}, '
+        'lastSocketError=${_formatRealtimeDiagnostic(_lastRealtimeSocketError)}',
+      );
       if (status == RealtimeSubscribeStatus.subscribed) {
         try {
+          _realtimeChannelSubscribedAt = DateTime.now();
           Timer(const Duration(seconds: 10), () {
             if (isCurrentChannel()) {
               _realtimeReconnectAttempts = 0;
@@ -1411,7 +1497,14 @@ class CallNotifier extends StateNotifier<CallState> {
         }
       } else if (status == RealtimeSubscribeStatus.closed) {
         debugPrint(
-            '[WebRTC] Realtime channel closed; continuing with Edge/DB fallback');
+          '[WebRTC] Realtime channel closed; continuing with Edge/DB fallback. '
+          'generation=$generation, ${_realtimeChannelAge()}',
+        );
+        if (!completer.isCompleted) {
+          completer.completeError(
+            'Realtime channel closed before subscription stabilized',
+          );
+        }
         if (!_leaving && state.localStream != null) {
           // A closed RealtimeChannel is not guaranteed to be reusable. Recreate
           // it so DB participant/signaling listeners come back cleanly.
@@ -1427,8 +1520,12 @@ class CallNotifier extends StateNotifier<CallState> {
             try {
               if (!isCurrentChannel()) return;
               _channel = null;
-              await _sb.removeChannel(channel);
-              await _supabaseSubscribe(activeStream);
+              final removeStatus = await _sb.removeChannel(channel);
+              debugPrint(
+                '[WebRTC] Removed closed realtime channel before resubscribe: '
+                '$removeStatus generation=$generation topic=webrtc:$roomId',
+              );
+              await _ensureSupabaseSubscribed(activeStream);
             } catch (e, stack) {
               debugPrint('[WebRTC] Realtime resubscribe failed: $e\n$stack');
             }
@@ -3149,6 +3246,11 @@ class CallNotifier extends StateNotifier<CallState> {
     _appliedVideoBitrateLevel = null;
     _lastVideoBitrateStepAt = null;
     _videoBitrateUpdateInFlight = false;
+    _realtimeSubscribeInFlight = null;
+    _realtimeChannelCreatedAt = null;
+    _realtimeChannelSubscribedAt = null;
+    _lastRealtimeSocketClose = null;
+    _lastRealtimeSocketError = null;
     _sendEdgeSignal('leave', {'from': userId});
     if (_channel != null) {
       _sb.removeChannel(_channel!);
