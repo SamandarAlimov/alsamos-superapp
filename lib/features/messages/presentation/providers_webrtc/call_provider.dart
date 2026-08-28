@@ -75,6 +75,13 @@ class MiniCallSession {
   final bool isVideo;
 }
 
+class _QueuedSignal {
+  const _QueuedSignal(this.event, this.payload);
+
+  final String event;
+  final Map<String, dynamic> payload;
+}
+
 class CallState {
   const CallState({
     this.localStream,
@@ -198,6 +205,8 @@ class CallNotifier extends StateNotifier<CallState> {
   final Map<String, int> _offerRetryAttempts = {};
   final Map<String, DateTime> _lastIceRestartAt = {};
   final Map<String, int> _iceRestartAttempts = {};
+  final Map<String, List<Map<String, dynamic>>> _localIceBatches = {};
+  final Map<String, Timer> _localIceFlushTimers = {};
   final Set<String> _presencePeerIds = {};
   final Set<String> _edgePeerIds = {};
   final LinkedHashSet<String> _seenSignalIds = LinkedHashSet<String>();
@@ -215,6 +224,8 @@ class CallNotifier extends StateNotifier<CallState> {
   Timer? _edgeHeartbeatTimer;
   Timer? _edgeReconnectTimer;
   Timer? _realtimeResubscribeTimer;
+  Timer? _signalingQueueTimer;
+  StreamSubscription<dynamic>? _callAuthSubscription;
   MediaStream? _screenStream;
   Future<void>? _realtimeSubscribeInFlight;
   int _realtimeGeneration = 0;
@@ -227,11 +238,13 @@ class CallNotifier extends StateNotifier<CallState> {
   bool _leaving = false;
   bool _startedAtStamped = false;
   bool _heartbeatRpcUnavailable = false;
+  bool _edgeColdRecoveryActive = false;
   DateTime? _realtimeChannelCreatedAt;
   DateTime? _realtimeChannelSubscribedAt;
   Object? _lastRealtimeSocketClose;
   Object? _lastRealtimeSocketError;
   Future<MediaStream?>? _mediaAcquisition;
+  final Queue<_QueuedSignal> _signalingQueue = Queue<_QueuedSignal>();
 
   static const int _maxVideoBitrateLevel = 3;
   static const List<int> _offerRetryScheduleSeconds = [8, 16, 28];
@@ -335,15 +348,21 @@ class CallNotifier extends StateNotifier<CallState> {
         return;
       }
       await _configureAudioRoute(speaker: videoOn);
+      await _refreshSessionIfExpiringSoon();
+      _listenForCallAuthEvents();
       try {
         await _ensureSupabaseSubscribed(stream)
             .timeout(const Duration(seconds: 15));
       } catch (e) {
         debugPrint(
-          '[WebRTC] Realtime signaling unavailable, continuing with edge: $e',
+          '[WebRTC] Realtime signaling unavailable; live signaling degraded: $e',
         );
       }
-      await _connectEdgeSignaling(stream);
+      assert(
+        _edgeSocket == null || _edgeColdRecoveryActive,
+        'Realtime and Edge signaling transports must not both be active.',
+      );
+      debugPrint('[WebRTC] Active signaling transport=realtime');
       _startStatsLoop();
       _startResyncLoop();
       _startConnectionWatchdog();
@@ -358,6 +377,60 @@ class CallNotifier extends StateNotifier<CallState> {
         isConnecting: false,
         error: friendlyCallError(e),
       );
+    }
+  }
+
+  void _listenForCallAuthEvents() {
+    _callAuthSubscription ??= _sb.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+      final session = data.session;
+      debugPrint('[CALL] auth_event=$event');
+      if (event == AuthChangeEvent.tokenRefreshed ||
+          event == AuthChangeEvent.signedIn ||
+          event == AuthChangeEvent.initialSession) {
+        unawaited(_sb.realtime.setAuth(session?.accessToken));
+        debugPrint('[CALL] realtime_set_auth_called=true event=$event');
+      }
+    });
+  }
+
+  Future<void> _refreshSessionIfExpiringSoon() async {
+    final session = _sb.auth.currentSession;
+    final token = session?.accessToken;
+    final expiresAt = _jwtExpiresAt(token);
+    if (expiresAt == null) return;
+    final secondsLeft = expiresAt.difference(DateTime.now().toUtc()).inSeconds;
+    debugPrint('[CALL] jwt_exp=${expiresAt.toIso8601String()} '
+        'seconds_until_expiry=$secondsLeft');
+    if (secondsLeft <= 600) {
+      try {
+        await _sb.auth.refreshSession();
+        final refreshed = _sb.auth.currentSession?.accessToken;
+        await _sb.realtime.setAuth(refreshed);
+        debugPrint('[CALL] proactive_jwt_refresh=true');
+      } catch (e) {
+        debugPrint('[CALL] proactive_jwt_refresh_failed=$e');
+      }
+    }
+  }
+
+  DateTime? _jwtExpiresAt(String? jwt) {
+    if (jwt == null) return null;
+    final parts = jwt.split('.');
+    if (parts.length < 2) return null;
+    try {
+      final payload =
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) return null;
+      final exp = decoded['exp'];
+      if (exp is! num) return null;
+      return DateTime.fromMillisecondsSinceEpoch(
+        exp.toInt() * 1000,
+        isUtc: true,
+      );
+    } catch (_) {
+      return null;
     }
   }
 
@@ -394,11 +467,19 @@ class CallNotifier extends StateNotifier<CallState> {
     _edgeHeartbeatTimer?.cancel();
     _edgeReconnectTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
+    _signalingQueueTimer?.cancel();
+    for (final timer in _localIceFlushTimers.values) {
+      timer.cancel();
+    }
     _edgeHeartbeatTimer = null;
     _fastResyncTimer = null;
     _connectionWatchdogTimer = null;
     _realtimeResubscribeTimer = null;
     _edgeReconnectTimer = null;
+    _signalingQueueTimer = null;
+    _localIceFlushTimers.clear();
+    _localIceBatches.clear();
+    _signalingQueue.clear();
     _realtimeReconnectAttempts = 0;
     _edgeReconnectAttempts = 0;
     _connectionWatchdogTicks = 0;
@@ -432,6 +513,8 @@ class CallNotifier extends StateNotifier<CallState> {
     _realtimeChannelSubscribedAt = null;
     _lastRealtimeSocketClose = null;
     _lastRealtimeSocketError = null;
+    await _callAuthSubscription?.cancel();
+    _callAuthSubscription = null;
     _mediaAcquisition = null;
     await _edgeSocket?.close();
     _edgeSocket = null;
@@ -1383,37 +1466,6 @@ class CallNotifier extends StateNotifier<CallState> {
                 unawaited(_handleRemoteCallEnded('remote_left'));
               }
             })
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'call_participants',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'call_id',
-            value: roomId,
-          ),
-          callback: (_) {
-            if (!isCurrentChannel()) return;
-            unawaited(_syncDbParticipants(localStream));
-          },
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'video_calls',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'id',
-            value: roomId,
-          ),
-          callback: (payload) {
-            if (!isCurrentChannel()) return;
-            final status = payload.newRecord['status']?.toString();
-            if (_isTerminalCallStatus(status)) {
-              unawaited(_handleRemoteCallEnded(status));
-            }
-          },
-        )
         .onPresenceSync((_) {
       if (!isCurrentChannel()) return;
       try {
@@ -1810,19 +1862,7 @@ class CallNotifier extends StateNotifier<CallState> {
         if (candidate.candidate == null) return;
         debugPrint('[WebRTC][$peerId] local ICE '
             '${_candidateType(candidate.candidate)} ${candidate.sdpMid}');
-        _broadcast('ice', {
-          'messageId': _nextSignalId('ice', peerId),
-          'callId': roomId,
-          'sessionId': _callSessionId,
-          'from': userId,
-          'to': peerId,
-          'pcId': _peerConnectionIds[peerId],
-          'candidate': {
-            'candidate': candidate.candidate,
-            'sdpMid': candidate.sdpMid,
-            'sdpMLineIndex': candidate.sdpMLineIndex,
-          }
-        });
+        _queueLocalIceCandidate(peerId, candidate);
       };
       pc.onTrack = (event) {
         unawaited(_attachRemoteTrack(peerId, event));
@@ -2191,8 +2231,28 @@ class CallNotifier extends StateNotifier<CallState> {
     if (from == null || from == userId) return;
     final to = payload['to'] as String?;
     if (to != null && to != userId) return;
-    final candMap = payload['candidate'] as Map<String, dynamic>?;
-    if (candMap == null || _ignoreOffer[from] == true) return;
+    if (_ignoreOffer[from] == true) return;
+    final candidates = <Map<String, dynamic>>[];
+    final batched = payload['candidates'];
+    if (batched is List) {
+      candidates.addAll(
+        batched.whereType<Map>().map((m) => Map<String, dynamic>.from(m)),
+      );
+    }
+    final candMap = payload['candidate'];
+    if (candMap is Map) {
+      candidates.add(Map<String, dynamic>.from(candMap));
+    }
+    if (candidates.isEmpty) return;
+    for (final candidateMap in candidates) {
+      await _handleIceCandidateMap(from, candidateMap);
+    }
+  }
+
+  Future<void> _handleIceCandidateMap(
+    String from,
+    Map<String, dynamic> candMap,
+  ) async {
     final candidate = RTCIceCandidate(
       candMap['candidate'],
       candMap['sdpMid'],
@@ -2222,6 +2282,42 @@ class CallNotifier extends StateNotifier<CallState> {
       debugPrint('[WebRTC][$from] add remote ICE failed, queued: $e');
       _queueRemoteCandidate(from, candidate, 'add-failed');
     }
+  }
+
+  void _queueLocalIceCandidate(String peerId, RTCIceCandidate candidate) {
+    final batch = _localIceBatches.putIfAbsent(
+      peerId,
+      () => <Map<String, dynamic>>[],
+    );
+    batch.add({
+      'candidate': candidate.candidate,
+      'sdpMid': candidate.sdpMid,
+      'sdpMLineIndex': candidate.sdpMLineIndex,
+    });
+    if (batch.length == 1) {
+      _flushLocalIceBatch(peerId);
+    } else {
+      _localIceFlushTimers[peerId]?.cancel();
+      _localIceFlushTimers[peerId] = Timer(
+        const Duration(milliseconds: 250),
+        () => _flushLocalIceBatch(peerId),
+      );
+    }
+  }
+
+  void _flushLocalIceBatch(String peerId) {
+    _localIceFlushTimers.remove(peerId)?.cancel();
+    final candidates = _localIceBatches.remove(peerId);
+    if (candidates == null || candidates.isEmpty) return;
+    _broadcast('ice', {
+      'messageId': _nextSignalId('ice', peerId),
+      'callId': roomId,
+      'sessionId': _callSessionId,
+      'from': userId,
+      'to': peerId,
+      'pcId': _peerConnectionIds[peerId],
+      'candidates': candidates,
+    });
   }
 
   void _handleMedia(Map<String, dynamic> payload) {
@@ -3170,25 +3266,46 @@ class CallNotifier extends StateNotifier<CallState> {
   void _broadcast(String event, Map<String, dynamic> payload) {
     final channel = _channel;
     final signal = Map<String, dynamic>.from(payload);
-    _sendEdgeSignal(event, signal);
-    final shouldBroadcastRealtime = !_edgeHealthy ||
-        event == 'offer' ||
-        event == 'answer' ||
-        event == 'leave';
-    if (channel == null || !shouldBroadcastRealtime) return;
+    if (channel == null) return;
+    _signalingQueue.add(_QueuedSignal(event, signal));
+    _drainSignalingQueue(channel);
+  }
+
+  void _drainSignalingQueue(RealtimeChannel channel) {
+    if (_signalingQueueTimer != null) return;
+    _signalingQueueTimer =
+        Timer.periodic(const Duration(milliseconds: 200), (timer) {
+      if (_leaving ||
+          !identical(_channel, channel) ||
+          _signalingQueue.isEmpty) {
+        timer.cancel();
+        _signalingQueueTimer = null;
+        return;
+      }
+      final next = _signalingQueue.removeFirst();
+      _sendRealtimeSignal(channel, next);
+    });
+  }
+
+  void _sendRealtimeSignal(RealtimeChannel channel, _QueuedSignal signal) {
     unawaited(Future<void>(() async {
       try {
-        await channel.sendBroadcastMessage(event: event, payload: signal);
+        await channel.sendBroadcastMessage(
+          event: signal.event,
+          payload: signal.payload,
+        );
       } catch (e) {
-        debugPrint('[WebRTC] broadcast $event failed: $e');
+        debugPrint('[WebRTC] broadcast ${signal.event} failed: $e');
         await Future<void>.delayed(const Duration(milliseconds: 200));
         try {
           await channel.sendBroadcastMessage(
-            event: event,
-            payload: Map<String, dynamic>.from(payload),
+            event: signal.event,
+            payload: Map<String, dynamic>.from(signal.payload),
           );
         } catch (retryError) {
-          debugPrint('[WebRTC] broadcast $event retry failed: $retryError');
+          debugPrint(
+            '[WebRTC] broadcast ${signal.event} retry failed: $retryError',
+          );
         }
       }
     }));
@@ -3226,6 +3343,10 @@ class CallNotifier extends StateNotifier<CallState> {
     _connectionWatchdogTimer?.cancel();
     _edgeHeartbeatTimer?.cancel();
     _realtimeResubscribeTimer?.cancel();
+    _signalingQueueTimer?.cancel();
+    for (final timer in _localIceFlushTimers.values) {
+      timer.cancel();
+    }
     _screenStream?.getTracks().forEach((t) => t.stop());
     _screenStream = null;
     state.localStream?.getTracks().forEach((t) => t.stop());
@@ -3236,6 +3357,9 @@ class CallNotifier extends StateNotifier<CallState> {
     _peers.clear();
     _peerCreating.clear();
     _pending.clear();
+    _localIceFlushTimers.clear();
+    _localIceBatches.clear();
+    _signalingQueue.clear();
     _peerMissingSince.clear();
     _lastParticipantStateWriteAt = null;
     _lastOfferAt.clear();
@@ -3251,7 +3375,8 @@ class CallNotifier extends StateNotifier<CallState> {
     _realtimeChannelSubscribedAt = null;
     _lastRealtimeSocketClose = null;
     _lastRealtimeSocketError = null;
-    _sendEdgeSignal('leave', {'from': userId});
+    unawaited(_callAuthSubscription?.cancel());
+    _callAuthSubscription = null;
     if (_channel != null) {
       _sb.removeChannel(_channel!);
       _channel = null;
