@@ -1,10 +1,10 @@
 project_id = "mbhjganbihamoiqmankv"
 
 [functions.webrtc-signaling]
-verify_jwt = false
+verify_jwt = true
 
 [functions.live-stream-signaling]
-verify_jwt = false
+verify_jwt = true
 
 [functions.ai-assistant]
 verify_jwt = false

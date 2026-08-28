@@ -10,8 +10,8 @@ build/
 **/.kotlin/
 .claude/
 
-# Android release signing secrets
-# .env is intentionally tracked for this project. Do not ignore it.
+# Local environment secrets
+.env
 
 !.env.example
 *google-services*.json
