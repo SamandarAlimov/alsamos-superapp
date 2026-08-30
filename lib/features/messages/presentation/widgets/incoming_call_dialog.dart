@@ -14,6 +14,7 @@ class IncomingCallDialog extends StatefulWidget {
   final IncomingCallType callType;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
+  final VoidCallback? onMissed;
   final Stream<void>? dismissSignal;
   const IncomingCallDialog(
       {super.key,
@@ -22,6 +23,7 @@ class IncomingCallDialog extends StatefulWidget {
       required this.callType,
       required this.onAccept,
       required this.onDecline,
+      this.onMissed,
       this.dismissSignal});
 
   static Future<void> show(BuildContext context,
@@ -30,6 +32,7 @@ class IncomingCallDialog extends StatefulWidget {
       required IncomingCallType callType,
       required VoidCallback onAccept,
       required VoidCallback onDecline,
+      VoidCallback? onMissed,
       Stream<void>? dismissSignal}) {
     return showDialog(
       context: context,
@@ -40,6 +43,7 @@ class IncomingCallDialog extends StatefulWidget {
           callType: callType,
           onAccept: onAccept,
           onDecline: onDecline,
+          onMissed: onMissed,
           dismissSignal: dismissSignal),
     );
   }
@@ -52,6 +56,7 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
     with TickerProviderStateMixin {
   late AnimationController _pulse;
   StreamSubscription<void>? _dismissSub;
+  Timer? _ringTimeout;
 
   @override
   void initState() {
@@ -66,6 +71,15 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
     });
     // Repeating haptic for ringtone vibe
     _ring();
+
+    // Telegram-class lifecycle: an unanswered invite becomes "missed" locally
+    // as well, rather than relying only on the server reaper/cron.
+    _ringTimeout = Timer(const Duration(seconds: 45), () {
+      if (!mounted || !_isRinging) return;
+      _stopRing();
+      (widget.onMissed ?? widget.onDecline).call();
+      Navigator.of(context, rootNavigator: true).maybePop();
+    });
   }
 
   bool _isRinging = true;
@@ -80,11 +94,15 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
     }
   }
 
-  void _stopRing() => _isRinging = false;
+  void _stopRing() {
+    _isRinging = false;
+    _ringTimeout?.cancel();
+  }
 
   @override
   void dispose() {
     _isRinging = false;
+    _ringTimeout?.cancel();
     _dismissSub?.cancel();
     _pulse.dispose();
     super.dispose();
