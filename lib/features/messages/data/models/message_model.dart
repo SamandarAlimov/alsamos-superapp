@@ -53,7 +53,9 @@ class Message {
       'width': 'width',
       'height': 'height',
       'size_bytes': 'size_bytes',
+      'media_size_bytes': 'size_bytes',
       'mime_type': 'mime_type',
+      'media_file_name': 'file_name',
     }.entries) {
       final value = m[entry.key];
       if (value != null) metadata[entry.value] = value;
