@@ -374,6 +374,15 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           _forgetCall(callId);
         }
       },
+      onMissed: () async {
+        try {
+          await _missCall(callId: callId, currentUserId: currentUserId);
+        } catch (e, stack) {
+          debugPrint('[CallInviteListener] Error marking missed call: $e\n$stack');
+        } finally {
+          _forgetCall(callId);
+        }
+      },
       dismissSignal: dismissController.stream,
       onAccept: () async {
         try {
@@ -553,6 +562,86 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
           .timeout(const Duration(seconds: 5));
     } catch (e) {
       debugPrint('[CallInviteListener] invite accept update failed: $e');
+    }
+  }
+
+  Future<void> _missCall({
+    required String callId,
+    required String currentUserId,
+  }) async {
+    final sb = Supabase.instance.client;
+
+    try {
+      await sb.rpc('mark_video_call_missed', params: {
+        'p_call_id': callId,
+      }).timeout(const Duration(seconds: 8));
+      debugPrint('[CallInviteListener] mark_video_call_missed ok: $callId');
+      return;
+    } catch (e) {
+      if (!_isMissingRpc(e)) {
+        debugPrint('[CallInviteListener] missed-call RPC failed: $e');
+        rethrow;
+      }
+      debugPrint(
+          '[CallInviteListener] mark_video_call_missed unavailable, using compatibility fallback: $e');
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    var isGroupCall = false;
+    try {
+      final call = await sb
+          .from('video_calls')
+          .select('is_group_call,status,ended_at')
+          .eq('id', callId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      if (call == null || call['ended_at'] != null || call['status'] == 'ended') {
+        return;
+      }
+      isGroupCall = call['is_group_call'] == true;
+    } catch (e) {
+      debugPrint('[CallInviteListener] missed call lookup failed: $e');
+    }
+
+    try {
+      await sb.from('call_participants').upsert({
+        'call_id': callId,
+        'user_id': currentUserId,
+        'joined_at': null,
+        'left_at': now,
+        'is_muted': false,
+        'is_video_on': false,
+        'is_screen_sharing': false,
+        'is_hand_raised': false,
+        'connection_state': 'missed',
+        'last_seen_at': now,
+      }, onConflict: 'call_id,user_id').timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[CallInviteListener] missed participant update failed: $e');
+    }
+
+    try {
+      await sb
+          .from('call_invites')
+          .update({'status': 'missed', 'updated_at': now})
+          .eq('call_id', callId)
+          .eq('invitee_id', currentUserId)
+          .timeout(const Duration(seconds: 5));
+    } catch (e) {
+      debugPrint('[CallInviteListener] missed invite sync skipped: $e');
+    }
+
+    if (!isGroupCall) {
+      try {
+        await sb
+            .from('video_calls')
+            .update({'status': 'ended', 'ended_at': now})
+            .eq('id', callId)
+            .isFilter('ended_at', null)
+            .timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('[CallInviteListener] missed private call end fallback failed: $e');
+      }
     }
   }
 
