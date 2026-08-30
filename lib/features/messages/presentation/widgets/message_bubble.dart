@@ -19,16 +19,14 @@ import '../../../auth/presentation/providers/auth_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'call_history_message.dart';
 import 'location_message.dart';
-import 'open_graph_preview.dart';
 import 'media_gallery_viewer.dart';
 import '../pages/document_viewer_page.dart';
 import '../../../../shared/widgets/video_message_player.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:flutter/gestures.dart';
 import '../../data/models/message_interaction_model.dart' as mi;
 import '../../data/models/sticker_model.dart';
 import 'animated_sticker.dart';
 import 'standalone_emoji_message.dart';
+import 'message_content_rich.dart';
 
 final _timeFmt = DateFormat('HH:mm');
 
@@ -152,9 +150,6 @@ class MessageBubble extends ConsumerWidget {
     final hasMedia = mediaUrls.isNotEmpty;
     final poll = message.poll;
     final locationData = _locationData(text);
-    final linkUrl = locationData == null
-        ? RegExp(r'https?:\/\/[^\s]+').firstMatch(text)?.group(0)
-        : null;
     final bubbleMaxWidth =
         (MediaQuery.sizeOf(context).width * 0.72).clamp(0.0, 560.0).toDouble();
 
@@ -457,66 +452,65 @@ class MessageBubble extends ConsumerWidget {
                                     ),
                                   ),
                                 ),
-                              if (text.isNotEmpty && locationData == null)
+                              if (text.isNotEmpty &&
+                                  locationData == null &&
+                                  poll == null)
                                 Padding(
                                   padding: hasMedia
                                       ? const EdgeInsets.only(top: 6)
                                       : EdgeInsets.zero,
-                                  child: Stack(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 2),
-                                        child: Text.rich(
-                                          TextSpan(
-                                            children: [
-                                              ..._buildTextSpans(text, fg),
-                                              WidgetSpan(
-                                                  child: SizedBox(
-                                                      width: message.isEdited
-                                                          ? 70
-                                                          : 50)),
-                                            ],
-                                          ),
-                                          style: TextStyle(
-                                              fontSize: messageTextSize),
-                                          softWrap: true,
-                                          overflow: TextOverflow.visible,
+                                      MessageContentRich(
+                                        content: text,
+                                        isMine: isMine,
+                                        baseStyle: TextStyle(
+                                          color: fg,
+                                          fontSize: messageTextSize,
+                                          height: 1.4,
                                         ),
+                                        onHashtagTap: onHashtagTap,
                                       ),
-                                      Positioned(
-                                        right: 0,
-                                        bottom: 0,
+                                      const SizedBox(height: 3),
+                                      Align(
+                                        alignment: Alignment.centerRight,
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             if (message.isEdited) ...[
-                                              Text('(edited)',
-                                                  style: TextStyle(
-                                                      fontSize: 10,
-                                                      color: isMine
-                                                          ? fg.withValues(
-                                                              alpha: 0.7)
-                                                          : c.mutedForeground)),
+                                              Text(
+                                                '(edited)',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: isMine
+                                                      ? fg.withValues(alpha: 0.7)
+                                                      : c.mutedForeground,
+                                                ),
+                                              ),
                                               const SizedBox(width: 4),
                                             ],
                                             Text(
                                               _timeFmt.format(
-                                                  message.createdAt.toLocal()),
+                                                message.createdAt.toLocal(),
+                                              ),
                                               style: TextStyle(
-                                                  fontSize: 10,
-                                                  color: isMine
-                                                      ? fg.withValues(
-                                                          alpha: 0.7)
-                                                      : c.mutedForeground),
+                                                fontSize: 10,
+                                                color: isMine
+                                                    ? fg.withValues(alpha: 0.7)
+                                                    : c.mutedForeground,
+                                              ),
                                             ),
                                             if (isMine) ...[
                                               const SizedBox(width: 4),
                                               _StatusIcon(
-                                                  status: message.status,
-                                                  isRead: _isRead,
-                                                  isDelivered: _isDelivered,
-                                                  fg: fg),
+                                                status: message.status,
+                                                isRead: _isRead,
+                                                isDelivered: _isDelivered,
+                                                fg: fg,
+                                              ),
                                             ],
                                           ],
                                         ),
@@ -525,35 +519,32 @@ class MessageBubble extends ConsumerWidget {
                                   ),
                                 )
                               else if (!hasMedia)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      _timeFmt
-                                          .format(message.createdAt.toLocal()),
-                                      style: TextStyle(
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _timeFmt
+                                            .format(message.createdAt.toLocal()),
+                                        style: TextStyle(
                                           fontSize: 10,
                                           color: isMine
                                               ? fg.withValues(alpha: 0.7)
-                                              : c.mutedForeground),
-                                    ),
-                                    if (isMine) ...[
-                                      const SizedBox(width: 4),
-                                      _StatusIcon(
+                                              : c.mutedForeground,
+                                        ),
+                                      ),
+                                      if (isMine) ...[
+                                        const SizedBox(width: 4),
+                                        _StatusIcon(
                                           status: message.status,
                                           isRead: _isRead,
                                           isDelivered: _isDelivered,
-                                          fg: fg),
+                                          fg: fg,
+                                        ),
+                                      ],
                                     ],
-                                  ],
-                                ),
-                              if (linkUrl != null && linkUrl.isNotEmpty)
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                      maxWidth: (bubbleMaxWidth - 32)
-                                          .clamp(220, 320)),
-                                  child: OpenGraphPreview(url: linkUrl),
+                                  ),
                                 ),
                               if (message.translatedText != null)
                                 _InlineInsight(
@@ -736,69 +727,6 @@ class MessageBubble extends ConsumerWidget {
         ]),
       ),
     );
-  }
-
-  List<TextSpan> _buildTextSpans(String text, Color fg) {
-    final tokenRegex = RegExp(r'(https?:\/\/[^\s]+)|(^|[\s])#([a-zA-Z0-9_]+)');
-    final matches = tokenRegex.allMatches(text);
-    if (matches.isEmpty) {
-      return [
-        TextSpan(
-            text: text, style: TextStyle(color: fg, fontSize: 14, height: 1.45))
-      ];
-    }
-
-    final spans = <TextSpan>[];
-    int start = 0;
-    for (final m in matches) {
-      if (m.start > start) {
-        spans.add(TextSpan(
-            text: text.substring(start, m.start),
-            style: TextStyle(color: fg, fontSize: 14, height: 1.45)));
-      }
-      final url = m.group(1);
-      final tag = m.group(3);
-      if (url != null) {
-        spans.add(TextSpan(
-          text: url,
-          style: TextStyle(
-              color: isMine ? Colors.white : Colors.blue,
-              fontSize: 14,
-              height: 1.45,
-              decoration: TextDecoration.underline),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () async {
-              final uri = Uri.parse(url);
-              if (await canLaunchUrl(uri)) await launchUrl(uri);
-            },
-        ));
-      } else if (tag != null) {
-        final raw = m.group(0)!;
-        final prefix = raw.startsWith('#') ? '' : raw.substring(0, 1);
-        if (prefix.isNotEmpty) {
-          spans.add(TextSpan(
-              text: prefix,
-              style: TextStyle(color: fg, fontSize: 14, height: 1.45)));
-        }
-        spans.add(TextSpan(
-          text: '#$tag',
-          style: TextStyle(
-              color: isMine ? Colors.white : Colors.blue,
-              fontSize: 14,
-              height: 1.45,
-              fontWeight: FontWeight.w600),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () => onHashtagTap?.call(tag),
-        ));
-      }
-      start = m.end;
-    }
-    if (start < text.length) {
-      spans.add(TextSpan(
-          text: text.substring(start),
-          style: TextStyle(color: fg, fontSize: 14, height: 1.45)));
-    }
-    return spans;
   }
 
   void _contextMenu(BuildContext ctx, AlsamosColors c, String text) {
