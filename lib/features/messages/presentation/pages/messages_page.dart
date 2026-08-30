@@ -244,7 +244,7 @@ class _LeftPanelState extends ConsumerState<_LeftPanel> {
               (a.pinnedOrder ?? 1 << 30).compareTo(b.pinnedOrder ?? 1 << 30);
           if (po != 0) return po;
         }
-        return b.lastMessageAt.compareTo(a.lastMessageAt);
+        return b.activityAt.compareTo(a.activityAt);
       });
 
     if (widget.isCompact) {
@@ -1036,7 +1036,7 @@ class _ChatListItemState extends ConsumerState<_ChatListItem>
                                       size: 12, color: c.mutedForeground)
                                 ],
                               ])),
-                              Text(_fmt(conv.lastMessageAt),
+                              Text(_fmt(conv.activityAt),
                                   style: TextStyle(
                                       fontSize: 11,
                                       color: unread
@@ -1354,8 +1354,9 @@ class _LastMessage extends StatelessWidget {
       {required this.conv, required this.c, required this.unread});
   @override
   Widget build(BuildContext context) {
-    final draft = chatDrafts[conv.id];
-    if (draft != null) {
+    final localDraft = chatDrafts[conv.id];
+    final draft = localDraft?.trim().isNotEmpty == true ? localDraft : conv.draft;
+    if (draft != null && draft.trim().isNotEmpty) {
       return Text.rich(
         TextSpan(children: [
           const TextSpan(
