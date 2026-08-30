@@ -26,6 +26,7 @@ import '../../../../shared/utils/video_controller_lifecycle.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_interaction_model.dart';
 import '../../data/models/message_model.dart';
+import '../../data/models/message_structured_payload.dart';
 import '../../data/services/chat_media_upload_service.dart';
 import '../../data/services/media_settings_service.dart';
 import '../providers/conversations_provider.dart';
@@ -2405,12 +2406,21 @@ class _ChatPageState extends ConsumerState<ChatPage>
               .add(liveDuration ?? const Duration(minutes: 15))
           : null;
 
+      final expiresIso = expiresAt?.toIso8601String();
+      final locationMetadata = buildCanonicalLocationMetadata(
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+        label: label,
+        live: live,
+        expiresAt: expiresIso,
+      );
+
       await ref.read(messagesProvider(widget.conversationId).notifier).send(
         '$label\n${pos.latitude},${pos.longitude}',
+        mediaUrl: '${pos.latitude},${pos.longitude}',
         mediaType: live ? 'live_location' : 'location',
         metadata: {
-          if (expiresAt != null)
-            'live_location_expires_at': expiresAt.toIso8601String(),
+          ...locationMetadata,
           if (liveDuration != null)
             'live_location_duration_seconds': liveDuration.inSeconds,
         },
@@ -2539,10 +2549,19 @@ class _ChatPageState extends ConsumerState<ChatPage>
       );
       if (picked == null || !mounted) return;
       final label = picked.address ?? 'Tanlangan joy';
+      final locationMetadata = buildCanonicalLocationMetadata(
+        latitude: picked.latitude,
+        longitude: picked.longitude,
+        address: picked.address,
+        label: label,
+      );
       await ref.read(messagesProvider(widget.conversationId).notifier).send(
         '$label\n${picked.latitude},${picked.longitude}',
+        mediaUrl: '${picked.latitude},${picked.longitude}',
         mediaType: 'location',
         metadata: {
+          ...locationMetadata,
+          // Legacy kalitlar eski mobil buildlar uchun qoldiriladi.
           'location_label': label,
           'latitude': picked.latitude,
           'longitude': picked.longitude,
@@ -2662,23 +2681,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
                             onCreate: (q, opts) {
                           final pollText =
                               "$q\n${opts.map((o) => '- $o').join('\n')}";
+                          final pollMetadata = buildCanonicalPollMetadata(
+                            question: q,
+                            options: opts,
+                          );
                           ref
                               .read(messagesProvider(widget.conversationId)
                                   .notifier)
-                              .send(pollText, mediaType: 'poll', metadata: {
-                            'poll': {
-                              'question': q,
-                              'options': [
-                                for (var i = 0; i < opts.length; i++)
-                                  {
-                                    'id': 'opt_$i',
-                                    'text': opts[i],
-                                    'votes': 0,
-                                  }
-                              ],
-                              'multiple': false,
-                            }
-                          });
+                              .send(
+                                pollText,
+                                mediaType: 'poll',
+                                metadata: pollMetadata,
+                              );
                           AppToast.success(context, 'So\'rovnoma yuborildi');
                         })),
                 // v40: GIF tile

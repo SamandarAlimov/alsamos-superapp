@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'conversation_model.dart';
+import 'message_structured_payload.dart';
 
 /// Ported from web useMessages.ts `Message` interface.
 class Message {
@@ -55,6 +56,9 @@ class Message {
       'height': 'height',
       'size_bytes': 'size_bytes',
       'mime_type': 'mime_type',
+      'location_payload': 'location_payload',
+      'live_location_expires_at': 'live_location_expires_at',
+      'live_location_stopped_at': 'live_location_stopped_at',
     }.entries) {
       final value = m[entry.key];
       if (value != null) metadata[entry.value] = value;
@@ -244,10 +248,18 @@ class Message {
     return value is String && value.isNotEmpty ? value : null;
   }
 
-  Map<String, dynamic>? get poll {
-    final value = metadata['poll'];
-    return value is Map ? Map<String, dynamic>.from(value) : null;
-  }
+  Map<String, dynamic>? get poll => parseMessagePollPayload(
+        content: content,
+        mediaType: mediaType,
+        metadata: metadata,
+      );
+
+  Map<String, dynamic>? get location => parseMessageLocationPayload(
+        content: content,
+        mediaType: mediaType,
+        mediaUrl: mediaUrl,
+        metadata: metadata,
+      );
 
   String? get translatedText {
     final value = metadata['translation'];
@@ -271,7 +283,7 @@ class Message {
 const Object _sentinel = Object();
 
 Map<String, dynamic> _metadataFrom(Object? raw) {
-  if (raw == null) return const {};
+  if (raw == null) return <String, dynamic>{};
   if (raw is Map) return Map<String, dynamic>.from(raw);
   if (raw is String && raw.isNotEmpty) {
     try {
@@ -279,7 +291,7 @@ Map<String, dynamic> _metadataFrom(Object? raw) {
       if (decoded is Map) return Map<String, dynamic>.from(decoded);
     } catch (_) {}
   }
-  return const {};
+  return <String, dynamic>{};
 }
 
 int? _intFrom(Object? value) {

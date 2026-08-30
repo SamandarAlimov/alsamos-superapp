@@ -33,25 +33,56 @@ class _MessageContentRichState extends State<MessageContentRich> {
     }
   }
 
-  // Parse inline formatting: **bold**, _italic_, ~~strike~~, `code`, ||spoiler||
+  // Canonical Alsamos transport format:
+  // **bold**, __italic__, ++underline++, ~~strike~~, `code`, ||spoiler||.
+  // Legacy _italic_ ham eski buildlar uchun o'qiladi.
   List<InlineSpan> _parseInline(String text, TextStyle base, BuildContext context) {
     final spans = <InlineSpan>[];
-    final pattern = RegExp(r'\*\*([^*]+)\*\*|__([^_]+)__|_([^_]+)_|~~([^~]+)~~|`([^`]+)`|\|\|([^|]+)\|\|');
+    final pattern = RegExp(
+      r'\*\*([^*]+)\*\*|__([^_]+)__|\+\+([^+]+)\+\+|~~([^~]+)~~|`([^`]+)`|\|\|([^|]+)\|\||(^|[^_])_([^_\n]+)_(?!_)',
+    );
     int last = 0;
     for (final m in pattern.allMatches(text)) {
-      if (m.start > last) spans.add(TextSpan(text: text.substring(last, m.start), style: base));
+      if (m.start > last) {
+        spans.add(TextSpan(text: text.substring(last, m.start), style: base));
+      }
       if (m.group(1) != null) {
-        spans.add(TextSpan(text: m.group(1), style: base.copyWith(fontWeight: FontWeight.w700)));
+        spans.add(TextSpan(
+          text: m.group(1),
+          style: base.copyWith(fontWeight: FontWeight.w700),
+        ));
       } else if (m.group(2) != null) {
-        spans.add(TextSpan(text: m.group(2), style: base.copyWith(decoration: TextDecoration.underline)));
+        spans.add(TextSpan(
+          text: m.group(2),
+          style: base.copyWith(fontStyle: FontStyle.italic),
+        ));
       } else if (m.group(3) != null) {
-        spans.add(TextSpan(text: m.group(3), style: base.copyWith(fontStyle: FontStyle.italic)));
+        spans.add(TextSpan(
+          text: m.group(3),
+          style: base.copyWith(decoration: TextDecoration.underline),
+        ));
       } else if (m.group(4) != null) {
-        spans.add(TextSpan(text: m.group(4), style: base.copyWith(decoration: TextDecoration.lineThrough)));
+        spans.add(TextSpan(
+          text: m.group(4),
+          style: base.copyWith(decoration: TextDecoration.lineThrough),
+        ));
       } else if (m.group(5) != null) {
         spans.add(WidgetSpan(
           alignment: PlaceholderAlignment.middle,
-          child: Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(4)), child: Text(m.group(5)!, style: base.copyWith(fontFamily: 'monospace', fontSize: (base.fontSize ?? 14) - 1))),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              m.group(5)!,
+              style: base.copyWith(
+                fontFamily: 'monospace',
+                fontSize: (base.fontSize ?? 14) - 1,
+              ),
+            ),
+          ),
         ));
       } else if (m.group(6) != null) {
         final idx = m.start;
@@ -62,15 +93,32 @@ class _MessageContentRichState extends State<MessageContentRich> {
             onTap: () => setState(() => _revealedSpoilers.add(idx)),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(color: revealed ? Colors.transparent : Theme.of(context).colorScheme.onSurfaceVariant, borderRadius: BorderRadius.circular(4)),
-              child: Text(m.group(6)!, style: base.copyWith(color: revealed ? null : Colors.transparent)),
+              decoration: BoxDecoration(
+                color: revealed
+                    ? Colors.transparent
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                m.group(6)!,
+                style: base.copyWith(color: revealed ? null : Colors.transparent),
+              ),
             ),
           ),
+        ));
+      } else if (m.group(8) != null) {
+        final prefix = m.group(7) ?? '';
+        if (prefix.isNotEmpty) spans.add(TextSpan(text: prefix, style: base));
+        spans.add(TextSpan(
+          text: m.group(8),
+          style: base.copyWith(fontStyle: FontStyle.italic),
         ));
       }
       last = m.end;
     }
-    if (last < text.length) spans.add(TextSpan(text: text.substring(last), style: base));
+    if (last < text.length) {
+      spans.add(TextSpan(text: text.substring(last), style: base));
+    }
     return spans;
   }
 

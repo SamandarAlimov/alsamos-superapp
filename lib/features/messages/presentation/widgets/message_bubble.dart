@@ -80,39 +80,21 @@ class MessageBubble extends ConsumerWidget {
   bool get _isDelivered => message.status == 'delivered' || _isRead;
 
   ({double lat, double lng, String? label})? _locationData(String text) {
-    if (message.mediaType != 'location' &&
-        message.mediaType != 'live_location') {
-      return null;
-    }
-    final trimmed = text.trim();
-    if (trimmed.startsWith('{')) {
-      try {
-        final data = jsonDecode(trimmed) as Map<String, dynamic>;
-        final lat = (data['lat'] as num?)?.toDouble();
-        final lng = (data['lng'] as num?)?.toDouble();
-        if (lat == null || lng == null) return null;
-        return (
-          lat: lat,
-          lng: lng,
-          label: (data['label'] as String?)?.trim().isEmpty == true
-              ? null
-              : data['label'] as String?
-        );
-      } catch (_) {
-        return null;
-      }
-    }
-    final match =
-        RegExp(r'(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)').firstMatch(text);
-    if (match == null) return null;
-    final lat = double.tryParse(match.group(1)!);
-    final lng = double.tryParse(match.group(2)!);
+    final data = message.location;
+    if (data == null) return null;
+
+    final latRaw = data['latitude'];
+    final lngRaw = data['longitude'];
+    final lat = latRaw is num ? latRaw.toDouble() : double.tryParse('$latRaw');
+    final lng = lngRaw is num ? lngRaw.toDouble() : double.tryParse('$lngRaw');
     if (lat == null || lng == null) return null;
-    final label = text
-        .replaceAll(RegExp(r'https?://\S+'), '')
-        .replaceAll('📍', '')
-        .trim();
-    return (lat: lat, lng: lng, label: label.isEmpty ? null : label);
+
+    final address = data['address']?.toString().trim();
+    final label = data['label']?.toString().trim();
+    final resolvedLabel = address?.isNotEmpty == true
+        ? address
+        : (label?.isNotEmpty == true ? label : null);
+    return (lat: lat, lng: lng, label: resolvedLabel);
   }
 
   @override
@@ -457,7 +439,9 @@ class MessageBubble extends ConsumerWidget {
                                     ),
                                   ),
                                 ),
-                              if (text.isNotEmpty && locationData == null)
+                              if (text.isNotEmpty &&
+                                  locationData == null &&
+                                  poll == null)
                                 Padding(
                                   padding: hasMedia
                                       ? const EdgeInsets.only(top: 6)
@@ -739,64 +723,86 @@ class MessageBubble extends ConsumerWidget {
   }
 
   List<TextSpan> _buildTextSpans(String text, Color fg) {
-    final tokenRegex = RegExp(r'(https?:\/\/[^\s]+)|(^|[\s])#([a-zA-Z0-9_]+)');
-    final matches = tokenRegex.allMatches(text);
-    if (matches.isEmpty) {
-      return [
-        TextSpan(
-            text: text, style: TextStyle(color: fg, fontSize: 14, height: 1.45))
-      ];
-    }
+    // Web RichComposer transport markerlarini Flutterda ham kod sifatida
+    // ko'rsatmaymiz. Block markerlar vizual ko'rinishga normalizatsiya qilinadi.
+    final displayText = text.split('\n').map((line) {
+      final quote = RegExp(r'^>\s?(.*)$').firstMatch(line);
+      if (quote != null) return '│ ${quote.group(1) ?? ''}';
+
+      final bullet = RegExp(r'^[-*]\s+(.*)$').firstMatch(line);
+      if (bullet != null) return '• ${bullet.group(1) ?? ''}';
+
+      final heading = RegExp(r'^#{1,2}\s+(.*)$').firstMatch(line);
+      if (heading != null) return heading.group(1) ?? '';
+
+      if (RegExp(r'^(---|\*\*\*)\s*$').hasMatch(line)) return '──────────';
+      return line;
+    }).join('\n');
+
+    final base = TextStyle(color: fg, fontSize: 14, height: 1.45);
+    final tokenRegex = RegExp(
+      r'\*\*([^*\n]+)\*\*|__([^_\n]+)__|\+\+([^+\n]+)\+\+|~~([^~\n]+)~~|`([^`\n]+)`|\|\|([^|\n]+)\|\||https?:\/\/[^\s]+|#[a-zA-Z0-9_]+',
+    );
+    final matches = tokenRegex.allMatches(displayText);
+    if (matches.isEmpty) return [TextSpan(text: displayText, style: base)];
 
     final spans = <TextSpan>[];
-    int start = 0;
-    for (final m in matches) {
-      if (m.start > start) {
-        spans.add(TextSpan(
-            text: text.substring(start, m.start),
-            style: TextStyle(color: fg, fontSize: 14, height: 1.45)));
+    var cursor = 0;
+    for (final match in matches) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: displayText.substring(cursor, match.start), style: base));
       }
-      final url = m.group(1);
-      final tag = m.group(3);
-      if (url != null) {
+
+      if (match.group(1) != null) {
+        spans.add(TextSpan(text: match.group(1), style: base.copyWith(fontWeight: FontWeight.w700)));
+      } else if (match.group(2) != null) {
+        spans.add(TextSpan(text: match.group(2), style: base.copyWith(fontStyle: FontStyle.italic)));
+      } else if (match.group(3) != null) {
+        spans.add(TextSpan(text: match.group(3), style: base.copyWith(decoration: TextDecoration.underline)));
+      } else if (match.group(4) != null) {
+        spans.add(TextSpan(text: match.group(4), style: base.copyWith(decoration: TextDecoration.lineThrough)));
+      } else if (match.group(5) != null) {
         spans.add(TextSpan(
-          text: url,
-          style: TextStyle(
-              color: isMine ? Colors.white : Colors.blue,
-              fontSize: 14,
-              height: 1.45,
-              decoration: TextDecoration.underline),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () async {
-              final uri = Uri.parse(url);
-              if (await canLaunchUrl(uri)) await launchUrl(uri);
-            },
+          text: match.group(5),
+          style: base.copyWith(fontFamily: 'monospace', backgroundColor: fg.withValues(alpha: 0.12)),
         ));
-      } else if (tag != null) {
-        final raw = m.group(0)!;
-        final prefix = raw.startsWith('#') ? '' : raw.substring(0, 1);
-        if (prefix.isNotEmpty) {
+      } else if (match.group(6) != null) {
+        spans.add(TextSpan(
+          text: match.group(6),
+          style: base.copyWith(backgroundColor: fg.withValues(alpha: 0.2)),
+        ));
+      } else {
+        final token = match.group(0)!;
+        if (token.startsWith('http://') || token.startsWith('https://')) {
           spans.add(TextSpan(
-              text: prefix,
-              style: TextStyle(color: fg, fontSize: 14, height: 1.45)));
-        }
-        spans.add(TextSpan(
-          text: '#$tag',
-          style: TextStyle(
+            text: token,
+            style: base.copyWith(
               color: isMine ? Colors.white : Colors.blue,
-              fontSize: 14,
-              height: 1.45,
-              fontWeight: FontWeight.w600),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () => onHashtagTap?.call(tag),
-        ));
+              decoration: TextDecoration.underline,
+            ),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () async {
+                final uri = Uri.parse(token);
+                if (await canLaunchUrl(uri)) await launchUrl(uri);
+              },
+          ));
+        } else if (token.startsWith('#')) {
+          final tag = token.substring(1);
+          spans.add(TextSpan(
+            text: token,
+            style: base.copyWith(
+              color: isMine ? Colors.white : Colors.blue,
+              fontWeight: FontWeight.w600,
+            ),
+            recognizer: TapGestureRecognizer()..onTap = () => onHashtagTap?.call(tag),
+          ));
+        }
       }
-      start = m.end;
+      cursor = match.end;
     }
-    if (start < text.length) {
-      spans.add(TextSpan(
-          text: text.substring(start),
-          style: TextStyle(color: fg, fontSize: 14, height: 1.45)));
+
+    if (cursor < displayText.length) {
+      spans.add(TextSpan(text: displayText.substring(cursor), style: base));
     }
     return spans;
   }
