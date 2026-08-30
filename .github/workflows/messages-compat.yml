@@ -42,6 +42,7 @@ jobs:
           lib/features/messages/data/models/message_model.dart
           lib/features/messages/data/models/conversation_model.dart
           lib/features/messages/presentation/widgets/message_content_rich.dart
+          lib/features/messages/presentation/widgets/canonical_rich_composer.dart
           lib/features/messages/presentation/widgets/message_bubble.dart
           lib/features/messages/presentation/providers/messages_provider.dart
           lib/features/messages/presentation/providers/conversations_provider.dart
@@ -54,3 +55,4 @@ jobs:
           test/features/messages/message_payload_compat_test.dart
           test/features/messages/message_format_test.dart
           test/features/messages/conversation_draft_test.dart
+          test/features/messages/canonical_rich_composer_test.dart
