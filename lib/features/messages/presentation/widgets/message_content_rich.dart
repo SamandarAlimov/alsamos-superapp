@@ -39,7 +39,7 @@ class _MessageContentRichState extends State<MessageContentRich> {
   List<InlineSpan> _parseInline(String text, TextStyle base, BuildContext context) {
     final spans = <InlineSpan>[];
     final pattern = RegExp(
-      r'\*\*([^*]+)\*\*|__([^_]+)__|\+\+([^+]+)\+\+|~~([^~]+)~~|`([^`]+)`|\|\|([^|]+)\|\||(?<!_)_([^_\n]+)_(?!_)',
+      r'\*\*([^*]+)\*\*|__([^_]+)__|\+\+([^+]+)\+\+|~~([^~]+)~~|`([^`]+)`|\|\|([^|]+)\|\||(^|[^_])_([^_\n]+)_(?!_)',
     );
     int last = 0;
     for (final m in pattern.allMatches(text)) {
@@ -106,9 +106,11 @@ class _MessageContentRichState extends State<MessageContentRich> {
             ),
           ),
         ));
-      } else if (m.group(7) != null) {
+      } else if (m.group(8) != null) {
+        final prefix = m.group(7) ?? '';
+        if (prefix.isNotEmpty) spans.add(TextSpan(text: prefix, style: base));
         spans.add(TextSpan(
-          text: m.group(7),
+          text: m.group(8),
           style: base.copyWith(fontStyle: FontStyle.italic),
         ));
       }
