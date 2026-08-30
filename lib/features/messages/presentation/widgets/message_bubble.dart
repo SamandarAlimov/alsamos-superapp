@@ -80,39 +80,21 @@ class MessageBubble extends ConsumerWidget {
   bool get _isDelivered => message.status == 'delivered' || _isRead;
 
   ({double lat, double lng, String? label})? _locationData(String text) {
-    if (message.mediaType != 'location' &&
-        message.mediaType != 'live_location') {
-      return null;
-    }
-    final trimmed = text.trim();
-    if (trimmed.startsWith('{')) {
-      try {
-        final data = jsonDecode(trimmed) as Map<String, dynamic>;
-        final lat = (data['lat'] as num?)?.toDouble();
-        final lng = (data['lng'] as num?)?.toDouble();
-        if (lat == null || lng == null) return null;
-        return (
-          lat: lat,
-          lng: lng,
-          label: (data['label'] as String?)?.trim().isEmpty == true
-              ? null
-              : data['label'] as String?
-        );
-      } catch (_) {
-        return null;
-      }
-    }
-    final match =
-        RegExp(r'(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)').firstMatch(text);
-    if (match == null) return null;
-    final lat = double.tryParse(match.group(1)!);
-    final lng = double.tryParse(match.group(2)!);
+    final data = message.location;
+    if (data == null) return null;
+
+    final latRaw = data['latitude'];
+    final lngRaw = data['longitude'];
+    final lat = latRaw is num ? latRaw.toDouble() : double.tryParse('$latRaw');
+    final lng = lngRaw is num ? lngRaw.toDouble() : double.tryParse('$lngRaw');
     if (lat == null || lng == null) return null;
-    final label = text
-        .replaceAll(RegExp(r'https?://\S+'), '')
-        .replaceAll('📍', '')
-        .trim();
-    return (lat: lat, lng: lng, label: label.isEmpty ? null : label);
+
+    final address = data['address']?.toString().trim();
+    final label = data['label']?.toString().trim();
+    final resolvedLabel = address?.isNotEmpty == true
+        ? address
+        : (label?.isNotEmpty == true ? label : null);
+    return (lat: lat, lng: lng, label: resolvedLabel);
   }
 
   @override
@@ -457,7 +439,9 @@ class MessageBubble extends ConsumerWidget {
                                     ),
                                   ),
                                 ),
-                              if (text.isNotEmpty && locationData == null)
+                              if (text.isNotEmpty &&
+                                  locationData == null &&
+                                  poll == null)
                                 Padding(
                                   padding: hasMedia
                                       ? const EdgeInsets.only(top: 6)
