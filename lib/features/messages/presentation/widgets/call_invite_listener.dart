@@ -430,9 +430,11 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
 
   bool _isTerminalInviteStatus(String? status) {
     return status == 'accepted' ||
+        status == 'joined' ||
         status == 'declined' ||
         status == 'cancelled' ||
         status == 'missed' ||
+        status == 'expired' ||
         status == 'ended';
   }
 
@@ -559,19 +561,40 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
     required String currentUserId,
   }) async {
     final sb = Supabase.instance.client;
+
+    // Canonical lifecycle is server-side. In particular, declining a GROUP
+    // invite must never end the call for everyone else.
+    try {
+      await sb.rpc('decline_video_call', params: {
+        'p_call_id': callId,
+      }).timeout(const Duration(seconds: 8));
+      debugPrint('[CallInviteListener] decline_video_call ok: $callId');
+      return;
+    } catch (e) {
+      if (!_isMissingRpc(e)) {
+        debugPrint('[CallInviteListener] decline RPC failed: $e');
+        rethrow;
+      }
+      debugPrint(
+          '[CallInviteListener] decline_video_call unavailable, using compatibility fallback: $e');
+    }
+
     final now = DateTime.now().toUtc().toIso8601String();
+    var isGroupCall = false;
 
     try {
-      await sb
+      final call = await sb
           .from('video_calls')
-          .update({
-            'status': 'ended',
-            'ended_at': now,
-          })
+          .select('is_group_call,status,ended_at')
           .eq('id', callId)
+          .maybeSingle()
           .timeout(const Duration(seconds: 5));
+      if (call == null || call['ended_at'] != null || call['status'] == 'ended') {
+        return;
+      }
+      isGroupCall = call['is_group_call'] == true;
     } catch (e) {
-      debugPrint('[CallInviteListener] decline update failed: $e');
+      debugPrint('[CallInviteListener] decline call lookup failed: $e');
     }
 
     try {
@@ -591,15 +614,30 @@ class _CallInviteListenerState extends ConsumerState<CallInviteListener> {
       debugPrint('[CallInviteListener] decline participant update failed: $e');
     }
 
+    // Old schemas may still allow direct invite updates. New schemas sync this
+    // automatically from call_participants via a SECURITY DEFINER trigger.
     try {
       await sb
           .from('call_invites')
-          .update({'status': 'declined'})
+          .update({'status': 'declined', 'updated_at': now})
           .eq('call_id', callId)
           .eq('invitee_id', currentUserId)
           .timeout(const Duration(seconds: 5));
     } catch (e) {
-      debugPrint('[CallInviteListener] decline invite update failed: $e');
+      debugPrint('[CallInviteListener] decline invite sync skipped: $e');
+    }
+
+    if (!isGroupCall) {
+      try {
+        await sb
+            .from('video_calls')
+            .update({'status': 'ended', 'ended_at': now})
+            .eq('id', callId)
+            .isFilter('ended_at', null)
+            .timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('[CallInviteListener] private call end fallback failed: $e');
+      }
     }
   }
 
