@@ -154,6 +154,15 @@ class Conversation {
   bool get hasUnread => unreadCount > 0 || manuallyUnread;
   int get visibleUnreadCount => isMutedEffective ? 0 : unreadCount;
 
+  /// Telegram-style list activity: an unsent draft can be newer than the last
+  /// server message and should carry its own time/order without becoming a
+  /// fake message.
+  DateTime get activityAt {
+    final draftTime = draft?.trim().isNotEmpty == true ? draftUpdatedAt : null;
+    if (draftTime != null && draftTime.isAfter(lastMessageAt)) return draftTime;
+    return lastMessageAt;
+  }
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'type': type,
