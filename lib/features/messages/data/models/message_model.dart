@@ -1,6 +1,5 @@
-import 'dart:convert';
-
 import 'conversation_model.dart';
+import 'message_payload_compat.dart';
 
 /// Ported from web useMessages.ts `Message` interface.
 class Message {
@@ -45,7 +44,7 @@ class Message {
   });
 
   factory Message.fromMap(Map<String, dynamic> m) {
-    final metadata = _metadataFrom(m['metadata']);
+    var metadata = decodeMessageMetadata(m['metadata']);
     for (final entry in const {
       'media_path': 'media_path',
       'thumb_path': 'thumb_path',
@@ -59,13 +58,24 @@ class Message {
       final value = m[entry.key];
       if (value != null) metadata[entry.value] = value;
     }
+    metadata = hydrateStructuredMessageMetadata(m, metadata);
+
+    final mediaType = m['media_type'] as String?;
+    final mediaUrl = m['media_url'] as String?;
+    final content = normalizeLocationContentForLegacyRenderer(
+      mediaType: mediaType,
+      content: m['content'] as String?,
+      mediaUrl: mediaUrl,
+      metadata: metadata,
+    );
+
     return Message(
       id: m['id'] as String,
       conversationId: m['conversation_id'] as String,
       senderId: m['sender_id'] as String?,
-      content: m['content'] as String?,
-      mediaUrl: m['media_url'] as String?,
-      mediaType: m['media_type'] as String?,
+      content: content,
+      mediaUrl: mediaUrl,
+      mediaType: mediaType,
       replyToId: m['reply_to_id'] as String?,
       metadata: metadata,
       isEdited: (m['is_edited'] as bool?) ?? false,
@@ -106,31 +116,45 @@ class Message {
         'original_post_id': originalPostId,
       };
 
-  factory Message.fromCache(Map<String, dynamic> m) => Message(
-        id: m['id'] as String,
-        conversationId: m['conversation_id'] as String,
-        senderId: m['sender_id'] as String?,
+  factory Message.fromCache(Map<String, dynamic> m) {
+    final metadata = hydrateStructuredMessageMetadata(
+      m,
+      decodeMessageMetadata(m['metadata']),
+    );
+    final mediaType = m['media_type'] as String?;
+    final mediaUrl = m['media_url'] as String?;
+    return Message(
+      id: m['id'] as String,
+      conversationId: m['conversation_id'] as String,
+      senderId: m['sender_id'] as String?,
+      content: normalizeLocationContentForLegacyRenderer(
+        mediaType: mediaType,
         content: m['content'] as String?,
-        mediaUrl: m['media_url'] as String?,
-        mediaType: m['media_type'] as String?,
-        replyToId: m['reply_to_id'] as String?,
-        metadata: _metadataFrom(m['metadata']),
-        isEdited: (m['is_edited'] as bool?) ?? false,
-        isDeleted: (m['is_deleted'] as bool?) ?? false,
-        createdAt: DateTime.parse(m['created_at'] as String),
-        sender: m['sender'] == null
-            ? null
-            : ChatParticipant.fromMap(
-                Map<String, dynamic>.from(m['sender'] as Map),
-              ),
-        status: (m['status'] as String?) ?? 'sent',
-        readAt: m['read_at'] == null
-            ? null
-            : DateTime.parse(m['read_at'] as String),
-        tempId: m['temp_id'] as String?,
-        clientMessageId: m['client_message_id'] as String?,
-        commentCount: (m['comment_count'] as int?) ?? 0,
-      );
+        mediaUrl: mediaUrl,
+        metadata: metadata,
+      ),
+      mediaUrl: mediaUrl,
+      mediaType: mediaType,
+      replyToId: m['reply_to_id'] as String?,
+      metadata: metadata,
+      isEdited: (m['is_edited'] as bool?) ?? false,
+      isDeleted: (m['is_deleted'] as bool?) ?? false,
+      createdAt: DateTime.parse(m['created_at'] as String),
+      sender: m['sender'] == null
+          ? null
+          : ChatParticipant.fromMap(
+              Map<String, dynamic>.from(m['sender'] as Map),
+            ),
+      status: (m['status'] as String?) ?? 'sent',
+      readAt: m['read_at'] == null
+          ? null
+          : DateTime.parse(m['read_at'] as String),
+      tempId: m['temp_id'] as String?,
+      clientMessageId: m['client_message_id'] as String?,
+      commentCount: (m['comment_count'] as int?) ?? 0,
+      originalPostId: m['original_post_id'] as String?,
+    );
+  }
 
   Message copyWith({
     String? status,
@@ -244,8 +268,14 @@ class Message {
     return value is String && value.isNotEmpty ? value : null;
   }
 
-  Map<String, dynamic>? get poll {
-    final value = metadata['poll'];
+  Map<String, dynamic>? get poll => canonicalPollPayload(
+        metadata['poll'],
+        content: content,
+        mediaType: mediaType,
+      );
+
+  Map<String, dynamic>? get location {
+    final value = metadata['location'];
     return value is Map ? Map<String, dynamic>.from(value) : null;
   }
 
@@ -269,18 +299,6 @@ class Message {
 }
 
 const Object _sentinel = Object();
-
-Map<String, dynamic> _metadataFrom(Object? raw) {
-  if (raw == null) return const {};
-  if (raw is Map) return Map<String, dynamic>.from(raw);
-  if (raw is String && raw.isNotEmpty) {
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    } catch (_) {}
-  }
-  return const {};
-}
 
 int? _intFrom(Object? value) {
   if (value is int) return value;
