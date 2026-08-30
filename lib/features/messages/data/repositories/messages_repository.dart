@@ -1069,7 +1069,11 @@ class MessagesRepository {
       if (metadata['width'] != null) 'width': metadata['width'],
       if (metadata['height'] != null) 'height': metadata['height'],
       if (metadata['size_bytes'] != null) 'size_bytes': metadata['size_bytes'],
+      if (metadata['size_bytes'] != null)
+        'media_size_bytes': metadata['size_bytes'],
       if (metadata['mime_type'] != null) 'mime_type': metadata['mime_type'],
+      if (metadata['file_name'] != null)
+        'media_file_name': metadata['file_name'],
       if (metadata.isNotEmpty) 'metadata': metadata,
       if (clientMessageId != null) 'client_message_id': clientMessageId,
     };
@@ -1087,7 +1091,9 @@ class MessagesRepository {
               'width',
               'height',
               'size_bytes',
+              'media_size_bytes',
               'mime_type',
+              'media_file_name',
             }.contains(key));
         data = await _insertMessage(payload);
       } else if (clientMessageId != null &&
