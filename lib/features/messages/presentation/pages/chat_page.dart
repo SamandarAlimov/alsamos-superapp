@@ -136,21 +136,29 @@ class _ChatPageState extends ConsumerState<ChatPage>
   Conversation? _resolvedConversation;
   bool _resolvingConversation = false;
   bool _conversationResolveScheduled = false;
+  bool _draftTouched = false;
+  bool _suppressDraftPersistence = false;
 
   @override
   void initState() {
     super.initState();
     _messagesNotifier =
         ref.read(messagesProvider(widget.conversationId).notifier);
-    if (chatDrafts.containsKey(widget.conversationId)) {
-      _controller.text = chatDrafts[widget.conversationId]!;
-      _hasText = _controller.text.trim().isNotEmpty;
+    final initialDraft =
+        chatDrafts[widget.conversationId] ?? widget.conversation?.draft;
+    if (initialDraft?.trim().isNotEmpty == true) {
+      _controller.text = initialDraft!;
+      _hasText = true;
+      chatDrafts[widget.conversationId] = initialDraft;
     }
     _controller.addListener(() {
       final has = _controller.text.trim().isNotEmpty;
       if (has != _hasText) setState(() => _hasText = has);
       _sendTypingSignal(has);
-      _scheduleDraftSync();
+      if (!_suppressDraftPersistence) {
+        _draftTouched = true;
+        _scheduleDraftSync();
+      }
       _updateAutocomplete();
     });
     _focusNode.addListener(_onInputFocusChanged);
@@ -185,6 +193,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
     });
   }
 
+  void _hydrateDraftFromConversation(Conversation conversation) {
+    if (_draftTouched || _controller.text.trim().isNotEmpty) return;
+    final draft = conversation.draft;
+    if (draft?.trim().isNotEmpty != true) return;
+
+    _suppressDraftPersistence = true;
+    _controller.text = draft!;
+    _suppressDraftPersistence = false;
+    chatDrafts[widget.conversationId] = draft;
+    if (mounted) setState(() => _hasText = true);
+  }
+
   Future<void> _resolveConversationIfNeeded() async {
     if (_resolvingConversation) return;
     if (widget.conversation != null) return;
@@ -196,7 +216,10 @@ class _ChatPageState extends ConsumerState<ChatPage>
         ?.where((conversation) => conversation.id == widget.conversationId)
         .firstOrNull;
     if (cached != null) {
-      if (mounted) setState(() => _resolvedConversation = cached);
+      if (mounted) {
+        setState(() => _resolvedConversation = cached);
+        _hydrateDraftFromConversation(cached);
+      }
       return;
     }
 
@@ -213,6 +236,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       if (!mounted) return;
       if (resolved != null) {
         setState(() => _resolvedConversation = resolved);
+        _hydrateDraftFromConversation(resolved);
       }
     } catch (e) {
       debugPrint('[ChatPage] Could not resolve conversation header: $e');
@@ -986,14 +1010,35 @@ class _ChatPageState extends ConsumerState<ChatPage>
     });
   }
 
+  void _clearComposerDraftAfterSend() {
+    _draftSyncTimer?.cancel();
+    _draftTouched = true;
+    _suppressDraftPersistence = true;
+    _controller.clear();
+    _suppressDraftPersistence = false;
+    chatDrafts.remove(widget.conversationId);
+
+    // Clear immediately when the message is accepted into the local outbox.
+    // This is offline-safe and does not wait for network delivery.
+    unawaited(_messagesNotifier.syncDraft(''));
+
+    if (mounted) {
+      setState(() {
+        _hasText = false;
+        _hashtagQuery = null;
+        _mentionQuery = null;
+        _tokenStart = -1;
+      });
+    }
+  }
+
   void _send() {
     HapticFeedback.lightImpact();
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     _sendTypingSignal(false, force: true);
     ref.read(messagesProvider(widget.conversationId).notifier).send(text);
-    _controller.clear();
-    setState(() => _hasText = false);
+    _clearComposerDraftAfterSend();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(0,
@@ -1039,8 +1084,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       await ref
           .read(messagesProvider(widget.conversationId).notifier)
           .scheduleMessage(text, DateTime.now(), isSilent: true);
-      _controller.clear();
-      setState(() => _hasText = false);
+      _clearComposerDraftAfterSend();
       return;
     }
     final date = await showDatePicker(
@@ -1061,8 +1105,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     await ref
         .read(messagesProvider(widget.conversationId).notifier)
         .scheduleMessage(text, scheduledFor);
-    _controller.clear();
-    setState(() => _hasText = false);
+    _clearComposerDraftAfterSend();
   }
 
   void _scheduleDraftSync() {
