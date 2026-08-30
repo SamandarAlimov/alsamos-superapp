@@ -964,6 +964,12 @@ class MessagesRepository {
       if (metadata['height'] != null) 'height': metadata['height'],
       if (metadata['size_bytes'] != null) 'size_bytes': metadata['size_bytes'],
       if (metadata['mime_type'] != null) 'mime_type': metadata['mime_type'],
+      if (metadata['location'] is Map)
+        'location_payload': Map<String, dynamic>.from(metadata['location'] as Map),
+      if (metadata['live_location_expires_at'] != null)
+        'live_location_expires_at': metadata['live_location_expires_at'],
+      if (metadata['live_location_stopped_at'] != null)
+        'live_location_stopped_at': metadata['live_location_stopped_at'],
       if (metadata.isNotEmpty) 'metadata': metadata,
       if (clientMessageId != null) 'client_message_id': clientMessageId,
     };
@@ -982,6 +988,9 @@ class MessagesRepository {
               'height',
               'size_bytes',
               'mime_type',
+              'location_payload',
+              'live_location_expires_at',
+              'live_location_stopped_at',
             }.contains(key));
         data = await _insertMessage(payload);
       } else if (clientMessageId != null &&
@@ -1370,6 +1379,9 @@ class MessagesRepository {
       'height',
       'size_bytes',
       'mime_type',
+      'location_payload',
+      'live_location_expires_at',
+      'live_location_stopped_at',
     ].any(message.contains);
   }
 
