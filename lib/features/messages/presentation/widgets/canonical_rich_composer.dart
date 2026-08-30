@@ -502,7 +502,7 @@ class CanonicalRichComposerController extends TextEditingController {
         segment = '**$segment**';
       }
       if (active.any((m) => m.type == ComposerInlineFormat.italic)) {
-        segment = '__$segment__';
+        segment = '__${segment}__';
       }
       if (active.any((m) => m.type == ComposerInlineFormat.underline)) {
         segment = '++$segment++';
@@ -520,7 +520,7 @@ class CanonicalRichComposerController extends TextEditingController {
         }
       }
       if (link != null) {
-        segment = '[$segment](' + link.href! + ')';
+        segment = '[$segment](${link.href})';
       }
       out.write(segment);
     }
@@ -589,7 +589,7 @@ class CanonicalRichComposerController extends TextEditingController {
           out.add('- $body');
           break;
         case ComposerBlockFormat.ordered:
-          out.add((block?.data ?? '1') + '. ' + body);
+          out.add('${block?.data ?? '1'}. $body');
           break;
         case ComposerBlockFormat.paragraph:
         case null:
