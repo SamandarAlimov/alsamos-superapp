@@ -34,6 +34,7 @@ import '../providers/conversation_notification_settings_provider.dart';
 import '../providers/messages_provider.dart';
 import '../providers/conversation_admin_provider.dart';
 import '../widgets/call_history_message.dart';
+import '../widgets/call_preflight_dialog.dart';
 import '../widgets/conversation_admin_panel.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/composer_extras.dart';
@@ -1662,8 +1663,26 @@ class _ChatPageState extends ConsumerState<ChatPage>
     _showForwardDialog([m]);
   }
 
-  /// Initiates a real WebRTC call via Supabase Realtime signaling.
+  /// Opens the same Telegram-style pre-call experience on Android, iOS,
+  /// desktop and Flutter Web before any durable call session is created.
   Future<void> _startCall({required String type}) async {
+    if (!mounted) return;
+    final conv = widget.conversation;
+    final peerName = conv?.title.trim().isNotEmpty == true
+        ? conv!.title
+        : 'Suhbatdosh';
+
+    await CallPreflightDialog.show(
+      context,
+      peerName: peerName,
+      peerAvatar: conv?.displayAvatar,
+      initialType: type,
+      onStart: (selectedType) => _beginCall(type: selectedType),
+    );
+  }
+
+  /// Creates the durable call only after the preflight surface is confirmed.
+  Future<void> _beginCall({required String type}) async {
     HapticFeedback.heavyImpact();
     final isVideo = type == 'video';
     final conv = widget.conversation;
