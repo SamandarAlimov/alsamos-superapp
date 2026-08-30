@@ -49,34 +49,53 @@ void main() {
     });
 
     test('web canonical poll stays a native poll on mobile', () {
-      final poll = canonicalPollPayload({
-        'schema': alsamosMessagePayloadSchema,
-        'question': 'Qaysi biri?',
-        'options': [
-          {'id': 'a', 'text': 'A', 'votes': 2},
-          {'id': 'b', 'text': 'B', 'votes': 1},
-        ],
-        'multiple': true,
-        'anonymous': true,
-      });
+      final rawContent = 'Qaysi biri?\n- A\n- B';
+      final metadata = {
+        'poll': {
+          'schema': alsamosMessagePayloadSchema,
+          'question': 'Qaysi biri?',
+          'options': [
+            {'id': 'a', 'text': 'A', 'votes': 2},
+            {'id': 'b', 'text': 'B', 'votes': 1},
+          ],
+          'multiple': true,
+          'anonymous': true,
+        },
+      };
+      final poll = canonicalPollPayload(metadata['poll']);
+      final displayContent = normalizeLocationContentForLegacyRenderer(
+        mediaType: 'poll',
+        content: rawContent,
+        mediaUrl: null,
+        metadata: metadata,
+      );
 
       expect(poll, isNotNull);
       expect(poll!['question'], 'Qaysi biri?');
       expect((poll['options'] as List).length, 2);
       expect(poll['multiple'], isTrue);
+      expect(displayContent, isEmpty);
     });
 
     test('poll can recover from text when metadata was stripped by fallback', () {
+      const content = 'Savol?\n- Birinchi\n- Ikkinchi';
       final poll = canonicalPollPayload(
         null,
         mediaType: 'poll',
-        content: 'Savol?\n- Birinchi\n- Ikkinchi',
+        content: content,
+      );
+      final displayContent = normalizeLocationContentForLegacyRenderer(
+        mediaType: 'poll',
+        content: content,
+        mediaUrl: null,
+        metadata: const {},
       );
 
       expect(poll, isNotNull);
       expect(poll!['question'], 'Savol?');
       expect((poll['options'] as List).length, 2);
       expect(poll['schema'], alsamosMessagePayloadSchema);
+      expect(displayContent, isEmpty);
     });
   });
 }
