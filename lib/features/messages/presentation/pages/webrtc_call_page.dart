@@ -402,6 +402,13 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
                                   ),
                                 ),
                               _CallBtn(
+                                icon: LucideIcons.userPlus,
+                                label: 'Odam qo‘shish',
+                                tooltip: 'Qo‘ng‘iroqqa odam qo‘shish',
+                                active: false,
+                                onTap: _showAddPeopleSheet,
+                              ),
+                              _CallBtn(
                                 icon: LucideIcons.settings2,
                                 label: 'Qurilmalar',
                                 tooltip: 'Audio/video qurilmalari',
@@ -753,6 +760,387 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
     }
   }
 
+  Future<void> _showAddPeopleSheet() async {
+    if (!mounted) return;
+    final sb = Supabase.instance.client;
+    final uid = sb.auth.currentUser?.id;
+    if (uid == null) return;
+
+    var candidates = <_CallInviteCandidate>[];
+    String? loadError;
+
+    try {
+      final call = await sb
+          .from('video_calls')
+          .select('conversation_id')
+          .eq('id', widget.roomId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
+      final conversationId = call?['conversation_id']?.toString();
+      if (conversationId == null || conversationId.isEmpty) {
+        throw StateError('conversation_not_found');
+      }
+
+      final memberRows = await sb
+          .from('conversation_participants')
+          .select('user_id')
+          .eq('conversation_id', conversationId)
+          .timeout(const Duration(seconds: 8));
+
+      final activeRows = await sb
+          .from('call_participants')
+          .select('user_id')
+          .eq('call_id', widget.roomId)
+          .isFilter('left_at', null)
+          .timeout(const Duration(seconds: 8));
+
+      final activeIds = <String>{uid};
+      for (final row in activeRows as List) {
+        if (row is Map && row['user_id'] != null) {
+          activeIds.add(row['user_id'].toString());
+        }
+      }
+
+      final candidateIds = <String>{};
+      for (final row in memberRows as List) {
+        if (row is! Map || row['user_id'] == null) continue;
+        final id = row['user_id'].toString();
+        if (!activeIds.contains(id)) candidateIds.add(id);
+      }
+
+      if (candidateIds.isNotEmpty) {
+        final profileRows = await sb
+            .from('profiles')
+            .select('id,display_name,username,avatar_url,last_seen')
+            .inFilter('id', candidateIds.toList())
+            .timeout(const Duration(seconds: 8));
+
+        candidates = (profileRows as List)
+            .whereType<Map>()
+            .map(
+              (row) => _CallInviteCandidate(
+                id: row['id'].toString(),
+                name: row['display_name']?.toString().trim().isNotEmpty == true
+                    ? row['display_name'].toString()
+                    : row['username']?.toString().trim().isNotEmpty == true
+                        ? row['username'].toString()
+                        : 'Foydalanuvchi',
+                avatarUrl: row['avatar_url']?.toString(),
+                lastSeen: row['last_seen']?.toString(),
+              ),
+            )
+            .toList()
+          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      }
+    } catch (error) {
+      debugPrint('[WebRTCCallPage] add people load failed: $error');
+      loadError = 'Kontaktlarni yuklab bo‘lmadi';
+    }
+
+    if (!mounted) return;
+    final query = TextEditingController();
+    final invited = <String>{};
+
+    await showModalBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF111827),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final search = query.text.trim().toLowerCase();
+            final visible = candidates
+                .where((candidate) =>
+                    search.isEmpty || candidate.name.toLowerCase().contains(search))
+                .toList();
+
+            return SafeArea(
+              child: FractionallySizedBox(
+                heightFactor: MediaQuery.sizeOf(context).height < 700 ? 0.86 : 0.72,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.white24,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          const Row(
+                            children: [
+                              Icon(LucideIcons.userPlus,
+                                  color: Colors.white70, size: 20),
+                              SizedBox(width: 9),
+                              Text(
+                                'Odam qo‘shish',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: query,
+                            onChanged: (_) => setSheetState(() {}),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              hintText: 'Qidirish',
+                              hintStyle: const TextStyle(color: Colors.white38),
+                              prefixIcon: const Icon(
+                                LucideIcons.search,
+                                size: 18,
+                                color: Colors.white38,
+                              ),
+                              filled: true,
+                              fillColor: Colors.white.withValues(alpha: 0.06),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide:
+                                    const BorderSide(color: Colors.white10),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1, color: Colors.white10),
+                    Expanded(
+                      child: loadError != null
+                          ? Center(
+                              child: Text(
+                                loadError!,
+                                style: const TextStyle(color: Colors.white54),
+                              ),
+                            )
+                          : visible.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    'Taklif qilinadigan boshqa a’zo yo‘q',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  itemCount: visible.length,
+                                  itemBuilder: (context, index) {
+                                    final candidate = visible[index];
+                                    final sent = invited.contains(candidate.id);
+                                    return ListTile(
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 18, vertical: 3),
+                                      leading: CircleAvatar(
+                                        radius: 21,
+                                        backgroundColor: Colors.white12,
+                                        backgroundImage: candidate.avatarUrl
+                                                    ?.trim()
+                                                    .isNotEmpty ==
+                                                true
+                                            ? NetworkImage(candidate.avatarUrl!)
+                                            : null,
+                                        child: candidate.avatarUrl
+                                                    ?.trim()
+                                                    .isNotEmpty ==
+                                                true
+                                            ? null
+                                            : Text(
+                                                candidate.initials,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                      ),
+                                      title: Text(
+                                        candidate.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      subtitle: Text(
+                                        sent
+                                            ? 'Taklif yuborildi'
+                                            : candidate.statusLabel,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: sent
+                                              ? const Color(0xFF4ADE80)
+                                              : Colors.white38,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      trailing: sent
+                                          ? const Icon(
+                                              LucideIcons.check,
+                                              color: Color(0xFF4ADE80),
+                                              size: 20,
+                                            )
+                                          : Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                IconButton(
+                                                  tooltip:
+                                                      'Audio bilan taklif qilish',
+                                                  onPressed: () async {
+                                                    final ok =
+                                                        await _inviteToCall(
+                                                      candidate,
+                                                      withVideo: false,
+                                                    );
+                                                    if (ok && context.mounted) {
+                                                      setSheetState(() =>
+                                                          invited.add(
+                                                              candidate.id));
+                                                    }
+                                                  },
+                                                  icon: const Icon(
+                                                    LucideIcons.phone,
+                                                    size: 19,
+                                                    color: Colors.white70,
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  tooltip:
+                                                      'Video bilan taklif qilish',
+                                                  onPressed: () async {
+                                                    final ok =
+                                                        await _inviteToCall(
+                                                      candidate,
+                                                      withVideo: true,
+                                                    );
+                                                    if (ok && context.mounted) {
+                                                      setSheetState(() =>
+                                                          invited.add(
+                                                              candidate.id));
+                                                    }
+                                                  },
+                                                  icon: const Icon(
+                                                    LucideIcons.video,
+                                                    size: 19,
+                                                    color: Colors.white70,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                    );
+                                  },
+                                ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    query.dispose();
+  }
+
+  Future<bool> _inviteToCall(
+    _CallInviteCandidate candidate, {
+    required bool withVideo,
+  }) async {
+    final sb = Supabase.instance.client;
+    final callType = withVideo ? 'video' : 'audio';
+
+    try {
+      await sb.rpc('invite_to_video_call', params: {
+        'p_call_id': widget.roomId,
+        'p_invitee_id': candidate.id,
+        'p_call_type': callType,
+      }).timeout(const Duration(seconds: 8));
+      return true;
+    } catch (error) {
+      if (!_isMissingCallInviteRpc(error)) {
+        debugPrint('[WebRTCCallPage] invite RPC failed: $error');
+      }
+    }
+
+    try {
+      final now = DateTime.now().toUtc().toIso8601String();
+      final call = await sb
+          .from('video_calls')
+          .select('conversation_id')
+          .eq('id', widget.roomId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      final conversationId = call?['conversation_id'];
+
+      final existing = await sb
+          .from('call_invites')
+          .select('id')
+          .eq('call_id', widget.roomId)
+          .eq('invitee_id', candidate.id)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+
+      if (existing != null && existing['id'] != null) {
+        await sb
+            .from('call_invites')
+            .update({
+              'status': 'pending',
+              'call_type': callType,
+              'updated_at': now,
+            })
+            .eq('id', existing['id'])
+            .timeout(const Duration(seconds: 5));
+      } else {
+        await sb.from('call_invites').insert({
+          'call_id': widget.roomId,
+          'conversation_id': conversationId,
+          'inviter_id': sb.auth.currentUser?.id,
+          'invitee_id': candidate.id,
+          'status': 'pending',
+          'call_type': callType,
+          'metadata': const <String, dynamic>{},
+          'updated_at': now,
+        }).timeout(const Duration(seconds: 5));
+      }
+      return true;
+    } catch (error) {
+      debugPrint('[WebRTCCallPage] invite compatibility fallback failed: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Taklif yuborilmadi. Qayta urinib ko‘ring.')),
+        );
+      }
+      return false;
+    }
+  }
+
+  bool _isMissingCallInviteRpc(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('pgrst202') ||
+        text.contains('42883') ||
+        text.contains('invite_to_video_call') &&
+            (text.contains('does not exist') || text.contains('could not find'));
+  }
+
   Future<void> _showDeviceSheet(
     CallState state,
     CallNotifier notifier,
@@ -814,6 +1202,38 @@ class _WebRTCCallPageState extends ConsumerState<WebRTCCallPage> {
 }
 
 // ─── Helper widgets ───────────────────────────────────────────────────────────
+class _CallInviteCandidate {
+  const _CallInviteCandidate({
+    required this.id,
+    required this.name,
+    this.avatarUrl,
+    this.lastSeen,
+  });
+
+  final String id;
+  final String name;
+  final String? avatarUrl;
+  final String? lastSeen;
+
+  String get initials => name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .take(2)
+      .map((part) => part[0].toUpperCase())
+      .join();
+
+  String get statusLabel {
+    final parsed = DateTime.tryParse(lastSeen ?? '');
+    if (parsed == null) return 'Qo‘ng‘iroqqa taklif qilish';
+    final age = DateTime.now().toUtc().difference(parsed.toUtc());
+    if (age.inMinutes < 2) return 'hozirgina faol';
+    if (age.inMinutes < 60) return age.inMinutes.toString() + ' daqiqa oldin faol';
+    if (age.inHours < 24) return age.inHours.toString() + ' soat oldin faol';
+    return 'yaqinda faol';
+  }
+}
+
 class _CallDebugOverlay extends StatelessWidget {
   const _CallDebugOverlay({required this.callState});
 
