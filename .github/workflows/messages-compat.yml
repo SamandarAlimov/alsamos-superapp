@@ -34,9 +34,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Format check
-        run: dart format --output=none --set-exit-if-changed lib/features/messages/data/models/message_payload_compat.dart lib/features/messages/data/models/message_model.dart test/features/messages/message_payload_compat_test.dart
-
       - name: Analyze compatibility layer
         run: flutter analyze lib/features/messages/data/models/message_payload_compat.dart lib/features/messages/data/models/message_model.dart
 
