@@ -51,7 +51,11 @@ Map<String, dynamic> hydrateStructuredMessageMetadata(
     if (value != null) next[key] = value;
   }
 
-  final poll = canonicalPollPayload(next['poll'], content: row['content']?.toString(), mediaType: row['media_type']?.toString());
+  final poll = canonicalPollPayload(
+    next['poll'],
+    content: row['content']?.toString(),
+    mediaType: row['media_type']?.toString(),
+  );
   if (poll != null) {
     next['schema'] = alsamosMessagePayloadSchema;
     next['poll'] = poll;
@@ -66,6 +70,18 @@ String? normalizeLocationContentForLegacyRenderer({
   required String? mediaUrl,
   required Map<String, dynamic> metadata,
 }) {
+  // Existing Flutter bubble pollni metadata orqali native chizadi. Canonical yoki
+  // legacy poll tanilgandan keyin transport matnini ikkinchi marta ko'rsatmaymiz.
+  if (mediaType == 'poll' &&
+      canonicalPollPayload(
+            metadata['poll'],
+            content: content,
+            mediaType: mediaType,
+          ) !=
+          null) {
+    return '';
+  }
+
   if (mediaType != 'location' && mediaType != 'live_location') return content;
   final original = content?.trim() ?? '';
   if (_coordinatesFromText(original) != null) return content;
@@ -169,7 +185,7 @@ Map<String, dynamic>? _normalizePollOption(Object? value, int index) {
 }
 
 ({String question, List<String> options})? _parseLegacyPollContent(String raw) {
-  var text = raw.trim();
+  final text = raw.trim();
   final legacy = RegExp(r'\[POLL\]([\s\S]*?)\[/POLL\]').firstMatch(text);
   if (legacy != null) {
     try {
