@@ -1387,23 +1387,6 @@ class _LastMessage extends StatelessWidget {
     IconData? icon;
     Color iconColor = c.mutedForeground;
     String text = msg;
-
-    final lowerPreview = msg.trim().toLowerCase();
-    if (lowerPreview == 'rasm') {
-      icon = LucideIcons.image;
-    } else if (lowerPreview == 'video' || lowerPreview == 'videoxabar') {
-      icon = LucideIcons.video;
-    } else if (lowerPreview == 'audio' ||
-        lowerPreview == 'ovozli xabar' ||
-        lowerPreview == 'ovoz') {
-      icon = LucideIcons.mic;
-    } else if (lowerPreview == 'joylashuv') {
-      icon = LucideIcons.mapPin;
-    } else if (RegExp(r'\.[a-z0-9]{1,10}$', caseSensitive: false)
-        .hasMatch(msg.trim())) {
-      icon = LucideIcons.fileText;
-    }
-
     if (msg.startsWith('{') && msg.contains('"type"')) {
       try {
         final d = jsonDecode(msg) as Map<String, dynamic>;
