@@ -512,7 +512,7 @@ class MessagesRepository {
     }
   }
 
-  static String? _attachmentFileNameFromMap(Map<String, dynamic> map) {
+  String? _attachmentFileNameFromMap(Map<String, dynamic> map) {
     final metadata = _metadataFrom(map['metadata']);
     final candidates = <dynamic>[
       map['media_file_name'],
