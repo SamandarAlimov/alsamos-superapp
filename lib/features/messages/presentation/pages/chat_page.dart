@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show ImageFilter;
 
@@ -1746,20 +1747,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
                     'created_at': DateTime.now().toUtc().toIso8601String(),
                   },
                 );
-                // Send twice with small delay for reliability
-                await Future<void>.delayed(const Duration(milliseconds: 100));
-                await channel.sendBroadcastMessage(
-                  event: 'incoming_call',
-                  payload: {
-                    'call_id': callId,
-                    'conversation_id': widget.conversationId,
-                    'caller_id': uid,
-                    'caller_name': callerName,
-                    'caller_avatar': callerAvatar,
-                    'call_type': type,
-                    'created_at': DateTime.now().toUtc().toIso8601String(),
-                  },
-                );
               } catch (e) {
                 debugPrint('[ChatPage] Error broadcasting invite: $e');
               } finally {
@@ -1801,24 +1788,26 @@ class _ChatPageState extends ConsumerState<ChatPage>
         ),
       );
 
-      // End call record
-      await sb
-          .from('video_calls')
-          .update({
-            'status': 'ended',
-            'ended_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', callId)
-          .timeout(const Duration(seconds: 12));
+      // WebRTCCallPage already calls leave_video_call. Never force-end a
+      // group call here: one participant leaving must not terminate everybody.
+      final callRow = await _ensureCallLifecycleFinalized(
+        sb: sb,
+        callId: callId,
+      );
 
-      if (elapsed == null) return;
-      final mins = elapsed.inMinutes;
-      final secs = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
-      final durStr = '$mins:$secs';
-      ref.read(messagesProvider(widget.conversationId).notifier).send(
-            '📞 ${isVideo ? "Video" : "Audio"} qo\'ng\'iroq tugadi\nDavomiyligi: $durStr',
-            mediaType: 'call_history',
-          );
+      if (elapsed == null || callRow == null) return;
+      final endedAt = callRow['ended_at'];
+      final status = callRow['status']?.toString();
+      final fullyEnded = endedAt != null || status == 'ended';
+      if (!fullyEnded) return;
+
+      await _ensureCallHistoryFallback(
+        sb: sb,
+        callId: callId,
+        type: type,
+        elapsed: elapsed,
+        callRow: callRow,
+      );
     } catch (e) {
       if (mounted) {
         if (!loadingDismissed) {
@@ -1828,6 +1817,178 @@ class _ChatPageState extends ConsumerState<ChatPage>
         AppToast.error(context, friendlyError(e));
       }
     }
+  }
+
+  Future<Map<String, dynamic>?> _ensureCallLifecycleFinalized({
+    required SupabaseClient sb,
+    required String callId,
+  }) async {
+    Map<String, dynamic>? call;
+    try {
+      final row = await sb
+          .from('video_calls')
+          .select('id,host_id,call_type,status,started_at,ended_at,is_group_call')
+          .eq('id', callId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
+      if (row == null) return null;
+      call = Map<String, dynamic>.from(row);
+    } catch (e) {
+      debugPrint('[ChatPage] call finalization lookup failed: $e');
+      return null;
+    }
+
+    if (call['ended_at'] != null || call['status'] == 'ended') return call;
+
+    // The normal path has already invoked leave_video_call from CallNotifier.
+    // This compatibility path only runs when an older backend lacks that RPC.
+    try {
+      final active = await sb
+          .from('call_participants')
+          .select('id')
+          .eq('call_id', callId)
+          .isFilter('left_at', null)
+          .timeout(const Duration(seconds: 8));
+
+      final isGroup = call['is_group_call'] == true;
+      final activeCount = active is List ? active.length : 0;
+      if (!isGroup || activeCount == 0) {
+        final now = DateTime.now().toUtc().toIso8601String();
+        await sb
+            .from('video_calls')
+            .update({'status': 'ended', 'ended_at': now})
+            .eq('id', callId)
+            .isFilter('ended_at', null)
+            .timeout(const Duration(seconds: 8));
+        call = {...call, 'status': 'ended', 'ended_at': now};
+      }
+    } catch (e) {
+      debugPrint('[ChatPage] compatibility call finalization skipped: $e');
+    }
+
+    return call;
+  }
+
+  Future<void> _ensureCallHistoryFallback({
+    required SupabaseClient sb,
+    required String callId,
+    required String type,
+    required Duration elapsed,
+    required Map<String, dynamic> callRow,
+  }) async {
+    // New backend: record_finished_video_call creates the structured bubble
+    // atomically and messages.call_id makes it idempotent.
+    try {
+      final existing = await sb
+          .from('messages')
+          .select('id')
+          .eq('call_id', callId)
+          .eq('media_type', 'call_history')
+          .maybeSingle()
+          .timeout(const Duration(seconds: 6));
+      if (existing != null) return;
+
+      final payload = await _buildCallHistoryPayload(
+        sb: sb,
+        callId: callId,
+        type: type,
+        elapsed: elapsed,
+        callRow: callRow,
+      );
+      try {
+        await sb.from('messages').insert({
+          'conversation_id': widget.conversationId,
+          'sender_id': callRow['host_id'],
+          'content': jsonEncode(payload),
+          'media_type': 'call_history',
+          'call_id': callId,
+        }).timeout(const Duration(seconds: 8));
+        return;
+      } catch (e) {
+        if (!_isDuplicateConflict(e)) {
+          debugPrint('[ChatPage] canonical history insert failed: $e');
+        }
+        return;
+      }
+    } catch (e) {
+      // messages.call_id is absent on an older schema. Fall through to the
+      // legacy sender but keep the CONTENT canonical JSON, never plain text.
+      debugPrint('[ChatPage] call history canonical probe unavailable: $e');
+    }
+
+    final payload = await _buildCallHistoryPayload(
+      sb: sb,
+      callId: callId,
+      type: type,
+      elapsed: elapsed,
+      callRow: callRow,
+    );
+    await ref.read(messagesProvider(widget.conversationId).notifier).send(
+          jsonEncode(payload),
+          mediaType: 'call_history',
+        );
+  }
+
+  Future<Map<String, dynamic>> _buildCallHistoryPayload({
+    required SupabaseClient sb,
+    required String callId,
+    required String type,
+    required Duration elapsed,
+    required Map<String, dynamic> callRow,
+  }) async {
+    var lifecycleStatus = callRow['started_at'] == null ? 'cancelled' : 'ended';
+    String? calleeId;
+
+    try {
+      final invite = await sb
+          .from('call_invites')
+          .select('invitee_id,status')
+          .eq('call_id', callId)
+          .inFilter('status', ['missed', 'declined'])
+          .order('updated_at', ascending: false)
+          .limit(1)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      if (invite != null) {
+        final inviteStatus = invite['status']?.toString();
+        if (inviteStatus == 'missed' || inviteStatus == 'declined') {
+          lifecycleStatus = inviteStatus!;
+        }
+        calleeId = invite['invitee_id']?.toString();
+      }
+    } catch (_) {}
+
+    if (calleeId == null) {
+      try {
+        final hostId = callRow['host_id']?.toString();
+        final members = await sb
+            .from('conversation_participants')
+            .select('user_id')
+            .eq('conversation_id', widget.conversationId)
+            .timeout(const Duration(seconds: 5));
+        for (final row in members as List) {
+          if (row is! Map) continue;
+          final id = row['user_id']?.toString();
+          if (id != null && id != hostId) {
+            calleeId = id;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+
+    final endedAt =
+        callRow['ended_at']?.toString() ?? DateTime.now().toUtc().toIso8601String();
+
+    return {
+      'call_id': callId,
+      'type': type == 'audio' ? 'audio' : 'video',
+      'status': lifecycleStatus,
+      'duration': elapsed.inSeconds > 0 ? elapsed.inSeconds : null,
+      'timestamp': endedAt,
+      'caller_id': callRow['host_id']?.toString() ?? '',
+      'callee_id': calleeId ?? '',
+    };
   }
 
   Future<String> _createCallSession({
@@ -2057,6 +2218,20 @@ class _ChatPageState extends ConsumerState<ChatPage>
       if (callerAvatar != null) 'caller_avatar': callerAvatar,
     };
     try {
+      await sb.rpc('invite_to_video_call', params: {
+        'p_call_id': callId,
+        'p_invitee_id': recipientId,
+        'p_call_type': type,
+      }).timeout(const Duration(seconds: 8));
+      return;
+    } catch (e) {
+      if (!_isMissingRpc(e)) {
+        debugPrint('[ChatPage] invite_to_video_call RPC failed: $e');
+      }
+    }
+
+    // Compatibility with older call backends.
+    try {
       await sb.rpc('create_call_invite', params: {
         'p_call_id': callId,
         'p_invitee_id': recipientId,
@@ -2067,7 +2242,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       return;
     } catch (e) {
       if (!_isMissingRpc(e)) {
-        debugPrint('[ChatPage] create_call_invite RPC failed: $e');
+        debugPrint('[ChatPage] legacy create_call_invite RPC failed: $e');
       }
     }
 
