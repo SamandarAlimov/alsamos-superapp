@@ -37,6 +37,7 @@ import '../widgets/conversation_admin_panel.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/composer_extras.dart';
 import '../widgets/emoji_picker_sheet.dart';
+import '../widgets/canonical_rich_composer.dart';
 
 import '../widgets/pinned_messages_bar.dart';
 import '../providers/pinned_messages_provider.dart';
@@ -96,7 +97,7 @@ class _SendMessageIntent extends Intent {
 
 class _ChatPageState extends ConsumerState<ChatPage>
     with SingleTickerProviderStateMixin {
-  final _controller = TextEditingController();
+  final _controller = CanonicalRichComposerController();
   final _scrollController = ScrollController();
   final _focusNode = FocusNode();
   bool _hasText = false;
@@ -138,6 +139,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
   bool _conversationResolveScheduled = false;
   bool _draftTouched = false;
   bool _suppressDraftPersistence = false;
+  bool _editingComposer = false;
+  String? _draftBeforeEditTransport;
 
   @override
   void initState() {
@@ -147,7 +150,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final initialDraft =
         chatDrafts[widget.conversationId] ?? widget.conversation?.draft;
     if (initialDraft?.trim().isNotEmpty == true) {
-      _controller.text = initialDraft!;
+      _controller.setTransportText(initialDraft!);
       _hasText = true;
       chatDrafts[widget.conversationId] = initialDraft;
     }
@@ -155,7 +158,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       final has = _controller.text.trim().isNotEmpty;
       if (has != _hasText) setState(() => _hasText = has);
       _sendTypingSignal(has);
-      if (!_suppressDraftPersistence) {
+      if (!_suppressDraftPersistence && !_editingComposer) {
         _draftTouched = true;
         _scheduleDraftSync();
       }
@@ -199,7 +202,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     if (draft?.trim().isNotEmpty != true) return;
 
     _suppressDraftPersistence = true;
-    _controller.text = draft!;
+    _controller.setTransportText(draft!);
     _suppressDraftPersistence = false;
     chatDrafts[widget.conversationId] = draft;
     if (mounted) setState(() => _hasText = true);
@@ -350,7 +353,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   @override
   void dispose() {
-    final text = _controller.text.trim();
+    final text = _editingComposer
+        ? (_draftBeforeEditTransport ?? '').trim()
+        : _controller.transportText.trim();
     if (text.isNotEmpty) {
       chatDrafts[widget.conversationId] = text;
     } else {
@@ -1014,7 +1019,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     _draftSyncTimer?.cancel();
     _draftTouched = true;
     _suppressDraftPersistence = true;
-    _controller.clear();
+    _controller.clearRich();
     _suppressDraftPersistence = false;
     chatDrafts.remove(widget.conversationId);
 
@@ -1034,11 +1039,18 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   void _send() {
     HapticFeedback.lightImpact();
-    final text = _controller.text.trim();
+    final text = _controller.transportText.trim();
     if (text.isEmpty) return;
+    final wasEditing = _editingComposer;
     _sendTypingSignal(false, force: true);
-    ref.read(messagesProvider(widget.conversationId).notifier).send(text);
-    _clearComposerDraftAfterSend();
+    unawaited(
+      ref.read(messagesProvider(widget.conversationId).notifier).send(text),
+    );
+    if (wasEditing) {
+      _restoreDraftAfterEdit();
+    } else {
+      _clearComposerDraftAfterSend();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(0,
@@ -1048,7 +1060,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
   }
 
   Future<void> _showSendOptions() async {
-    final text = _controller.text.trim();
+    if (_editingComposer) {
+      _send();
+      return;
+    }
+    final text = _controller.transportText.trim();
     if (text.isEmpty) return;
     final choice = await showModalBottomSheet<String>(
       context: context,
@@ -1109,7 +1125,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
   }
 
   void _scheduleDraftSync() {
-    final text = _controller.text;
+    if (_editingComposer) return;
+    final text = _controller.transportText;
     if (text.trim().isNotEmpty) {
       chatDrafts[widget.conversationId] = text;
     } else {
@@ -1151,9 +1168,38 @@ class _ChatPageState extends ConsumerState<ChatPage>
   }
 
   void _onEdit(Message m) {
+    _draftBeforeEditTransport ??= _controller.transportText;
+    _editingComposer = true;
+    _suppressDraftPersistence = true;
+    _controller.setTransportText(m.content ?? '');
+    _suppressDraftPersistence = false;
     ref.read(messagesProvider(widget.conversationId).notifier).setEditing(m.id);
-    _controller.text = m.content ?? '';
+    setState(() => _hasText = _controller.text.trim().isNotEmpty);
     _focusNode.requestFocus();
+  }
+
+  void _restoreDraftAfterEdit() {
+    final draft = _draftBeforeEditTransport ?? '';
+    _editingComposer = false;
+    _draftBeforeEditTransport = null;
+    _suppressDraftPersistence = true;
+    _controller.setTransportText(draft);
+    _suppressDraftPersistence = false;
+
+    if (draft.trim().isNotEmpty) {
+      chatDrafts[widget.conversationId] = draft;
+    } else {
+      chatDrafts.remove(widget.conversationId);
+    }
+
+    if (mounted) {
+      setState(() => _hasText = _controller.text.trim().isNotEmpty);
+    }
+  }
+
+  void _cancelEditingComposer() {
+    ref.read(messagesProvider(widget.conversationId).notifier).setEditing(null);
+    _restoreDraftAfterEdit();
   }
 
   Future<void> _showEditHistory(Message m) async {
@@ -3626,12 +3672,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
             if (editingMsg != null)
               _EditingPreview(
                   message: editingMsg,
-                  onCancel: () {
-                    ref
-                        .read(messagesProvider(widget.conversationId).notifier)
-                        .setEditing(null);
-                    _controller.clear();
-                  },
+                  onCancel: _cancelEditingComposer,
                   c: c,
                   theme: theme),
             // === Voice/Video recording UI ===
@@ -3913,7 +3954,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final isDark = theme.brightness == Brightness.dark;
     final compact = MediaQuery.sizeOf(context).width < 560;
     final actionSize = compact ? 44.0 : 48.0;
-    final inputMaxHeight = compact ? 236.0 : 260.0;
+    final inputMaxHeight = compact ? 282.0 : 324.0;
     final composerSurface = c.card.withValues(alpha: isDark ? 0.78 : 0.86);
     final inputSurface = c.muted.withValues(alpha: isDark ? 0.52 : 0.74);
     final subtleShadow = [
@@ -3996,7 +4037,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                       },
                                     ),
                                   },
-                                  child: TextField(
+                                  child: CanonicalRichComposerField(
                                     controller: _controller,
                                     focusNode: _focusNode,
                                     minLines: 1,
@@ -4063,7 +4104,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
                       child: _hasText
                           ? GestureDetector(
                               key: const ValueKey('send'),
-                              onLongPress: _showSendOptions,
+                              onLongPress:
+                                  _editingComposer ? _send : _showSendOptions,
                               child: _ComposerCircleButton(
                                 icon: LucideIcons.send,
                                 foreground: Colors.white,
