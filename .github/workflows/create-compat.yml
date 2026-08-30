@@ -1,0 +1,54 @@
+name: Create compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/features/create/**'
+      - 'lib/features/stories/**'
+      - 'lib/shared/content/**'
+      - 'docs/contracts/create_v1.json'
+      - '.github/workflows/create-compat.yml'
+  pull_request:
+    paths:
+      - 'lib/features/create/**'
+      - 'lib/features/stories/**'
+      - 'lib/shared/content/**'
+      - 'docs/contracts/create_v1.json'
+      - '.github/workflows/create-compat.yml'
+
+concurrency:
+  group: create-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Create parity surface
+        run: >-
+          flutter analyze --no-fatal-warnings --no-fatal-infos
+          lib/features/create/data/create_collaboration_repository.dart
+          lib/features/create/presentation/create_page.dart
+          lib/features/create/presentation/widgets/create_post_tab.dart
+          lib/features/create/presentation/widgets/create_story_tab.dart
+          lib/features/create/presentation/widgets/create_reel_tab.dart
+          lib/features/create/presentation/widgets/create_tool_tray.dart
+          lib/features/create/presentation/widgets/create_media_preview_stage.dart
+          lib/features/stories/data/story_models.dart
+          lib/features/stories/data/stories_repository.dart
+          lib/shared/content/data/content_post_repository.dart
+          lib/shared/content/models/content_item.dart
