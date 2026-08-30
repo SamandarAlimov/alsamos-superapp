@@ -49,6 +49,34 @@ class MessagesRepository {
 
       if (convos.isEmpty) return [];
 
+      // Drafts are first-class conversation state (Telegram-style), not a
+      // page-local variable. Empty rows are clear tombstones and therefore are
+      // intentionally excluded from the visible draft map.
+      final draftMap = <String, String>{};
+      final draftUpdatedMap = <String, DateTime>{};
+      try {
+        final rows = await supabase
+            .from('message_drafts')
+            .select('conversation_id, content, updated_at')
+            .eq('user_id', userId)
+            .inFilter('conversation_id', ids)
+            .timeout(const Duration(seconds: 8));
+        for (final row in rows) {
+          final conversationId = row['conversation_id']?.toString();
+          final content = row['content']?.toString() ?? '';
+          if (conversationId == null || conversationId.isEmpty) continue;
+          if (content.trim().isEmpty) continue;
+
+          draftMap[conversationId] = content;
+          final updatedAt = DateTime.tryParse(row['updated_at']?.toString() ?? '');
+          if (updatedAt != null) {
+            draftUpdatedMap[conversationId] = updatedAt.toLocal();
+          }
+        }
+      } catch (error) {
+        debugPrint('[MessagesRepo] draft hydration skipped: $error');
+      }
+
       final privateConvIds = convos
           .where((c) => c['type'] == 'private')
           .map((c) => c['id'] as String)
@@ -201,6 +229,8 @@ class MessagesRepository {
           description: conv['description'] as String?,
           lastMessageAt: lastAt,
           lastMessage: lastMsgMap[convId],
+          draft: draftMap[convId],
+          draftUpdatedAt: draftUpdatedMap[convId],
           unreadCount: unread,
           isPinned: (part['is_pinned'] as bool?) ?? false,
           isMuted: (part['is_muted'] as bool?) ?? false,
@@ -1673,12 +1703,15 @@ class MessagesRepository {
     required String conversationId,
     required String userId,
     required String content,
+    DateTime? updatedAt,
   }) async {
+    // Empty content is a versioned clear tombstone. The shared DB monotonic
+    // trigger ignores delayed writes with an older updated_at.
     await supabase.from('message_drafts').upsert({
       'conversation_id': conversationId,
       'user_id': userId,
       'content': content,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': (updatedAt ?? DateTime.now()).toUtc().toIso8601String(),
     }, onConflict: 'conversation_id,user_id');
   }
 
