@@ -334,7 +334,21 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
 
   Future<void> syncDraft(String content) async {
     if (_userId == null) return;
-    await _enqueueInteraction('draft', payload: {'content': content});
+    final updatedAt = DateTime.now();
+
+    _ref.read(conversationsProvider.notifier).updateDraftLocally(
+          _convId,
+          content,
+          updatedAt: updatedAt,
+        );
+
+    await _enqueueInteraction(
+      'draft',
+      payload: {
+        'content': content,
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+      },
+    );
     await _syncAllOutboxes();
   }
 
@@ -822,6 +836,10 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
           conversationId: _convId,
           userId: userId,
           content: item.payload['content'] as String? ?? '',
+          updatedAt: DateTime.tryParse(
+                item.payload['updated_at']?.toString() ?? '',
+              ) ??
+              item.createdAt,
         );
         break;
       case 'mark_read':
