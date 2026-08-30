@@ -56,3 +56,4 @@ jobs:
           test/features/messages/message_format_test.dart
           test/features/messages/conversation_draft_test.dart
           test/features/messages/canonical_rich_composer_test.dart
+          test/features/messages/message_attachment_preview_test.dart
