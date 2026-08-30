@@ -15,6 +15,7 @@ import '../../../../shared/widgets/verified_badge.dart';
 import '../../../../shared/widgets/count_badge.dart' as shared_badges;
 import '../../../../shared/stories/story_avatar_ring.dart';
 import '../../data/models/conversation_model.dart';
+import '../../data/models/message_format.dart';
 import '../../data/models/message_model.dart';
 import '../../data/repositories/messages_repository.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
@@ -1357,13 +1358,16 @@ class _LastMessage extends StatelessWidget {
     final localDraft = chatDrafts[conv.id];
     final draft = localDraft?.trim().isNotEmpty == true ? localDraft : conv.draft;
     if (draft != null && draft.trim().isNotEmpty) {
+      final preview = stripMessageFormatting(draft)
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
       return Text.rich(
         TextSpan(children: [
           const TextSpan(
               text: 'Qoralama: ',
               style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500)),
           TextSpan(
-              text: draft,
+              text: preview,
               style:
                   TextStyle(color: unread ? c.foreground : c.mutedForeground)),
         ]),
