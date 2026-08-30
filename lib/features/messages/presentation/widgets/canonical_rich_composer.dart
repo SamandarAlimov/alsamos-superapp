@@ -637,6 +637,7 @@ class CanonicalRichComposerController extends TextEditingController {
 
     final ordered = boundaries.toList()..sort();
     final spans = <InlineSpan>[];
+    final selected = _normalizedSelection(selection, text.length);
 
     for (var i = 0; i < ordered.length - 1; i += 1) {
       final start = ordered[i];
@@ -670,7 +671,11 @@ class CanonicalRichComposerController extends TextEditingController {
             );
             break;
           case ComposerInlineFormat.spoiler:
+            final reveal = selected.start == selected.end
+                ? selected.start >= mark.start && selected.start <= mark.end
+                : selected.end > mark.start && selected.start < mark.end;
             current = current.copyWith(
+              color: reveal ? base.color : Colors.transparent,
               backgroundColor:
                   (base.color ?? Theme.of(context).colorScheme.onSurface)
                       .withValues(alpha: 0.24),
