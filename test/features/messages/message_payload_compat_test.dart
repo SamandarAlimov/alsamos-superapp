@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:alsamos/features/messages/data/models/message_payload_compat.dart';
+import 'package:alsamos_flutter/features/messages/data/models/message_payload_compat.dart';
 
 void main() {
   group('cross-app message payload compatibility', () {
