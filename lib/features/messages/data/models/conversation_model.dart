@@ -46,6 +46,8 @@ class Conversation {
   final String? description;
   final DateTime lastMessageAt;
   final String? lastMessage;
+  final String? draft;
+  final DateTime? draftUpdatedAt;
   final int unreadCount;
   final bool isPinned;
   final bool isMuted;
@@ -67,6 +69,8 @@ class Conversation {
     this.description,
     required this.lastMessageAt,
     this.lastMessage,
+    this.draft,
+    this.draftUpdatedAt,
     this.unreadCount = 0,
     this.isPinned = false,
     this.isMuted = false,
@@ -89,6 +93,8 @@ class Conversation {
     String? description,
     DateTime? lastMessageAt,
     Object? lastMessage = _sentinel,
+    Object? draft = _sentinel,
+    Object? draftUpdatedAt = _sentinel,
     int? unreadCount,
     bool? isPinned,
     bool? isMuted,
@@ -112,6 +118,10 @@ class Conversation {
         lastMessage: lastMessage == _sentinel
             ? this.lastMessage
             : lastMessage as String?,
+        draft: draft == _sentinel ? this.draft : draft as String?,
+        draftUpdatedAt: draftUpdatedAt == _sentinel
+            ? this.draftUpdatedAt
+            : draftUpdatedAt as DateTime?,
         unreadCount: unreadCount ?? this.unreadCount,
         isPinned: isPinned ?? this.isPinned,
         isMuted: isMuted ?? this.isMuted,
@@ -152,6 +162,8 @@ class Conversation {
         'description': description,
         'last_message_at': lastMessageAt.toIso8601String(),
         'last_message': lastMessage,
+        'draft': draft,
+        'draft_updated_at': draftUpdatedAt?.toIso8601String(),
         'unread_count': unreadCount,
         'is_pinned': isPinned,
         'is_muted': isMuted,
@@ -174,6 +186,12 @@ class Conversation {
         description: m['description'] as String?,
         lastMessageAt: DateTime.parse(m['last_message_at'] as String),
         lastMessage: m['last_message'] as String?,
+        draft: (m['draft'] as String?)?.trim().isEmpty == true
+            ? null
+            : m['draft'] as String?,
+        draftUpdatedAt: m['draft_updated_at'] == null
+            ? null
+            : DateTime.tryParse(m['draft_updated_at'].toString()),
         unreadCount: (m['unread_count'] as int?) ?? 0,
         isPinned: (m['is_pinned'] as bool?) ?? false,
         isMuted: (m['is_muted'] as bool?) ?? false,
