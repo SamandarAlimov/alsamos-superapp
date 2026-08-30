@@ -1399,8 +1399,6 @@ class _LastMessage extends StatelessWidget {
       icon = LucideIcons.mic;
     } else if (lowerPreview == 'joylashuv') {
       icon = LucideIcons.mapPin;
-    } else if (lowerPreview == "so'rovnoma" || lowerPreview == "so'rov") {
-      icon = LucideIcons.chartBar;
     } else if (RegExp(r'\.[a-z0-9]{1,10}
       try {
         final d = jsonDecode(msg) as Map<String, dynamic>;
