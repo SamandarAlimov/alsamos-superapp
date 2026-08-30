@@ -1,0 +1,44 @@
+name: Messages compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/features/messages/**'
+      - 'test/features/messages/**'
+      - '.github/workflows/messages-compat.yml'
+  pull_request:
+    paths:
+      - 'lib/features/messages/**'
+      - 'test/features/messages/**'
+      - '.github/workflows/messages-compat.yml'
+
+concurrency:
+  group: messages-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  messages-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed lib/features/messages/data/models/message_payload_compat.dart lib/features/messages/data/models/message_model.dart test/features/messages/message_payload_compat_test.dart
+
+      - name: Analyze compatibility layer
+        run: flutter analyze lib/features/messages/data/models/message_payload_compat.dart lib/features/messages/data/models/message_model.dart
+
+      - name: Cross-app payload tests
+        run: flutter test test/features/messages/message_payload_compat_test.dart
