@@ -179,6 +179,9 @@ class ContentPostRepository extends BaseRepository {
                 ? null
                 : ContentItem.fromPostMap(Map<String, dynamic>.from(newRecord));
             final id = item?.id ?? oldRecord['id']?.toString();
+            if (item?.raw['post_kind'] == 'story') {
+              return;
+            }
             if (item != null) {
               unawaited(_trySavePost(item));
             } else if (id != null) {
@@ -214,6 +217,7 @@ class ContentPostRepository extends BaseRepository {
         .table('posts')
         .select(postSelect)
         .eq('visibility', 'public')
+        .neq('post_kind', 'story')
         .order('is_pinned', ascending: false)
         .order('created_at', ascending: false)
         .range(from, to);
