@@ -1399,7 +1399,7 @@ class _LastMessage extends StatelessWidget {
       icon = LucideIcons.mic;
     } else if (lowerPreview == 'joylashuv') {
       icon = LucideIcons.mapPin;
-    } else if (RegExp(r'\.[a-z0-9]{1,10}\$', caseSensitive: false)
+    } else if (RegExp(r'\.[a-z0-9]{1,10}$', caseSensitive: false)
         .hasMatch(msg.trim())) {
       icon = LucideIcons.fileText;
     }
