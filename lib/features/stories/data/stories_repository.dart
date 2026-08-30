@@ -19,13 +19,17 @@ class StoriesRepository extends BaseRepository {
               '*, profile:profiles!stories_user_id_fkey(id,username,display_name,avatar_url,is_verified)',
             )
             .gt('expires_at', nowIso)
+            .neq('is_active', false)
             .order('created_at', ascending: true);
 
         final byUser = <String, StoryGroup>{};
         final order = <String>[];
         for (final raw in (rows as List)) {
           final m = Map<String, dynamic>.from(raw as Map);
-          final story = Story.fromMap(m);
+          final rawStory = Story.fromMap(m);
+          final story = rawStory.copyWithMediaUrl(
+            await _resolveStoryMediaUrl(rawStory),
+          );
           final profile = m['profile'] is Map
               ? Map<String, dynamic>.from(m['profile'] as Map)
               : <String, dynamic>{};
@@ -54,6 +58,24 @@ class StoriesRepository extends BaseRepository {
         }
         return groups;
       });
+
+  Future<String> _resolveStoryMediaUrl(Story story) async {
+    final bucket = story.storageBucket;
+    final key = story.storageKey;
+    if (bucket == null || bucket.isEmpty || key == null || key.isEmpty) {
+      return story.mediaUrl;
+    }
+
+    if (bucket == 'media') {
+      return _db.storageBucket(bucket).getPublicUrl(key);
+    }
+
+    try {
+      return await _db.storageBucket(bucket).createSignedUrl(key, 3600);
+    } catch (_) {
+      return story.mediaUrl;
+    }
+  }
 
   Future<void> createStory({
     required String userId,
