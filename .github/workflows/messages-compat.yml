@@ -34,8 +34,23 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Analyze compatibility layer
-        run: flutter analyze lib/features/messages/data/models/message_payload_compat.dart lib/features/messages/data/models/message_model.dart
+      - name: Analyze message protocol and renderers
+        run: >-
+          flutter analyze --no-fatal-warnings --no-fatal-infos
+          lib/features/messages/data/models/message_payload_compat.dart
+          lib/features/messages/data/models/message_format.dart
+          lib/features/messages/data/models/message_model.dart
+          lib/features/messages/data/models/conversation_model.dart
+          lib/features/messages/presentation/widgets/message_content_rich.dart
+          lib/features/messages/presentation/widgets/message_bubble.dart
+          lib/features/messages/presentation/providers/messages_provider.dart
+          lib/features/messages/presentation/providers/conversations_provider.dart
+          lib/features/messages/presentation/pages/chat_page.dart
+          lib/features/messages/presentation/pages/messages_page.dart
 
-      - name: Cross-app payload tests
-        run: flutter test test/features/messages/message_payload_compat_test.dart
+      - name: Cross-app protocol tests
+        run: >-
+          flutter test
+          test/features/messages/message_payload_compat_test.dart
+          test/features/messages/message_format_test.dart
+          test/features/messages/conversation_draft_test.dart
