@@ -256,7 +256,7 @@ class MessagesRepository {
               (a.pinnedOrder ?? 1 << 30).compareTo(b.pinnedOrder ?? 1 << 30);
           if (po != 0) return po;
         }
-        return b.lastMessageAt.compareTo(a.lastMessageAt);
+        return b.activityAt.compareTo(a.activityAt);
       });
       return hydratedResult;
     } catch (e, st) {
