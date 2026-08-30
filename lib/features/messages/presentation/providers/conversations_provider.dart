@@ -307,6 +307,24 @@ class ConversationsNotifier
     );
   }
 
+  /// Optimistic draft state for every Flutter target. This makes the chat list
+  /// update immediately while the same value is queued for cross-device sync.
+  void updateDraftLocally(
+    String conversationId,
+    String content, {
+    DateTime? updatedAt,
+  }) {
+    final visible = content.trim().isEmpty ? null : content;
+    _patchConversation(
+      conversationId,
+      (conversation) => conversation.copyWith(
+        draft: visible,
+        draftUpdatedAt:
+            visible == null ? null : (updatedAt ?? DateTime.now()),
+      ),
+    );
+  }
+
   void updatePreviewFromMessages(
     String conversationId,
     List<Message> messages,
@@ -377,6 +395,17 @@ class ConversationsNotifier
         event: PostgresChangeEvent.insert,
         schema: 'public',
         table: 'message_reads',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'user_id',
+          value: _userId,
+        ),
+        callback: (_) => _scheduleReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'message_drafts',
         filter: PostgresChangeFilter(
           type: PostgresChangeFilterType.eq,
           column: 'user_id',
