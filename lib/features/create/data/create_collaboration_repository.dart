@@ -71,18 +71,16 @@ class CreateCollaborationRepository extends BaseRepository {
     required Iterable<CreateCollaborator> collaborators,
   }) {
     return guard('upsertPendingInvites', () async {
-      final invitedBy = requireUserId();
-      final payload = buildPendingInvitePayload(
-        postId: postId,
-        invitedBy: invitedBy,
-        collaborators: collaborators,
-      );
-      if (payload.isEmpty) return;
+      requireUserId();
+      final seen = <String>{};
 
-      await _db.table('post_collaborators').upsert(
-            payload,
-            onConflict: 'post_id,user_id',
-          );
+      for (final collaborator in collaborators) {
+        if (collaborator.id.isEmpty || !seen.add(collaborator.id)) continue;
+        await _db.rpc('invite_post_collaborator', params: {
+          'p_post_id': postId,
+          'p_user_id': collaborator.id,
+        });
+      }
     });
   }
 
@@ -90,16 +88,25 @@ class CreateCollaborationRepository extends BaseRepository {
     return query.trim().replaceFirst(RegExp(r'^@'), '');
   }
 
-  Future<Map<String, dynamic>> respondToInvite({
+  Future<String> respondToInvite({
     required String collaborationId,
     required String response,
   }) {
     return guard('respondToInvite', () async {
-      final result = await _db.rpc('respond_collaboration_invite', params: {
+      final normalized = response.trim().toLowerCase();
+      if (normalized != 'accepted' && normalized != 'declined') {
+        throw ArgumentError.value(
+          response,
+          'response',
+          'accepted yoki declined bo‘lishi kerak',
+        );
+      }
+
+      final result = await _db.rpc('respond_post_collaboration', params: {
         'p_collaboration_id': collaborationId,
-        'p_response': response,
+        'p_accept': normalized == 'accepted',
       });
-      return Map<String, dynamic>.from(result as Map);
+      return result?.toString() ?? normalized;
     });
   }
 
@@ -126,23 +133,19 @@ class CreateCollaborationRepository extends BaseRepository {
 
   Future<void> leaveCollaboration({required String collaborationId}) {
     return guard('leaveCollaboration', () async {
-      final userId = requireUserId();
-      await _db
-          .table('post_collaborators')
-          .delete()
-          .eq('id', collaborationId)
-          .eq('user_id', userId);
+      requireUserId();
+      await _db.rpc('leave_post_collaboration', params: {
+        'p_collaboration_id': collaborationId,
+      });
     });
   }
 
   Future<void> cancelInvite({required String collaborationId}) {
     return guard('cancelInvite', () async {
-      final userId = requireUserId();
-      await _db
-          .table('post_collaborators')
-          .delete()
-          .eq('id', collaborationId)
-          .eq('invited_by', userId);
+      requireUserId();
+      await _db.rpc('remove_post_collaborator', params: {
+        'p_collaboration_id': collaborationId,
+      });
     });
   }
 
