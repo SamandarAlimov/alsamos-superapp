@@ -2,6 +2,16 @@ import 'dart:convert';
 
 const String alsamosMessagePayloadSchema = 'alsamos.message.v1';
 
+/// Marker of the legacy text location protocol produced by the web client and
+/// by share links:
+/// `<pushpin> LOCATION:<lat>,<lng>|<address>[|LIVE:<expiresAt>]`
+///
+/// This is a data protocol, not user-facing text, so it must never reach the
+/// bubble as-is. See docs/CONTRACTS/message-protocol.md section 4.
+const String legacyLocationContentMarker = 'LOCATION:';
+
+const String _legacyLiveSegmentMarker = 'LIVE:';
+
 Map<String, dynamic> decodeMessageMetadata(Object? raw) {
   if (raw == null) return <String, dynamic>{};
   if (raw is Map) return Map<String, dynamic>.from(raw);
@@ -12,6 +22,58 @@ Map<String, dynamic> decodeMessageMetadata(Object? raw) {
     } catch (_) {}
   }
   return <String, dynamic>{};
+}
+
+/// Extracts a canonical-shaped location map out of the legacy `content`
+/// protocol.
+///
+/// Intentionally independent of `media_type`: legacy rows frequently carry a
+/// null or `text` media type while still encoding coordinates in `content`.
+/// Returns null when the marker is absent or the coordinates are unusable.
+Map<String, dynamic>? parseLegacyLocationContent(Object? raw) {
+  final text = _cleanText(raw is String ? raw : raw?.toString());
+  if (text == null) return null;
+
+  final markerIndex = text.indexOf(legacyLocationContentMarker);
+  if (markerIndex == -1) return null;
+
+  // Only the pushpin emoji and whitespace may precede the marker, otherwise
+  // this is ordinary prose that happens to contain the word LOCATION:.
+  final head =
+      text.substring(0, markerIndex).replaceAll('\u{1F4CD}', '').trim();
+  if (head.isNotEmpty) return null;
+
+  final parts = text
+      .substring(markerIndex + legacyLocationContentMarker.length)
+      .split('|');
+  if (parts.isEmpty) return null;
+
+  final coordinates = _coordinatesFromText(parts.first);
+  if (coordinates == null) return null;
+
+  String? address;
+  String? expiresAt;
+  var live = false;
+  for (final part in parts.skip(1)) {
+    final value = _cleanText(part);
+    if (value == null) continue;
+    if (value.startsWith(_legacyLiveSegmentMarker)) {
+      live = true;
+      expiresAt =
+          _cleanText(value.substring(_legacyLiveSegmentMarker.length));
+      continue;
+    }
+    address ??= value;
+  }
+
+  return <String, dynamic>{
+    'schema': alsamosMessagePayloadSchema,
+    'latitude': coordinates.$1,
+    'longitude': coordinates.$2,
+    if (address != null) 'address': address,
+    if (live) 'live': true,
+    if (expiresAt != null) 'expiresAt': expiresAt,
+  };
 }
 
 Map<String, dynamic> hydrateStructuredMessageMetadata(
@@ -41,6 +103,18 @@ Map<String, dynamic> hydrateStructuredMessageMetadata(
   if (canonical != null) {
     next['schema'] = alsamosMessagePayloadSchema;
     next['location'] = canonical;
+  }
+
+  // Last resort: recover the location from the legacy content protocol so the
+  // bubble can render natively instead of printing the raw marker.
+  if (next['location'] == null) {
+    final legacy = _canonicalLocation(
+      parseLegacyLocationContent(row['content']),
+    );
+    if (legacy != null) {
+      next['schema'] = alsamosMessagePayloadSchema;
+      next['location'] = legacy;
+    }
   }
 
   for (final key in const [
@@ -80,6 +154,17 @@ String? normalizeLocationContentForLegacyRenderer({
           ) !=
           null) {
     return '';
+  }
+
+  // The legacy content protocol is handled before the media_type gate, because
+  // such rows often carry a null or `text` media type.
+  final legacyLocation = parseLegacyLocationContent(content);
+  if (legacyLocation != null) {
+    final label = _cleanText(legacyLocation['address']) ??
+        _cleanText(legacyLocation['label']);
+    final latitude = legacyLocation['latitude'];
+    final longitude = legacyLocation['longitude'];
+    return '${label == null ? '' : '$label\n'}$latitude,$longitude';
   }
 
   if (mediaType != 'location' && mediaType != 'live_location') return content;
@@ -211,7 +296,7 @@ Map<String, dynamic>? _normalizePollOption(Object? value, int index) {
   if (lines.length < 3) return null;
   final options = lines
       .skip(1)
-      .map((line) => line.replaceFirst(RegExp(r'^[-*•]\s*'), '').trim())
+      .map((line) => line.replaceFirst(RegExp(r'^[-*\u2022]\s*'), '').trim())
       .where((line) => line.isNotEmpty)
       .toList();
   if (options.length < 2) return null;
