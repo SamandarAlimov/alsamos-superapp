@@ -1,8 +1,12 @@
 // Publisher onboarding va domen tasdiqlash uchun repository (mobil).
 //
+// DB nomlari: jadval `public.publishers` (handle, display_name, type, verification,
+// logo_url), domen tokeni `publisher_domains.verify_token`.
 // Web'dagi `src/features/miniapps/publishers/api.ts` bilan bir xil kontrakt.
 
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+const String kPublisherTokenPrefix = 'alsamos-verify=';
 
 class MiniAppPublisher {
   const MiniAppPublisher({
@@ -18,7 +22,7 @@ class MiniAppPublisher {
     return MiniAppPublisher(
       id: map['id'] as String,
       handle: (map['handle'] ?? '') as String,
-      name: (map['name'] ?? '') as String,
+      name: (map['display_name'] ?? map['name'] ?? '') as String,
       type: (map['type'] ?? 'individual') as String,
       verification: (map['verification'] ?? 'unverified') as String,
       logoUrl: map['logo_url'] as String?,
@@ -46,10 +50,12 @@ class MiniAppPublisherDomain {
   });
 
   factory MiniAppPublisherDomain.fromMap(Map<String, dynamic> map) {
+    final rawToken = map['verify_token'] as String?;
     return MiniAppPublisherDomain(
       id: map['id'] as String,
       domain: (map['domain'] ?? '') as String,
-      verificationToken: map['verification_token'] as String?,
+      verificationToken:
+          rawToken == null ? null : kPublisherTokenPrefix + rawToken,
       verifiedAt: map['verified_at'] == null
           ? null
           : DateTime.tryParse(map['verified_at'] as String),
@@ -92,7 +98,7 @@ class MiniAppPublisherRepository {
     final rows = await _client
         .from('publisher_members')
         .select(
-          'publisher:mini_app_publishers(id, handle, name, type, verification, logo_url)',
+          'publisher:publishers(id, handle, display_name, type, verification, logo_url)',
         )
         .eq('user_id', userId);
 
@@ -106,7 +112,7 @@ class MiniAppPublisherRepository {
   Future<List<MiniAppPublisherDomain>> listDomains(String publisherId) async {
     final rows = await _client
         .from('publisher_domains')
-        .select('id, domain, verification_token, verified_at, check_error')
+        .select('id, domain, verify_token, verified_at, check_error')
         .eq('publisher_id', publisherId);
 
     return (rows as List<dynamic>)
@@ -131,7 +137,7 @@ class MiniAppPublisherRepository {
     return result.toString();
   }
 
-  /// TXT tokenini qaytaradi.
+  /// TXT tokenini qaytaradi (alsamos-verify=... ko'rinishida).
   Future<MiniAppPublisherDomain> addDomain({
     required String publisherId,
     required String domain,
