@@ -6,11 +6,16 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/responsive/breakpoints.dart';
+import '../../domain/ai_capabilities.dart';
+import '../providers/ai_agent_provider.dart';
 import '../providers/ai_provider.dart';
 import '../widgets/ai_composer.dart';
+import '../widgets/ai_computer_approval_card.dart';
 import '../widgets/ai_empty_state.dart';
 import '../widgets/ai_message_bubble.dart';
+import '../widgets/ai_model_sheet.dart';
 import '../widgets/ai_sidebar.dart';
+import '../widgets/ai_tools_sheet.dart';
 
 class AIPage extends ConsumerStatefulWidget {
   const AIPage({super.key});
@@ -79,6 +84,7 @@ class _AIPageState extends ConsumerState<AIPage> {
                         ? const AiEmptyState()
                         : _messageList(c, state),
                   ),
+                  const AiComputerTasksBanner(),
                   AiComposer(onSend: _scrollToBottom),
                 ],
               ),
@@ -118,6 +124,9 @@ class _AIPageState extends ConsumerState<AIPage> {
           const SizedBox(height: 8),
           _railBtn(c, LucideIcons.search, () {},
               tooltip: 'Qidirish'),
+          const SizedBox(height: 8),
+          _railBtn(c, LucideIcons.wrench, () => AiToolsSheet.show(context),
+              tooltip: 'Vositalar'),
           const Spacer(),
           _railBtn(c, LucideIcons.panelLeftOpen, () {
             ref.read(aiProvider.notifier).toggleSidebarCollapsed();
@@ -149,6 +158,8 @@ class _AIPageState extends ConsumerState<AIPage> {
   }
 
   Widget _topBar(AlsamosColors c, AiState state, {required bool mobile}) {
+    final settings = ref.watch(aiAgentSettingsProvider);
+
     return Container(
       height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -183,6 +194,34 @@ class _AIPageState extends ConsumerState<AIPage> {
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: c.foreground)),
             const Spacer(),
           ],
+          if (settings.mode == AIMode.agent) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppColors.alsamosOrange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(LucideIcons.bot, size: 11, color: AppColors.alsamosOrange),
+                  SizedBox(width: 4),
+                  Text('Agent',
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.alsamosOrange)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          _modelChip(c, settings),
+          IconButton(
+            icon: const Icon(LucideIcons.wrench, size: 16),
+            tooltip: 'Vositalar',
+            onPressed: () => AiToolsSheet.show(context),
+          ),
           if (state.currentConversationId != null)
             IconButton(
               icon: const Icon(LucideIcons.squarePen, size: 16),
@@ -193,6 +232,37 @@ class _AIPageState extends ConsumerState<AIPage> {
               tooltip: 'Yangi suhbat',
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _modelChip(AlsamosColors c, AiAgentSettings settings) {
+    return Tooltip(
+      message: 'Rejim va model',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => AiModelSheet.show(context),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: c.muted.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(LucideIcons.zap, size: 12, color: AppColors.alsamosOrange),
+              const SizedBox(width: 5),
+              Text(
+                settings.modelLabel,
+                style: TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.w600, color: c.foreground),
+              ),
+              const SizedBox(width: 3),
+              Icon(LucideIcons.chevronDown, size: 12, color: c.mutedForeground),
+            ],
+          ),
+        ),
       ),
     );
   }
