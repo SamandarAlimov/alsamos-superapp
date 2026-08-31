@@ -1,5 +1,9 @@
-// Ported 1:1 from web src/hooks/useMarketplace.ts, useOrders.ts, useSellerDashboard.ts.
 // Centralised Supabase access for the marketplace feature.
+//
+// Order mutations follow docs/contracts/marketplace_v1.md: the client never
+// writes to `orders`, `order_items` or stock columns directly. Everything goes
+// through the canonical RPCs so Flutter and the web client cannot disagree
+// about pricing, stock or payment state.
 
 import 'dart:math';
 import 'dart:typed_data';
@@ -7,6 +11,99 @@ import 'dart:typed_data';
 
 import '../../../core/supabase/supabase_client.dart';
 import 'models/product_model.dart';
+
+/// Payment rails accepted by `process_marketplace_order`.
+/// Mirrors the web provider registry in `src/lib/payments/`.
+class MarketplacePaymentMethods {
+  static const wallet = 'wallet';
+  static const cardOnDelivery = 'card_on_delivery';
+  static const cash = 'cash';
+
+  /// The only rails that work without a merchant contract.
+  static const enabled = <String>[cardOnDelivery, cash, wallet];
+
+  static bool isSupported(String value) => enabled.contains(value);
+}
+
+/// Result of a checkout attempt. `errorCode` carries the raw RPC code so the
+/// UI can offer a targeted recovery action (top up the wallet, edit the cart).
+class CheckoutResult {
+  final bool success;
+  final List<String> orderIds;
+  final String paymentStatus; // paid | pending | failed
+  final double total;
+  final String currency;
+  final String? errorCode;
+
+  const CheckoutResult({
+    required this.success,
+    this.orderIds = const [],
+    this.paymentStatus = 'failed',
+    this.total = 0,
+    this.currency = 'USD',
+    this.errorCode,
+  });
+
+  String get message => marketplaceErrorMessage(errorCode);
+}
+
+/// Result of an order-status transition.
+class OrderStatusResult {
+  final bool success;
+  final String? status;
+  final double refunded;
+  final String? receiptNumber;
+  final String? errorCode;
+
+  const OrderStatusResult({
+    required this.success,
+    this.status,
+    this.refunded = 0,
+    this.receiptNumber,
+    this.errorCode,
+  });
+
+  String get message => marketplaceErrorMessage(errorCode);
+}
+
+const _errorMessages = <String, String>{
+  // Checkout
+  'not_authenticated': 'Iltimos, tizimga kiring.',
+  'invalid_payment_method': "To'lov usuli noto'g'ri tanlangan.",
+  'invalid_shipping_address': "Yetkazib berish manzili to'liq emas.",
+  'empty_cart': "Savat bo'sh.",
+  'invalid_quantity': "Mahsulot soni noto'g'ri.",
+  'product_unavailable': 'Mahsulot sotuvdan olingan. Savatni tekshiring.',
+  'insufficient_stock': 'Omborda yetarli mahsulot qolmadi. Sonini kamaytiring.',
+  'insufficient_balance':
+      "Hamyonda mablag' yetarli emas. To'ldiring yoki boshqa usulni tanlang.",
+  // Lifecycle
+  'invalid_status': "Noto'g'ri holat.",
+  'order_not_found': 'Buyurtma topilmadi.',
+  'not_authorized': "Bu buyurtmani o'zgartirishga ruxsatingiz yo'q.",
+  'seller_only': 'Faqat sotuvchi bu amalni bajara oladi.',
+  'cancel_window_closed':
+      "Buyurtma yo'lga chiqqan - bekor qilish uchun sotuvchiga murojaat qiling.",
+  'status_unchanged': 'Buyurtma allaqachon shu holatda.',
+  'order_finalized': 'Buyurtma yakunlangan.',
+  'invalid_transition': "Bu holatga o'tish mumkin emas.",
+};
+
+/// Maps a raw Postgres error code to user-facing Uzbek copy.
+String marketplaceErrorMessage(String? raw) {
+  if (raw == null || raw.isEmpty) {
+    return "Kutilmagan xatolik yuz berdi. Qayta urinib ko'ring.";
+  }
+  final code = _extractCode(raw);
+  return _errorMessages[code] ?? raw;
+}
+
+/// Postgres prefixes raised exceptions, so the bare code is the last segment.
+String _extractCode(String message) {
+  final trimmed = message.trim();
+  final idx = trimmed.lastIndexOf(': ');
+  return (idx >= 0 ? trimmed.substring(idx + 2) : trimmed).trim();
+}
 
 class MarketplaceRepository {
   const MarketplaceRepository();
@@ -79,6 +176,19 @@ class MarketplaceRepository {
       map['is_liked'] = like != null;
     }
     return Product.fromMap(map);
+  }
+
+  /// Counts a product-detail open. The web client calls the same RPC, so views
+  /// stay comparable across platforms. Callers should deduplicate per session.
+  Future<void> registerProductView(String productId) async {
+    try {
+      await supabase.rpc(
+        'increment_product_views',
+        params: {'_product_id': productId},
+      );
+    } catch (_) {
+      // A missed view counter must never break the detail page.
+    }
   }
 
   Future<List<Product>> fetchSellerProducts(String sellerId) async {
@@ -179,6 +289,29 @@ class MarketplaceRepository {
           .select()
           .single();
       return Seller.fromMap(Map<String, dynamic>.from(data));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Aggregate-only seller responsiveness, shared with the web storefront.
+  /// Returns null when the RPC is unavailable or the seller has too few chats.
+  Future<({double? responseRate, int? averageMinutes, bool isOnline})?>
+      fetchSellerResponseStats(String sellerUserId) async {
+    try {
+      final data = await supabase.rpc(
+        'get_seller_response_stats',
+        params: {'_seller_user_id': sellerUserId},
+      );
+      final row = data is List
+          ? (data.isNotEmpty ? data.first : null)
+          : data;
+      if (row is! Map) return null;
+      return (
+        responseRate: (row['response_rate'] as num?)?.toDouble(),
+        averageMinutes: (row['average_response_minutes'] as num?)?.toInt(),
+        isOnline: row['is_online'] == true,
+      );
     } catch (_) {
       return null;
     }
@@ -339,85 +472,125 @@ class MarketplaceRepository {
         .toList();
   }
 
+  /// Places the order through `process_marketplace_order`.
+  ///
+  /// The RPC reads the cart server-side, so `cartItems` is only used for an
+  /// early empty check; passing it keeps existing call sites unchanged. Stock
+  /// reservation, per-seller splitting, variant pricing, per-unit shipping,
+  /// the wallet debit, the ledger row, the receipt and cart cleanup all happen
+  /// inside one transaction.
+  Future<CheckoutResult> submitOrder({
+    required ShippingAddress shippingAddress,
+    String paymentMethod = MarketplacePaymentMethods.cardOnDelivery,
+    String? notes,
+  }) async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) {
+      return const CheckoutResult(success: false, errorCode: 'not_authenticated');
+    }
+    if (!MarketplacePaymentMethods.isSupported(paymentMethod)) {
+      return const CheckoutResult(
+        success: false,
+        errorCode: 'invalid_payment_method',
+      );
+    }
+
+    try {
+      final data = await supabase.rpc(
+        'process_marketplace_order',
+        params: {
+          '_shipping_address': shippingAddress.toMap(),
+          '_payment_method': paymentMethod,
+          '_notes': notes,
+        },
+      );
+
+      if (data is! Map) {
+        return const CheckoutResult(success: false);
+      }
+
+      final ids = <String>[];
+      final rawIds = data['order_ids'];
+      if (rawIds is List) {
+        for (final id in rawIds) {
+          final value = id?.toString();
+          if (value != null && value.isNotEmpty) ids.add(value);
+        }
+      }
+
+      return CheckoutResult(
+        success: data['success'] == true,
+        orderIds: ids,
+        paymentStatus: data['payment_status']?.toString() ?? 'pending',
+        total: (data['total'] as num?)?.toDouble() ?? 0,
+        currency: data['currency']?.toString() ?? 'USD',
+      );
+    } catch (e) {
+      return CheckoutResult(success: false, errorCode: _extractCode(e.toString()));
+    }
+  }
+
+  /// Backwards-compatible wrapper for existing call sites.
+  /// Returns the created order ids, or null when checkout failed.
   Future<List<String>?> placeOrder({
     required List<CartItem> cartItems,
     required ShippingAddress shippingAddress,
     String? notes,
+    String paymentMethod = MarketplacePaymentMethods.cardOnDelivery,
   }) async {
-    final uid = supabase.auth.currentUser?.id;
-    if (uid == null || cartItems.isEmpty) return null;
-    // Group by seller.
-    final groups = <String, List<CartItem>>{};
-    for (final it in cartItems) {
-      final sid = it.product?.sellerId;
-      if (sid == null) continue;
-      groups.putIfAbsent(sid, () => []).add(it);
-    }
-    final orderIds = <String>[];
+    if (cartItems.isEmpty) return null;
+    final result = await submitOrder(
+      shippingAddress: shippingAddress,
+      paymentMethod: paymentMethod,
+      notes: notes,
+    );
+    return result.success ? result.orderIds : null;
+  }
+
+  /// Moves an order through the guarded state machine.
+  ///
+  /// Authorization, allowed transitions, stock restoration, wallet refunds and
+  /// the audit trail live in `marketplace_update_order_status`, so a direct
+  /// table update would silently skip all of them.
+  Future<OrderStatusResult> changeOrderStatus(
+    String orderId,
+    String status, {
+    String? reason,
+  }) async {
     try {
-      for (final entry in groups.entries) {
-        final sellerId = entry.key;
-        final items = entry.value;
-        final subtotal = items.fold<double>(
-            0, (s, i) => s + (i.product?.price ?? 0) * i.quantity);
-        final shipCost = items.fold<double>(
-            0, (s, i) => s + (i.product?.shippingPrice ?? 0));
-        final total = subtotal + shipCost;
-
-        final order = await supabase
-            .from('orders')
-            .insert({
-              'buyer_id': uid,
-              'seller_id': sellerId,
-              'order_number': 'TMP',
-              'subtotal': subtotal,
-              'shipping_cost': shipCost,
-              'total': total,
-              'shipping_address': shippingAddress.toMap(),
-              if (notes != null) 'notes': notes,
-            })
-            .select()
-            .single();
-        final orderId = order['id'].toString();
-        orderIds.add(orderId);
-
-        await supabase.from('order_items').insert([
-          for (final it in items)
-            {
-              'order_id': orderId,
-              'product_id': it.productId,
-              'title': it.product?.title ?? 'Mahsulot',
-              'quantity': it.quantity,
-              'price': it.product?.price ?? 0,
-              'total': (it.product?.price ?? 0) * it.quantity,
-            }
-        ]);
-      }
-      await clearCart();
-      return orderIds;
-    } catch (_) {
-      return null;
+      final data = await supabase.rpc(
+        'marketplace_update_order_status',
+        params: {
+          '_order_id': orderId,
+          '_status': status,
+          '_reason': reason,
+        },
+      );
+      final map = data is Map ? data : const {};
+      return OrderStatusResult(
+        success: true,
+        status: map['status']?.toString() ?? status,
+        refunded: (map['refunded'] as num?)?.toDouble() ?? 0,
+        receiptNumber: map['receipt_number']?.toString(),
+      );
+    } catch (e) {
+      return OrderStatusResult(
+        success: false,
+        errorCode: _extractCode(e.toString()),
+      );
     }
   }
 
+  /// Backwards-compatible wrapper for existing call sites.
   Future<bool> updateOrderStatus(String orderId, String status) async {
-    final uid = supabase.auth.currentUser?.id;
-    if (uid == null) return false;
-    try {
-      final seller = await fetchMySeller();
-      if (seller == null) {
-        return false;
-      }
-      await supabase
-          .from('orders')
-          .update({'status': status})
-          .eq('id', orderId)
-          .eq('seller_id', seller.id);
-      return true;
-    } catch (_) {
-      return false;
-    }
+    final result = await changeOrderStatus(orderId, status);
+    return result.success;
   }
+
+  /// Buyer-side cancellation. Allowed only before the order ships; the refund
+  /// is issued by the RPC when the order was already paid.
+  Future<OrderStatusResult> cancelOrder(String orderId, {String? reason}) =>
+      changeOrderStatus(orderId, 'cancelled', reason: reason);
 
   // ---------- Seller Dashboard ----------
   Future<({DashboardStats stats, List<OrderRecord> orders, List<RevenuePoint> revenue})>
@@ -534,6 +707,25 @@ class MarketplaceRepository {
           .toList();
     }
     return (seller: seller, products: products, reviews: reviews);
+  }
+
+  /// True when the signed-in user has a delivered order containing this
+  /// product. Reviews are gated by RLS, so the form must be hidden otherwise.
+  Future<bool> canReviewProduct(String productId) async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return false;
+    try {
+      final data = await supabase
+          .from('order_items')
+          .select('id, order:orders!inner(buyer_id, status)')
+          .eq('product_id', productId)
+          .eq('order.buyer_id', uid)
+          .eq('order.status', 'delivered')
+          .limit(1);
+      return (data as List).isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ---------- Video commerce ----------
