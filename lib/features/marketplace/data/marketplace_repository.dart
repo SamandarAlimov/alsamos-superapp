@@ -407,14 +407,56 @@ class MarketplaceRepository {
         .toList();
   }
 
-  Future<bool> addToCart(String productId, {int quantity = 1}) async {
+  /// Adds a line to the cart, or tops up the line that already holds the same
+  /// product + variant pair.
+  ///
+  /// This used to be an upsert with `onConflict: 'user_id,product_id'`. The
+  /// shared database no longer has that constraint: migration
+  /// `20260831010000_marketplace_product_variants` dropped
+  /// `cart_items_user_product_uidx` and replaced it with
+  /// `cart_items_user_product_variant_uidx`, an expression index over
+  /// `coalesce(product_variant_id, '00000000-...')`. PostgREST cannot name an
+  /// expression index in `on_conflict`, so the upsert fails outright with
+  /// "there is no unique or exclusion constraint matching the ON CONFLICT
+  /// specification". Read-then-write avoids the arbiter entirely.
+  ///
+  /// Passing [variantId] lets two variants of one product sit in the cart at
+  /// the same time, which is what the web client already allows. Stock is not
+  /// checked here on purpose: `process_marketplace_order` is the single source
+  /// of truth and re-validates every line under a row lock.
+  Future<bool> addToCart(
+    String productId, {
+    int quantity = 1,
+    String? variantId,
+  }) async {
     final uid = supabase.auth.currentUser?.id;
-    if (uid == null) return false;
+    if (uid == null || quantity < 1) return false;
     try {
-      await supabase.from('cart_items').upsert(
-        {'user_id': uid, 'product_id': productId, 'quantity': quantity},
-        onConflict: 'user_id,product_id',
-      );
+      dynamic query = supabase
+          .from('cart_items')
+          .select('id, quantity')
+          .eq('user_id', uid)
+          .eq('product_id', productId);
+      query = variantId == null
+          ? query.isFilter('product_variant_id', null)
+          : query.eq('product_variant_id', variantId);
+      final existing = await query.maybeSingle();
+
+      if (existing is Map) {
+        final current = (existing['quantity'] as num?)?.toInt() ?? 0;
+        await supabase
+            .from('cart_items')
+            .update({'quantity': current + quantity})
+            .eq('id', existing['id'].toString());
+        return true;
+      }
+
+      await supabase.from('cart_items').insert({
+        'user_id': uid,
+        'product_id': productId,
+        'quantity': quantity,
+        if (variantId != null) 'product_variant_id': variantId,
+      });
       return true;
     } catch (_) {
       return false;
