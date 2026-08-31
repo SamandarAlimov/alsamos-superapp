@@ -281,6 +281,22 @@ class Message {
     return value is Map ? Map<String, dynamic>.from(value) : null;
   }
 
+  /// Canonical `call_history` payload, hydrated from the JSON document the web
+  /// client stores in `content`. See docs/CONTRACTS/message-protocol.md.
+  Map<String, dynamic>? get callHistory {
+    if (mediaType != 'call_history') return null;
+    final value = metadata['call'];
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  /// True when the current user placed this call. Call direction is decided by
+  /// `caller_id`, not by `sender_id`.
+  bool callHistoryIsMine(String? currentUserId) {
+    if (currentUserId == null) return false;
+    final callerId = callHistory?['caller_id'];
+    return callerId is String && callerId == currentUserId;
+  }
+
   String? get translatedText {
     final value = metadata['translation'];
     if (value is Map) {

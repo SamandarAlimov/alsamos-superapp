@@ -76,6 +76,85 @@ Map<String, dynamic>? parseLegacyLocationContent(Object? raw) {
   };
 }
 
+/// Canonical `call_history` payload.
+///
+/// The web client stores a JSON document inside `content`. Older rows store a
+/// human readable string starting with the telephone-receiver emoji instead.
+/// See docs/CONTRACTS/message-protocol.md section 5.
+Map<String, dynamic>? canonicalCallHistoryPayload(Object? rawContent) {
+  final text =
+      _cleanText(rawContent is String ? rawContent : rawContent?.toString());
+  if (text == null) return null;
+
+  if (text.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map) {
+        final data = Map<String, dynamic>.from(decoded);
+        final type = _cleanText(data['type']);
+        final status = _cleanText(data['status']);
+        if (type != null && status != null) {
+          final duration = _durationSeconds(data['duration']);
+          return <String, dynamic>{
+            'schema': alsamosMessagePayloadSchema,
+            'type': type == 'video' ? 'video' : 'audio',
+            'status': status,
+            if (duration != null) 'duration': duration,
+            if (_cleanText(data['timestamp']) != null)
+              'timestamp': _cleanText(data['timestamp']),
+            if (_cleanText(data['caller_id']) != null)
+              'caller_id': _cleanText(data['caller_id']),
+            if (_cleanText(data['callee_id']) != null)
+              'callee_id': _cleanText(data['callee_id']),
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!text.startsWith('\u{1F4DE}')) return null;
+
+  final match = RegExp(r'(\d+):(\d+)(?::(\d+))?').firstMatch(text);
+  int? duration;
+  if (match != null) {
+    final first = int.tryParse(match.group(1)!) ?? 0;
+    final second = int.tryParse(match.group(2)!) ?? 0;
+    final third =
+        match.group(3) == null ? null : int.tryParse(match.group(3)!);
+    duration = third == null
+        ? first * 60 + second
+        : first * 3600 + second * 60 + third;
+  }
+
+  return <String, dynamic>{
+    'schema': alsamosMessagePayloadSchema,
+    'type': text.toLowerCase().contains('video') ? 'video' : 'audio',
+    'status': 'ended',
+    if (duration != null) 'duration': duration,
+  };
+}
+
+/// Short user-facing label for a call-history row.
+String callHistoryLabel(Map<String, dynamic> call) {
+  final base = call['type'] == 'video'
+      ? "Video qo'ng'iroq"
+      : "Audio qo'ng'iroq";
+
+  switch (call['status']) {
+    case 'missed':
+      return '$base \u00b7 javobsiz';
+    case 'declined':
+      return '$base \u00b7 rad etildi';
+    case 'cancelled':
+    case 'canceled':
+      return '$base \u00b7 bekor qilindi';
+  }
+
+  final duration = _durationSeconds(call['duration']);
+  if (duration == null || duration <= 0) return base;
+  return '$base \u00b7 ${_formatCallDuration(duration)}';
+}
+
 Map<String, dynamic> hydrateStructuredMessageMetadata(
   Map<String, dynamic> row,
   Map<String, dynamic> metadata,
@@ -135,6 +214,14 @@ Map<String, dynamic> hydrateStructuredMessageMetadata(
     next['poll'] = poll;
   }
 
+  if (row['media_type']?.toString() == 'call_history') {
+    final call = canonicalCallHistoryPayload(row['content']);
+    if (call != null) {
+      next['schema'] = alsamosMessagePayloadSchema;
+      next['call'] = call;
+    }
+  }
+
   return next;
 }
 
@@ -154,6 +241,16 @@ String? normalizeLocationContentForLegacyRenderer({
           ) !=
           null) {
     return '';
+  }
+
+  // Call history is a JSON document on the wire. Replace it with a readable
+  // label so the raw document never reaches the bubble.
+  if (mediaType == 'call_history') {
+    final call = decodeMessageMetadata(metadata['call']);
+    final resolved = call.isNotEmpty
+        ? call
+        : canonicalCallHistoryPayload(content) ?? const <String, dynamic>{};
+    if (resolved.isNotEmpty) return callHistoryLabel(resolved);
   }
 
   // The legacy content protocol is handled before the media_type gate, because
@@ -315,6 +412,22 @@ double? _coordinate(Object? value, double max) {
   final number = value is num ? value.toDouble() : double.tryParse('$value');
   if (number == null || !number.isFinite || number.abs() > max) return null;
   return number;
+}
+
+int? _durationSeconds(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  if (value is String) return int.tryParse(value);
+  return null;
+}
+
+String _formatCallDuration(int seconds) {
+  final hours = seconds ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  final rest = seconds % 60;
+  final minutesText = minutes.toString().padLeft(hours > 0 ? 2 : 1, '0');
+  final secondsText = rest.toString().padLeft(2, '0');
+  return hours > 0 ? '$hours:$minutesText:$secondsText' : '$minutesText:$secondsText';
 }
 
 String? _cleanText(Object? value) {
