@@ -246,24 +246,131 @@ class Product {
   }
 }
 
+/// A single purchasable option of a product ("Rang: Qora, Hajm: 256 GB").
+///
+/// `price` is nullable on purpose: a variant that does not override the price
+/// inherits `products.price`, exactly like `coalesce(pv.price, p.price)` in
+/// `process_marketplace_order`. Stock lives on the variant row and is kept in
+/// sync with `products.quantity` by the
+/// `marketplace_product_variant_stock_trigger`.
+class ProductVariant {
+  final String id;
+  final String? productId;
+  final String? sku;
+  final Map<String, dynamic> options;
+  final double? price;
+  final double? compareAtPrice;
+  final int quantity;
+  final String? imageUrl;
+  final bool isActive;
+  final int position;
+
+  const ProductVariant({
+    required this.id,
+    this.productId,
+    this.sku,
+    this.options = const {},
+    this.price,
+    this.compareAtPrice,
+    this.quantity = 0,
+    this.imageUrl,
+    this.isActive = true,
+    this.position = 0,
+  });
+
+  bool get isSoldOut => quantity <= 0;
+
+  /// "Rang: Qora \u00b7 Hajm: 256 GB". Mirrors the web `getVariantOptionsLabel`.
+  String get label => options.entries
+      .where((e) => e.value != null && e.value.toString().isNotEmpty)
+      .map((e) => '${e.key}: ${e.value}')
+      .join(' \u00b7 ');
+
+  factory ProductVariant.fromMap(Map<String, dynamic> m) => ProductVariant(
+        id: m['id']?.toString() ?? '',
+        productId: m['product_id']?.toString(),
+        sku: m['sku']?.toString(),
+        options: m['options'] is Map
+            ? Map<String, dynamic>.from(m['options'] as Map)
+            : const {},
+        price: (m['price'] as num?)?.toDouble(),
+        compareAtPrice: (m['compare_at_price'] as num?)?.toDouble(),
+        quantity: (m['quantity'] as num?)?.toInt() ?? 0,
+        imageUrl: m['image_url']?.toString(),
+        isActive: m['is_active'] != false,
+        position: (m['position'] as num?)?.toInt() ?? 0,
+      );
+}
+
 class CartItem {
   final String id;
   final String productId;
+  final String? productVariantId;
   final int quantity;
   final Product? product;
+  final ProductVariant? variant;
+
   const CartItem({
     required this.id,
     required this.productId,
     required this.quantity,
+    this.productVariantId,
     this.product,
+    this.variant,
   });
-  double get lineTotal => (product?.price ?? 0) * quantity;
+
+  /// The price the server will actually charge for one unit.
+  /// `coalesce(product_variants.price, products.price)` in the checkout RPC.
+  double get unitPrice => variant?.price ?? product?.price ?? 0;
+
+  double get lineTotal => unitPrice * quantity;
+
+  /// Delivery for this line. `process_marketplace_order` multiplies
+  /// `shipping_price` by the quantity and does not look at
+  /// `shipping_available`, so this must do the same or the confirmed total
+  /// would differ from the charged total.
+  double get shippingTotal => (product?.shippingPrice ?? 0) * quantity;
+
+  double get lineTotalWithShipping => lineTotal + shippingTotal;
+
+  /// Stock backing this line: the variant row when the line has one,
+  /// otherwise the product row.
+  int get availableStock =>
+      variant != null ? variant!.quantity : (product?.quantity ?? 0);
+
+  /// Client-side mirror of the RPC's `product_unavailable` and
+  /// `insufficient_stock` guards, so the cart can warn before checkout fails.
+  bool get isAvailable {
+    final p = product;
+    if (p == null || p.status != 'active') return false;
+    if (productVariantId != null && (variant == null || !variant!.isActive)) {
+      return false;
+    }
+    return availableStock >= quantity;
+  }
+
+  String? get variantLabel {
+    final text = variant?.label;
+    return (text == null || text.isEmpty) ? null : text;
+  }
+
+  String? get imageUrl {
+    final fromVariant = variant?.imageUrl;
+    if (fromVariant != null && fromVariant.isNotEmpty) return fromVariant;
+    final images = product?.images ?? const <String>[];
+    return images.isNotEmpty ? images.first : null;
+  }
+
   factory CartItem.fromMap(Map<String, dynamic> m) => CartItem(
         id: m['id']?.toString() ?? '',
         productId: m['product_id']?.toString() ?? '',
+        productVariantId: m['product_variant_id']?.toString(),
         quantity: (m['quantity'] as num?)?.toInt() ?? 1,
         product: m['product'] is Map
             ? Product.fromMap(Map<String, dynamic>.from(m['product'] as Map))
+            : null,
+        variant: m['variant'] is Map
+            ? ProductVariant.fromMap(Map<String, dynamic>.from(m['variant'] as Map))
             : null,
       );
 }
@@ -313,6 +420,8 @@ class OrderItem {
   final double price;
   final double total;
   final String? imageUrl;
+  final String? productVariantId;
+  final Map<String, dynamic> variantOptions;
   const OrderItem({
     required this.id,
     required this.productId,
@@ -321,7 +430,22 @@ class OrderItem {
     required this.price,
     required this.total,
     this.imageUrl,
+    this.productVariantId,
+    this.variantOptions = const {},
   });
+
+  /// "Rang: Qora \u00b7 Hajm: 256 GB" for a historical order line. The options are
+  /// frozen into `order_items.variant_options` at checkout, so an order keeps
+  /// showing what was bought even after the seller edits the variant.
+  String? get variantLabel {
+    if (variantOptions.isEmpty) return null;
+    final text = variantOptions.entries
+        .where((e) => e.value != null && e.value.toString().isNotEmpty)
+        .map((e) => '${e.key}: ${e.value}')
+        .join(' \u00b7 ');
+    return text.isEmpty ? null : text;
+  }
+
   factory OrderItem.fromMap(Map<String, dynamic> m) {
     String? img;
     final p = m['product'];
@@ -344,6 +468,10 @@ class OrderItem {
       price: (m['price'] as num?)?.toDouble() ?? 0,
       total: (m['total'] as num?)?.toDouble() ?? 0,
       imageUrl: img,
+      productVariantId: m['product_variant_id']?.toString(),
+      variantOptions: m['variant_options'] is Map
+          ? Map<String, dynamic>.from(m['variant_options'] as Map)
+          : const {},
     );
   }
 }
