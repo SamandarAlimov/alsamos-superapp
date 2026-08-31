@@ -6,6 +6,7 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/responsive/breakpoints.dart';
+import '../../data/ai_models.dart';
 import '../../domain/ai_capabilities.dart';
 import '../providers/ai_agent_provider.dart';
 import '../providers/ai_provider.dart';
@@ -122,8 +123,7 @@ class _AIPageState extends ConsumerState<AIPage> {
             HapticFeedback.lightImpact();
           }, tooltip: 'Yangi suhbat'),
           const SizedBox(height: 8),
-          _railBtn(c, LucideIcons.search, () {},
-              tooltip: 'Qidirish'),
+          _railBtn(c, LucideIcons.search, () {}, tooltip: 'Qidirish'),
           const SizedBox(height: 8),
           _railBtn(c, LucideIcons.wrench, () => AiToolsSheet.show(context),
               tooltip: 'Vositalar'),
@@ -174,8 +174,7 @@ class _AIPageState extends ConsumerState<AIPage> {
               icon: const Icon(LucideIcons.panelLeft, size: 18),
               onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             ),
-          if (!mobile && state.sidebarCollapsed)
-            const SizedBox(width: 4),
+          if (!mobile && state.sidebarCollapsed) const SizedBox(width: 4),
           if (state.currentConversationId != null) ...[
             Icon(LucideIcons.messageSquare, size: 14, color: c.mutedForeground),
             const SizedBox(width: 8),
@@ -184,14 +183,16 @@ class _AIPageState extends ConsumerState<AIPage> {
                 _currentTitle(state),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: c.foreground),
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w500, color: c.foreground),
               ),
             ),
           ] else ...[
             const Icon(LucideIcons.sparkles, size: 14, color: AppColors.alsamosOrange),
             const SizedBox(width: 8),
             Text('Yangi suhbat',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: c.foreground)),
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w500, color: c.foreground)),
             const Spacer(),
           ],
           if (settings.mode == AIMode.agent) ...[
@@ -268,16 +269,17 @@ class _AIPageState extends ConsumerState<AIPage> {
   }
 
   String _currentTitle(AiState state) {
-    if (state.currentConversationId == null) return 'Yangi suhbat';
-    final conv = state.conversations
-        .where((c) => c.id == state.currentConversationId)
-        .firstOrNull;
-    return conv?.title ?? 'Suhbat';
+    final id = state.currentConversationId;
+    if (id == null) return 'Yangi suhbat';
+    for (final conv in state.conversations) {
+      if (conv.id == id) return conv.title;
+    }
+    final AiConversation? none = null;
+    return none?.title ?? 'Suhbat';
   }
 
   Widget _messageList(AlsamosColors c, AiState state) {
-    final itemCount =
-        state.messages.length + (state.isBusy ? 1 : 0);
+    final itemCount = state.messages.length + (state.isBusy ? 1 : 0);
     return ListView.builder(
       controller: _scroll,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
