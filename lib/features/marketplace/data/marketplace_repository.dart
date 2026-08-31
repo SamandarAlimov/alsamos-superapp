@@ -110,6 +110,15 @@ class MarketplaceRepository {
   static const _productSelect =
       '*, seller:sellers(id, user_id, business_name, business_type, logo_url, location, is_verified, rating, total_sales, profile:profiles(username, display_name, avatar_url)), category:product_categories(id, name, slug, icon), images:product_images(id, url, position)';
 
+  /// Variant columns shared by the cart and product detail selects.
+  static const _variantSelect =
+      'id, product_id, sku, options, price, compare_at_price, quantity, image_url, is_active, position';
+
+  /// Order line columns. `product_variant_id` and the frozen `variant_options`
+  /// keep historical orders readable after the seller edits the variant.
+  static const _orderItemSelect =
+      'id, product_id, product_variant_id, variant_options, title, quantity, price, total, product:products(images:product_images(url))';
+
   // ---------- Categories ----------
   Future<List<ProductCategory>> fetchCategories() async {
     final data = await supabase.from('product_categories').select('*').order('position');
@@ -176,6 +185,25 @@ class MarketplaceRepository {
       map['is_liked'] = like != null;
     }
     return Product.fromMap(map);
+  }
+
+  /// Selectable options of a product, cheapest position first. Empty for a
+  /// product without variants, in which case the product row carries the price
+  /// and the stock.
+  Future<List<ProductVariant>> fetchProductVariants(String productId) async {
+    try {
+      final data = await supabase
+          .from('product_variants')
+          .select(_variantSelect)
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .order('position');
+      return (data as List)
+          .map((e) => ProductVariant.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   /// Counts a product-detail open. The web client calls the same RPC, so views
@@ -394,13 +422,24 @@ class MarketplaceRepository {
   }
 
   // ---------- Cart ----------
+  /// Loads the cart with the variant row attached.
+  ///
+  /// The variant join is what makes `CartItem.unitPrice` and
+  /// `CartItem.availableStock` correct: the checkout RPC prices a line as
+  /// `coalesce(pv.price, p.price)` and takes stock from the variant when the
+  /// line has one.
+  ///
+  /// A deactivated variant is hidden from the buyer by the
+  /// "Active product variants viewable by everyone" policy, so `variant`
+  /// arrives as null and `CartItem.isAvailable` turns false - the same outcome
+  /// the RPC would produce with `product_unavailable`.
   Future<List<CartItem>> fetchCart() async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) return [];
     final data = await supabase
         .from('cart_items')
         .select(
-            '*, product:products(*, seller:sellers(id, business_name, is_verified), images:product_images(id, url, position))')
+            '*, product:products(*, seller:sellers(id, business_name, is_verified), images:product_images(id, url, position)), variant:product_variants($_variantSelect)')
         .eq('user_id', uid);
     return (data as List)
         .map((e) => CartItem.fromMap(Map<String, dynamic>.from(e as Map)))
@@ -494,7 +533,7 @@ class MarketplaceRepository {
     final data = await supabase
         .from('orders')
         .select(
-            '*, seller:sellers(business_name, logo_url, is_verified), items:order_items(id, product_id, title, quantity, price, total, product:products(images:product_images(url)))')
+            '*, seller:sellers(business_name, logo_url, is_verified), items:order_items($_orderItemSelect)')
         .eq('buyer_id', uid)
         .order('created_at', ascending: false);
     return (data as List)
@@ -506,7 +545,7 @@ class MarketplaceRepository {
     final data = await supabase
         .from('orders')
         .select(
-            '*, buyer:profiles!orders_buyer_id_fkey(username, display_name, avatar_url), items:order_items(id, product_id, title, quantity, price, total, product:products(images:product_images(url)))')
+            '*, buyer:profiles!orders_buyer_id_fkey(username, display_name, avatar_url), items:order_items($_orderItemSelect)')
         .eq('seller_id', sellerId)
         .order('created_at', ascending: false);
     return (data as List)
