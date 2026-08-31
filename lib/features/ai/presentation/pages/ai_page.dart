@@ -6,7 +6,6 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_theme.dart';
 import '../../../../core/responsive/breakpoints.dart';
-import '../../data/ai_models.dart';
 import '../../domain/ai_capabilities.dart';
 import '../providers/ai_agent_provider.dart';
 import '../providers/ai_provider.dart';
@@ -274,8 +273,7 @@ class _AIPageState extends ConsumerState<AIPage> {
     for (final conv in state.conversations) {
       if (conv.id == id) return conv.title;
     }
-    final AiConversation? none = null;
-    return none?.title ?? 'Suhbat';
+    return 'Suhbat';
   }
 
   Widget _messageList(AlsamosColors c, AiState state) {
