@@ -7,6 +7,14 @@
 const Duration kMiniAppDirectTimeout = Duration(milliseconds: 8000);
 const Duration kMiniAppProxyTimeout = Duration(milliseconds: 15000);
 
+// URL prefikslari alohida konstanta: interpolatsiya ichida yozilganda IDE/format
+// vositalari havolani buzib qo'yishi mumkin, shuning uchun konkatenatsiya ishlatiladi.
+const String _kYoutubeEmbedBase = 'https://www.youtube.com/embed/';
+const String _kYoutubePlaylistBase = 'https://www.youtube.com/embed/videoseries?list=';
+const String _kVimeoEmbedBase = 'https://player.vimeo.com/video/';
+const String _kInstagramBase = 'https://www.instagram.com/';
+const String _kTelegramPreviewBase = 'https://t.me/s/';
+
 const List<String> _blockedSchemes = <String>[
   'javascript:',
   'data:',
@@ -140,7 +148,7 @@ NormalizedMiniAppUrl normalizeMiniAppUrl(String? raw) {
 
   var candidate = value;
   if (!RegExp(r'^[a-z][a-z0-9+.\-]*://', caseSensitive: false).hasMatch(candidate)) {
-    candidate = 'https://$candidate';
+    candidate = 'https://' + candidate;
   }
 
   Uri parsed;
@@ -174,25 +182,25 @@ NormalizedMiniAppUrl normalizeMiniAppUrl(String? raw) {
   );
 }
 
-bool _hostMatches(String host, String entry) => host == entry || host.endsWith('.$entry');
+bool _hostMatches(String host, String entry) => host == entry || host.endsWith('.' + entry);
 
 String? _youtubeEmbed(Uri parsed) {
   final host = parsed.host.toLowerCase().replaceFirst(RegExp(r'^www\.'), '');
   final segments = parsed.pathSegments.where((s) => s.isNotEmpty).toList();
 
   if (host == 'youtu.be') {
-    return segments.isNotEmpty ? 'https://www.youtube.com/embed/${segments.first}' : null;
+    return segments.isEmpty ? null : _kYoutubeEmbedBase + segments.first;
   }
 
   if (!_hostMatches(host, 'youtube.com') && host != 'youtube-nocookie.com') return null;
 
   final videoId = parsed.queryParameters['v'];
   if (videoId != null && videoId.isNotEmpty) {
-    return 'https://www.youtube.com/embed/$videoId';
+    return _kYoutubeEmbedBase + videoId;
   }
 
   if (segments.length >= 2 && segments[0] == 'shorts') {
-    return 'https://www.youtube.com/embed/${segments[1]}';
+    return _kYoutubeEmbedBase + segments[1];
   }
   if (segments.length >= 2 && segments[0] == 'embed') {
     return parsed.toString();
@@ -200,7 +208,7 @@ String? _youtubeEmbed(Uri parsed) {
 
   final list = parsed.queryParameters['list'];
   if (list != null && list.isNotEmpty) {
-    return 'https://www.youtube.com/embed/videoseries?list=$list';
+    return _kYoutubePlaylistBase + list;
   }
 
   // Kanal yoki asosiy sahifa uchun embed mavjud emas (soxta URL yasalmaydi).
@@ -224,14 +232,14 @@ String? resolveMiniAppEmbedUrl(String rawUrl) {
       (segment) => RegExp(r'^\d+$').hasMatch(segment),
       orElse: () => '',
     );
-    return id.isEmpty ? null : 'https://player.vimeo.com/video/$id';
+    return id.isEmpty ? null : _kVimeoEmbedBase + id;
   }
 
   if (_hostMatches(host, 'instagram.com')) {
     if (segments.length >= 2 &&
         <String>['p', 'reel', 'reels', 'tv'].contains(segments[0])) {
       final kind = segments[0] == 'reels' ? 'reel' : segments[0];
-      return 'https://www.instagram.com/$kind/${segments[1]}/embed/';
+      return _kInstagramBase + kind + '/' + segments[1] + '/embed/';
     }
     return null;
   }
@@ -240,7 +248,7 @@ String? resolveMiniAppEmbedUrl(String rawUrl) {
     if (segments.isEmpty) return null;
     if (segments.first == 's') return parsed.toString();
     if (segments.first.toLowerCase().endsWith('bot')) return null;
-    return 'https://t.me/s/${segments.join('/')}';
+    return _kTelegramPreviewBase + segments.join('/');
   }
 
   return null;
@@ -256,8 +264,12 @@ bool isMiniAppFramingBlocked(String rawUrl) {
 
 String buildMiniAppProxyUrl(String apiBase, String targetUrl, [Object? cacheBuster]) {
   final base = apiBase.replaceAll(RegExp(r'/+$'), '');
-  final suffix = cacheBuster == null ? '' : '&_ts=${Uri.encodeComponent(cacheBuster.toString())}';
-  return '$base/functions/v1/mini-app-proxy?url=${Uri.encodeComponent(targetUrl)}$suffix';
+  final suffix =
+      cacheBuster == null ? '' : '&_ts=' + Uri.encodeComponent(cacheBuster.toString());
+  return base +
+      '/functions/v1/mini-app-proxy?url=' +
+      Uri.encodeComponent(targetUrl) +
+      suffix;
 }
 
 /// Ochish qadamlari tartibini kontrakt bo'yicha tuzadi.
@@ -271,7 +283,10 @@ MiniAppOpenPlan buildMiniAppOpenPlan({
 }) {
   if (appType == 'native') {
     if (deepLink == null || deepLink.isEmpty) {
-      return const MiniAppOpenPlan(steps: <MiniAppOpenStep>[], error: MiniAppUrlRejectReason.empty);
+      return const MiniAppOpenPlan(
+        steps: <MiniAppOpenStep>[],
+        error: MiniAppUrlRejectReason.empty,
+      );
     }
     return MiniAppOpenPlan(
       steps: <MiniAppOpenStep>[
