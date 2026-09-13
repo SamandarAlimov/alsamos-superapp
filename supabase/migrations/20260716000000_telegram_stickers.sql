@@ -32,6 +32,22 @@ CREATE TABLE IF NOT EXISTS public.user_sticker_packs (
   PRIMARY KEY (user_id, pack_id)
 );
 
+ALTER TABLE public.sticker_packs
+  ADD COLUMN IF NOT EXISTS cover_lottie_url text,
+  ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS is_animated boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+ALTER TABLE public.stickers
+  ADD COLUMN IF NOT EXISTS image_url text,
+  ADD COLUMN IF NOT EXISTS lottie_url text,
+  ADD COLUMN IF NOT EXISTS video_url text,
+  ADD COLUMN IF NOT EXISTS thumbnail_url text,
+  ADD COLUMN IF NOT EXISTS type text;
+
+ALTER TABLE public.user_sticker_packs
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
 CREATE TABLE IF NOT EXISTS public.recent_stickers (
   user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   sticker_id uuid NOT NULL REFERENCES public.stickers(id) ON DELETE CASCADE,

@@ -147,6 +147,8 @@ CREATE TABLE IF NOT EXISTS public.sticker_packs (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.sticker_packs
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.sticker_packs ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_sticker_packs_public ON public.sticker_packs(is_public, updated_at DESC);
 DROP POLICY IF EXISTS "Public or owner sticker packs readable" ON public.sticker_packs;

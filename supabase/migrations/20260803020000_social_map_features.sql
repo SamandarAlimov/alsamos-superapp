@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS check_ins (
 CREATE INDEX IF NOT EXISTS idx_check_ins_user_id ON check_ins(user_id);
 CREATE INDEX IF NOT EXISTS idx_check_ins_place_id ON check_ins(place_id);
 CREATE INDEX IF NOT EXISTS idx_check_ins_created_at ON check_ins(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_check_ins_location ON check_ins USING gist(ll_to_earth(latitude, longitude));
+CREATE INDEX IF NOT EXISTS idx_check_ins_location ON check_ins USING gist(extensions.ll_to_earth(latitude, longitude));
 
 -- RLS Policies
 ALTER TABLE check_ins ENABLE ROW LEVEL SECURITY;
@@ -52,7 +52,7 @@ CREATE POLICY "Users can view friends' check-ins"
     visibility IN ('friends', 'followers') AND
     EXISTS (
       SELECT 1 FROM follows
-      WHERE follower_id = auth.uid() AND followed_id = user_id
+      WHERE follower_id = auth.uid() AND following_id = user_id
     )
   );
 
@@ -327,8 +327,8 @@ CREATE POLICY "Invited users can respond"
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS place_statistics AS
 SELECT
-  place_id,
-  place_name,
+  check_ins.place_id,
+  check_ins.place_name,
   COUNT(DISTINCT check_ins.user_id) as check_in_count,
   COUNT(DISTINCT place_reviews.user_id) as review_count,
   COALESCE(AVG(place_reviews.rating), 0) as average_rating,
@@ -336,7 +336,7 @@ SELECT
   MAX(place_reviews.created_at) as last_review
 FROM check_ins
 LEFT JOIN place_reviews USING (place_id)
-GROUP BY place_id, place_name;
+GROUP BY check_ins.place_id, check_ins.place_name;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_place_statistics_place_id ON place_statistics(place_id);
 
@@ -390,20 +390,20 @@ BEGIN
     c.longitude,
     c.feeling,
     c.note,
-    earth_distance(ll_to_earth(lat, lon), ll_to_earth(c.latitude, c.longitude)) / 1000.0 as distance_km,
+    extensions.earth_distance(extensions.ll_to_earth(lat, lon), extensions.ll_to_earth(c.latitude, c.longitude)) / 1000.0 as distance_km,
     c.created_at
   FROM check_ins c
   WHERE
-    earth_box(ll_to_earth(lat, lon), radius_km * 1000) @> ll_to_earth(c.latitude, c.longitude)
+    extensions.earth_box(extensions.ll_to_earth(lat, lon), radius_km * 1000) @> extensions.ll_to_earth(c.latitude, c.longitude)
     AND (
       c.visibility = 'public' OR
       (c.visibility IN ('friends', 'followers') AND EXISTS (
         SELECT 1 FROM follows
-        WHERE follower_id = auth.uid() AND followed_id = c.user_id
+        WHERE follower_id = auth.uid() AND following_id = c.user_id
       )) OR
       c.user_id = auth.uid()
     )
-  ORDER BY earth_distance(ll_to_earth(lat, lon), ll_to_earth(c.latitude, c.longitude))
+  ORDER BY extensions.earth_distance(extensions.ll_to_earth(lat, lon), extensions.ll_to_earth(c.latitude, c.longitude))
   LIMIT limit_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

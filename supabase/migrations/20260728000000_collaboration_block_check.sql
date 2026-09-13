@@ -17,8 +17,8 @@ CREATE POLICY "Post owners can invite collaborators"
     AND NOT EXISTS (
       SELECT 1
       FROM public.user_blocks ub
-      WHERE (ub.blocker_id = auth.uid() AND ub.blocked_id = post_collaborators.user_id)
-         OR (ub.blocker_id = post_collaborators.user_id AND ub.blocked_id = auth.uid())
+      WHERE (ub.blocker_id = auth.uid() AND ub.blocked_user_id = post_collaborators.user_id)
+         OR (ub.blocker_id = post_collaborators.user_id AND ub.blocked_user_id = auth.uid())
     )
   );
 
@@ -35,8 +35,8 @@ CREATE POLICY "Users can respond to collaboration invites"
     AND NOT EXISTS (
       SELECT 1
       FROM public.user_blocks ub
-      WHERE (ub.blocker_id = auth.uid() AND ub.blocked_id = post_collaborators.invited_by)
-         OR (ub.blocker_id = post_collaborators.invited_by AND ub.blocked_id = auth.uid())
+      WHERE (ub.blocker_id = auth.uid() AND ub.blocked_user_id = post_collaborators.invited_by)
+         OR (ub.blocker_id = post_collaborators.invited_by AND ub.blocked_user_id = auth.uid())
     )
   );
 
