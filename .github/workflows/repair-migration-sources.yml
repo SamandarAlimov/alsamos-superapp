@@ -1,0 +1,109 @@
+name: Repair Supabase Migration Sources
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/repair-migration-sources.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Repair legacy migration sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/repair_superapp_migrations.py <<'PY'
+          from pathlib import Path
+
+          # Legacy block schema used blocked_id; canonical schema uses blocked_user_id.
+          p = Path("supabase/migrations/20260728000000_collaboration_block_check.sql")
+          s = p.read_text()
+          ns = s.replace("ub.blocked_id", "ub.blocked_user_id")
+          if ns != s:
+              p.write_text(ns)
+              print(f"Repaired: {p}")
+
+          # Social-map migration predates the canonical follow column and Supabase
+          # extension schema placement for earthdistance/cube helpers.
+          p = Path("supabase/migrations/20260803020000_social_map_features.sql")
+          s = p.read_text()
+          ns = s.replace("followed_id", "following_id")
+          ns = ns.replace("ll_to_earth(", "extensions.ll_to_earth(")
+          ns = ns.replace("earth_distance(", "extensions.earth_distance(")
+          ns = ns.replace("earth_box(", "extensions.earth_box(")
+          ns = ns.replace("  place_id,\n  place_name,", "  check_ins.place_id,\n  check_ins.place_name,")
+          ns = ns.replace("GROUP BY place_id, place_name;", "GROUP BY check_ins.place_id, check_ins.place_name;")
+          if ns != s:
+              p.write_text(ns)
+              print(f"Repaired: {p}")
+
+          # These migrations use CREATE TABLE IF NOT EXISTS, so legacy tables may
+          # already exist but miss columns referenced immediately afterwards.
+          p = Path("supabase/migrations/20260712150000_batch3_media_content.sql")
+          s = p.read_text()
+          needle = "ALTER TABLE public.sticker_packs ENABLE ROW LEVEL SECURITY;"
+          compat = """ALTER TABLE public.sticker_packs
+            ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+          """
+          ns = s if compat.strip() in s else s.replace(needle, compat + needle)
+          if ns != s:
+              p.write_text(ns)
+              print(f"Repaired: {p}")
+
+          p = Path("supabase/migrations/20260716000000_telegram_stickers.sql")
+          s = p.read_text()
+          marker = "CREATE TABLE IF NOT EXISTS public.recent_stickers ("
+          compat = """ALTER TABLE public.sticker_packs
+            ADD COLUMN IF NOT EXISTS cover_lottie_url text,
+            ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+            ADD COLUMN IF NOT EXISTS is_animated boolean DEFAULT false,
+            ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+          ALTER TABLE public.stickers
+            ADD COLUMN IF NOT EXISTS image_url text,
+            ADD COLUMN IF NOT EXISTS lottie_url text,
+            ADD COLUMN IF NOT EXISTS video_url text,
+            ADD COLUMN IF NOT EXISTS thumbnail_url text,
+            ADD COLUMN IF NOT EXISTS type text;
+
+          ALTER TABLE public.user_sticker_packs
+            ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+          """
+          ns = s if compat.strip() in s else s.replace(marker, compat + marker)
+          if ns != s:
+              p.write_text(ns)
+              print(f"Repaired: {p}")
+          PY
+          python3 /tmp/repair_superapp_migrations.py
+
+      - name: Commit repaired sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No source changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            supabase/migrations/20260712150000_batch3_media_content.sql \
+            supabase/migrations/20260716000000_telegram_stickers.sql \
+            supabase/migrations/20260728000000_collaboration_block_check.sql \
+            supabase/migrations/20260803020000_social_map_features.sql
+          git commit -m "fix(db): make legacy migrations idempotent"
+          git push origin HEAD:main
